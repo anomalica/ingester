@@ -1,0 +1,32 @@
+names:
+  image: anomalica-ingester-pdf
+  workspace: workspace
+  user: nonroot
+
+runtime:
+  features: []
+
+stages:
+  base:
+    from: python:3.12-slim
+    steps:
+      - apt-get:
+          install:
+            - curl
+      - pip:
+          install:
+            - docling-core
+            - pikepdf
+            - pydantic
+
+  development:
+    from: base
+    steps:
+      - pip:
+          install:
+            - pytest
+
+  production:
+    from: base
+    steps:
+      - copy: workspace

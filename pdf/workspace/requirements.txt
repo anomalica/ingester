@@ -1,0 +1,3 @@
+docling-core
+pikepdf
+pydantic
