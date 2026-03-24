@@ -114,7 +114,8 @@ Content.
     assert any("code fence" in e for e in result.errors)
 
 
-def test_unbalanced_yaml_blocks():
+def test_trailing_delimiter_is_harmless():
+    """A trailing --- with no matching pair should not cause errors."""
     record = """---
 schema: anomalica/record/1
 title: Test
@@ -131,7 +132,7 @@ Content.
 ---
 """
     result = validate(record)
-    assert any("unbalanced" in e.lower() or "odd" in e.lower() for e in result.warnings)
+    assert not result.errors
 
 
 def test_non_sequential_pages():

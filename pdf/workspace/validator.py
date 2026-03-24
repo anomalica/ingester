@@ -22,6 +22,42 @@ REQUIRED_FRONTMATTER = ["schema", "title", "date", "source_type"]
 CURRENT_SCHEMA = "anomalica/record/1"
 
 
+def _parse_annotation_blocks(body: str) -> list[dict]:
+    """Parse YAML annotation blocks from the body content.
+
+    Splits on --- delimiters and attempts YAML parse on each block between
+    consecutive delimiters. Returns a list of successfully parsed dicts.
+    """
+    lines = body.split("\n")
+    delimiter_indices = [i for i, line in enumerate(lines) if line.strip() == "---"]
+
+    annotations = []
+    i = 0
+    while i < len(delimiter_indices) - 1:
+        start = delimiter_indices[i]
+        end = delimiter_indices[i + 1]
+        block_lines = lines[start + 1 : end]
+        block_text = "\n".join(block_lines).strip()
+
+        if not block_text:
+            i += 2
+            continue
+
+        try:
+            block = yaml.safe_load(block_text)
+            if isinstance(block, dict):
+                annotations.append(block)
+                i += 2
+                continue
+        except yaml.YAMLError:
+            pass
+
+        # Not valid YAML - skip this delimiter and try pairing the next one
+        i += 1
+
+    return annotations
+
+
 def validate(content: str) -> ValidationResult:
     result = ValidationResult()
     fixed_content = content
@@ -74,44 +110,16 @@ def validate(content: str) -> ValidationResult:
     body = parts[2].strip()
     if not body:
         result.warnings.append("No content after frontmatter (empty body)")
+        return result
 
     # Parse annotation blocks and check structure
-    _check_annotations(body, frontmatter, result)
+    annotations = _parse_annotation_blocks(body)
 
-    return result
-
-
-def _check_annotations(body: str, frontmatter: dict, result: ValidationResult) -> None:
-    """Check annotation blocks in the body for structural issues."""
-    # Split body on --- lines to find annotation blocks
-    lines = body.split("\n")
-    delimiter_indices = [i for i, line in enumerate(lines) if line.strip() == "---"]
-
-    # Delimiters should come in pairs
-    if len(delimiter_indices) % 2 != 0:
-        result.warnings.append(
-            f"Odd number of --- delimiters in body ({len(delimiter_indices)}) - "
-            f"possibly unbalanced annotation block"
-        )
-
-    # Extract file_page values
+    # Extract page info
     file_pages = []
     has_old_page_field = False
 
-    for i in range(0, len(delimiter_indices) - 1, 2):
-        start = delimiter_indices[i]
-        end = delimiter_indices[i + 1]
-        block_lines = lines[start + 1 : end]
-        block_text = "\n".join(block_lines).strip()
-
-        try:
-            block = yaml.safe_load(block_text)
-        except yaml.YAMLError:
-            continue
-
-        if not isinstance(block, dict):
-            continue
-
+    for block in annotations:
         if "file_page" in block:
             file_pages.append(block["file_page"])
         if "page" in block and "file_page" not in block:
@@ -142,3 +150,5 @@ def _check_annotations(body: str, frontmatter: dict, result: ValidationResult) -
                 f"Frontmatter says pages: {expected_pages} but highest "
                 f"file_page annotation is {max_page}"
             )
+
+    return result

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from extraction.chunker import get_page_count, split_pdf
 from extraction.claude_code import ClaudeCodeProvider
+from validator import validate
 
 MAX_PAGES_SINGLE_PASS = 20
 CHUNK_SIZE = 20
@@ -140,6 +141,16 @@ def main():
         all_meta.extend(chunk_metas)
 
     content = _patch_frontmatter(content, input_hash, page_count)
+
+    # Validate and auto-fix
+    validation = validate(content)
+    if validation.fixed:
+        content = validation.fixed
+        print("Auto-fixed: stripped code fences", file=sys.stderr)
+    for error in validation.errors:
+        print(f"Validation error: {error}", file=sys.stderr)
+    for warning in validation.warnings:
+        print(f"Validation warning: {warning}", file=sys.stderr)
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)
