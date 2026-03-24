@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -44,8 +45,31 @@ def _should_skip(
             return True
         print("Input file has changed (hash mismatch), re-extracting", file=sys.stderr)
         return False
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError:
         return False
+
+
+def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
+    """Inject content_hash and fix page count in the YAML frontmatter.
+
+    Only modifies the frontmatter block (between the first pair of --- delimiters),
+    not the document body.
+    """
+    # Split into frontmatter and body at the second ---
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return content
+
+    frontmatter = parts[1]
+
+    if "content_hash:" not in frontmatter:
+        frontmatter = (
+            frontmatter.rstrip("\n") + f"\ncontent_hash: sha256:{input_hash}\n"
+        )
+
+    frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
+
+    return f"---{frontmatter}---{parts[2]}"
 
 
 def main():
@@ -115,16 +139,7 @@ def main():
         content, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
         all_meta.extend(chunk_metas)
 
-    # Fix frontmatter: inject content_hash and correct page count
-    if "content_hash:" not in content:
-        content = content.replace(
-            "source_type: pdf",
-            f"source_type: pdf\ncontent_hash: sha256:{input_hash}",
-        )
-    # The first chunk may report fewer pages than the full document
-    import re
-
-    content = re.sub(r"pages: \d+", f"pages: {page_count}", content, count=1)
+    content = _patch_frontmatter(content, input_hash, page_count)
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)

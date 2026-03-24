@@ -87,8 +87,9 @@ class ClaudeCodeProvider:
         # Strip markdown code fences if Claude wrapped the output
         content = content.strip()
         if content.startswith("```"):
-            first_newline = content.index("\n")
-            content = content[first_newline + 1 :]
+            newline_pos = content.find("\n")
+            if newline_pos >= 0:
+                content = content[newline_pos + 1 :]
         if content.endswith("```"):
             content = content[:-3]
         content = content.strip()
