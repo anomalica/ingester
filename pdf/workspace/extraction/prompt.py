@@ -11,7 +11,7 @@ pages: 3
 ---
 
 ---
-page: 1
+file_page: 1
 ---
 
 # Document Title
@@ -21,14 +21,15 @@ First paragraph of text.
 The programme was conducted at {{redacted: ~2 words}} Air Force Base.
 
 ---
-page: 2
+file_page: 2
+printed_page: 8
 ---
 
 More text on the second page. The date was {{illegible: possibly March 2004}}.
 
 ---
 redacted:
-  extent: paragraph
+  extent: ~2 paragraphs
 ---
 
 Text continues after the redacted section.
@@ -60,12 +61,15 @@ The format is markdown with YAML frontmatter, YAML block annotations, and inline
 
 Rules:
 - Start with YAML frontmatter: schema, title, date, authors, source_type, pages
-- Mark page boundaries with YAML block annotations (--- page: N ---)
+- Mark page boundaries with YAML block annotations
+- file_page is always the PDF page number (1-indexed from the start of the file)
+- If the page has a printed page number that differs from file_page, include printed_page
+- If there is no printed page number, or it matches file_page, omit printed_page
 - Write text as natural markdown (headings, paragraphs, lists, tables, bold, italic)
 - Skip page furniture: page numbers, running headers, running footers, watermarks
 - Images/figures: YAML block annotation with image field containing a factual description
-- Block-level redactions: YAML block annotation with redacted.extent (words, sentence, paragraph, page)
-- Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for unknown extent
+- Block-level redactions: YAML block annotation with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.
+- Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for small mid-sentence redactions
 - Illegible text: {{{{illegible: best guess}}}} or {{{{illegible}}}}
 - Em-dashes written as --- must be converted to a single hyphen
 - schema must be: anomalica/record/1
