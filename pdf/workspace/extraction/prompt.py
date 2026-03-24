@@ -16,7 +16,7 @@ file_page: 1
 
 # Document Title
 
-First paragraph of text.
+First paragraph of text with a footnote reference.[^1]
 
 The programme was conducted at {{redacted: ~2 words}} Air Force Base.
 
@@ -41,6 +41,8 @@ image: Description of what the figure shows.
 | Column A | Column B |
 |----------|----------|
 | Value 1  | Value 2  |
+
+[^1]: Source citation or footnote text here.
 """
 
 
@@ -66,6 +68,8 @@ Rules:
 - If the page has a printed page number that differs from file_page, include printed_page
 - If there is no printed page number, or it matches file_page, omit printed_page
 - Write text as natural markdown (headings, paragraphs, lists, tables, bold, italic)
+- Footnotes/endnotes: use markdown footnote syntax [^N] for references and [^N]: text for definitions
+- No HTML tags. Use only markdown syntax. No <sup>, <sub>, <br>, or any other HTML.
 - Skip page furniture: page numbers, running headers, running footers, watermarks
 - Images/figures: YAML block annotation with image field containing a factual description
 - Block-level redactions: YAML block annotation with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.

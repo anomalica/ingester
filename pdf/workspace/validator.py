@@ -112,6 +112,16 @@ def validate(content: str) -> ValidationResult:
         result.warnings.append("No content after frontmatter (empty body)")
         return result
 
+    # Check for HTML tags
+    import re
+
+    html_tags = re.findall(r"<(sup|sub|br|div|span|p|b|i|em|strong)[>\s/]", body)
+    if html_tags:
+        unique_tags = sorted(set(html_tags))
+        result.warnings.append(
+            f"HTML tags found (should use markdown instead): {', '.join('<' + t + '>' for t in unique_tags)}"
+        )
+
     # Parse annotation blocks and check structure
     annotations = _parse_annotation_blocks(body)
 

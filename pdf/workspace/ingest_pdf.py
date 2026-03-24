@@ -19,6 +19,7 @@ from validator import validate
 MAX_PAGES_SINGLE_PASS = 20
 CHUNK_SIZE = 20
 MIN_CHUNK_SIZE = 5
+MAX_RETRIES = 2
 
 
 def _hash_file(path: Path) -> str:
@@ -50,13 +51,22 @@ def _should_skip(
         return False
 
 
-def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
-    """Inject content_hash and fix page count in the YAML frontmatter.
+def _is_valid_record(content: str) -> bool:
+    """Quick check that content looks like a valid record (starts with frontmatter)."""
+    stripped = content.strip()
+    # Strip code fences first
+    if stripped.startswith("```"):
+        newline = stripped.find("\n")
+        if newline >= 0:
+            stripped = stripped[newline + 1 :]
+        if stripped.rstrip().endswith("```"):
+            stripped = stripped.rstrip()[:-3]
+        stripped = stripped.strip()
+    return stripped.startswith("---")
 
-    Only modifies the frontmatter block (between the first pair of --- delimiters),
-    not the document body.
-    """
-    # Split into frontmatter and body at the second ---
+
+def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
+    """Inject content_hash and fix page count in the YAML frontmatter."""
     parts = content.split("---", 2)
     if len(parts) < 3:
         return content
@@ -71,6 +81,60 @@ def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
     frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
 
     return f"---{frontmatter}---{parts[2]}"
+
+
+def _strip_frontmatter(content: str) -> str:
+    """Remove YAML frontmatter from content, keeping only the body."""
+    stripped = content.strip()
+    if not stripped.startswith("---"):
+        return content
+    parts = stripped.split("---", 2)
+    if len(parts) >= 3:
+        return parts[2]
+    return content
+
+
+def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
+    """Extract with retries. Validates output is a real record."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            content, meta = provider.extract(pdf_path)
+            if _is_valid_record(content):
+                return content, meta
+            print(
+                f"Attempt {attempt + 1}: extraction returned non-record output, retrying",
+                file=sys.stderr,
+            )
+            last_error = RuntimeError("Extraction returned non-record output")
+        except RuntimeError as e:
+            print(f"Attempt {attempt + 1} failed: {e}, retrying", file=sys.stderr)
+            last_error = e
+    raise last_error
+
+
+def _extract_chunk_with_retry(
+    provider, pdf_data: bytes, page_offset: int, page_count: int
+) -> tuple[str, dict]:
+    """Extract a chunk with retries."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            content, meta = provider.extract_chunk(pdf_data, page_offset, page_count)
+            if _is_valid_record(content) or content.strip():
+                return content, meta
+            print(
+                f"Chunk attempt {attempt + 1}: empty result, retrying",
+                file=sys.stderr,
+            )
+            last_error = RuntimeError("Chunk returned empty result")
+        except RuntimeError as e:
+            print(
+                f"Chunk attempt {attempt + 1} failed: {e}, retrying",
+                file=sys.stderr,
+            )
+            last_error = e
+    raise last_error
 
 
 def main():
@@ -125,11 +189,11 @@ def main():
 
     if page_count <= MAX_PAGES_SINGLE_PASS:
         try:
-            content, meta = provider.extract(args.input_file)
+            content, meta = _extract_with_retry(provider, args.input_file)
             all_meta.append(meta)
         except RuntimeError:
             print(
-                "Single-pass failed, falling back to chunked extraction",
+                "Single-pass failed after retries, falling back to chunked extraction",
                 file=sys.stderr,
             )
             content, chunk_metas = _extract_chunked(
@@ -173,9 +237,16 @@ def main():
 
 
 def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, list]:
+    """Extract a PDF in chunks, merging results.
+
+    Each chunk is retried before falling back to smaller chunks.
+    The first successful chunk's frontmatter is kept; subsequent chunks
+    have their frontmatter stripped before merging.
+    """
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
     contents = []
     metas = []
+
     for i, chunk in enumerate(chunks, 1):
         page_end = chunk["page_offset"] + chunk["page_count"] - 1
         print(
@@ -184,24 +255,28 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, li
             file=sys.stderr,
         )
         try:
-            content, meta = provider.extract_chunk(
-                chunk["pdf_data"], chunk["page_offset"], chunk["page_count"]
+            content, meta = _extract_chunk_with_retry(
+                provider,
+                chunk["pdf_data"],
+                chunk["page_offset"],
+                chunk["page_count"],
             )
             contents.append(content)
             metas.append(meta)
         except RuntimeError:
+            # Retries exhausted - try smaller chunks
             if chunk_size <= MIN_CHUNK_SIZE:
                 print(
-                    f"Error: chunk starting at page {chunk['page_offset']} "
+                    f"Error: chunk pages {chunk['page_offset']}-{page_end} "
                     f"failed at minimum chunk size ({MIN_CHUNK_SIZE} pages). "
-                    f"Flagging for manual intervention.",
+                    f"Skipping this chunk.",
                     file=sys.stderr,
                 )
-                sys.exit(1)
+                continue
             smaller = chunk_size // 2
             print(
-                f"Chunk {i} failed, re-splitting pages {chunk['page_offset']}-{page_end} "
-                f"into {smaller}-page chunks",
+                f"Chunk {i} failed after retries, re-splitting "
+                f"pages {chunk['page_offset']}-{page_end} into {smaller}-page chunks",
                 file=sys.stderr,
             )
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -214,19 +289,14 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, li
             finally:
                 chunk_path.unlink(missing_ok=True)
 
-    # First chunk has the frontmatter. Subsequent chunks just have content.
-    # Join them, stripping any duplicate frontmatter from later chunks.
-    if len(contents) == 1:
-        return contents[0], metas
+    if not contents:
+        raise RuntimeError("All chunks failed - no content extracted")
 
+    # Merge: keep the first chunk's frontmatter, strip from the rest
     merged = contents[0]
     for chunk_content in contents[1:]:
-        # Strip frontmatter from subsequent chunks if present
-        if chunk_content.startswith("---"):
-            parts = chunk_content.split("---", 2)
-            if len(parts) >= 3:
-                chunk_content = parts[2]
-        merged += "\n" + chunk_content
+        body = _strip_frontmatter(chunk_content)
+        merged += "\n" + body
 
     return merged, metas
 
