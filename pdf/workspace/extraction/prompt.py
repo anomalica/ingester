@@ -1,24 +1,46 @@
 from __future__ import annotations
 
-EXTRACTION_SCHEMA = """{
-  "metadata": {
-    "title": "string",
-    "authors": ["string"],
-    "date": "string or null"
-  },
-  "elements": [
-    {
-      "type": "heading | paragraph | table | list_item | image_description | redacted",
-      "text": "string",
-      "page": "integer",
-      "page_end": "integer or null (for multi-page elements)",
-      "level": "integer or null (heading level, 1-6)",
-      "caption": "string or null (table caption)",
-      "rows": "[[string]] or null (table rows including header row)",
-      "extent": "string or null (for redacted: a few words | sentence | paragraph | page)"
-    }
-  ]
-}"""
+EXAMPLE = """---
+schema: anomalica/record/1
+title: Example Document
+date: 2023-07-26
+authors:
+  - Author Name
+source_type: pdf
+pages: 3
+---
+
+---
+page: 1
+---
+
+# Document Title
+
+First paragraph of text.
+
+The programme was conducted at {{redacted: ~2 words}} Air Force Base.
+
+---
+page: 2
+---
+
+More text on the second page. The date was {{illegible: possibly March 2004}}.
+
+---
+redacted:
+  extent: paragraph
+---
+
+Text continues after the redacted section.
+
+---
+image: Description of what the figure shows.
+---
+
+| Column A | Column B |
+|----------|----------|
+| Value 1  | Value 2  |
+"""
 
 
 def build_extraction_prompt(
@@ -32,18 +54,24 @@ def build_extraction_prompt(
             f"Number pages starting from {page_offset}."
         )
 
-    return f"""Extract all content from this PDF into structured JSON.
+    return f"""Extract all content from this PDF into the Anomalica record format.
+
+The format is markdown with YAML frontmatter, YAML block annotations, and inline annotations.
 
 Rules:
-- Preserve document structure: headings (with hierarchy level 1-6), paragraphs, lists, tables
-- Skip page furniture: page numbers, headers, footers, watermarks
-- Tables: extract as structured data with rows and columns, not flattened text. Include a header row.
-- Images, figures, diagrams: do not extract the image. Instead, provide a factual description of what is depicted, using type "image_description".
-- Redacted sections: mark with type "redacted", text "[REDACTED]", and estimate the extent (a few words, sentence, paragraph, or page).
-- Illegible text: use "[illegible]" or "[partially illegible: best guess here]" in the text field.
-- Record the page number for every element.
-- For elements spanning multiple pages, set page to where it starts and page_end to where it ends.{page_context}
+- Start with YAML frontmatter: schema, title, date, authors, source_type, pages
+- Mark page boundaries with YAML block annotations (--- page: N ---)
+- Write text as natural markdown (headings, paragraphs, lists, tables, bold, italic)
+- Skip page furniture: page numbers, running headers, running footers, watermarks
+- Images/figures: YAML block annotation with image field containing a factual description
+- Block-level redactions: YAML block annotation with redacted.extent (words, sentence, paragraph, page)
+- Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for unknown extent
+- Illegible text: {{{{illegible: best guess}}}} or {{{{illegible}}}}
+- Em-dashes written as --- must be converted to a single hyphen
+- schema must be: anomalica/record/1
+- source_type must be: pdf{page_context}
 
-Return ONLY valid JSON matching this schema:
+Example:
 
-{EXTRACTION_SCHEMA}"""
+{EXAMPLE}
+Return ONLY the markdown. No commentary, no preamble, no postamble."""

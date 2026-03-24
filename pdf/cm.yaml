@@ -18,9 +18,7 @@ stages:
             - curl
       - pip:
           install:
-            - docling-core
             - pikepdf
-            - pydantic
 
   development:
     from: base
@@ -43,7 +41,5 @@ commands:
     mounts:
       input:
         mode: ro
-        prefix: "--input "
       output:
         mode: rw
-        prefix: "--output "

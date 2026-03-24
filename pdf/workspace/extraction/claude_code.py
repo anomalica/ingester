@@ -6,9 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from extraction.models import ExtractionResult
 from extraction.prompt import build_extraction_prompt
-from extraction.provider import ExtractionProvider
 
 
 def _extract_metadata(envelope: dict) -> dict:
@@ -37,22 +35,18 @@ def _extract_metadata(envelope: dict) -> dict:
     return meta
 
 
-class ClaudeCodeProvider(ExtractionProvider):
+class ClaudeCodeProvider:
     def __init__(self, model: str = "sonnet"):
         self.model = model
 
-    def _call_claude(
-        self, prompt: str, pdf_path: Path
-    ) -> tuple[ExtractionResult, dict]:
-        schema = json.dumps(ExtractionResult.model_json_schema())
+    def _call_claude(self, prompt: str, pdf_path: Path) -> tuple[str, dict]:
         full_prompt = (
             f"{prompt}\n\n"
             f"The PDF file to extract is: {pdf_path}\n\n"
             f"IMPORTANT: Read the PDF file directly using the Read tool. "
             f"Do not use Bash, do not use pdftotext or any other tool. "
             f"Just read the file with the Read tool - it handles PDFs natively. "
-            f"Your text response should be just the word 'done' - all extraction "
-            f"output goes into the structured output only."
+            f"Return ONLY the markdown output. No commentary, no summary, no preamble."
         )
 
         result = subprocess.run(
@@ -61,8 +55,6 @@ class ClaudeCodeProvider(ExtractionProvider):
                 "--print",
                 "--model",
                 self.model,
-                "--json-schema",
-                schema,
                 "--allowedTools",
                 "Read",
                 "--no-session-persistence",
@@ -74,7 +66,7 @@ class ClaudeCodeProvider(ExtractionProvider):
             input=full_prompt,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,
         )
         if result.returncode != 0:
             print(f"Claude Code stderr: {result.stderr.strip()}", file=sys.stderr)
@@ -84,25 +76,30 @@ class ClaudeCodeProvider(ExtractionProvider):
         if not result.stdout.strip():
             raise RuntimeError("Claude Code returned empty response")
 
-        # --output-format json wraps the response in Claude Code's envelope.
-        # The structured output from --json-schema is in "structured_output".
         envelope = json.loads(result.stdout)
-        if "structured_output" not in envelope:
-            raise RuntimeError(
-                f"No structured_output in Claude Code response: {list(envelope.keys())}"
-            )
+        content = envelope.get("result", "")
+        if not content.strip():
+            raise RuntimeError("Claude Code returned empty result")
 
-        extraction = ExtractionResult.model_validate(envelope["structured_output"])
+        # Strip markdown code fences if Claude wrapped the output
+        content = content.strip()
+        if content.startswith("```"):
+            first_newline = content.index("\n")
+            content = content[first_newline + 1 :]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
         meta = _extract_metadata(envelope)
-        return extraction, meta
+        return content, meta
 
-    def extract(self, pdf_path: Path) -> tuple[ExtractionResult, dict]:
+    def extract(self, pdf_path: Path) -> tuple[str, dict]:
         prompt = build_extraction_prompt()
         return self._call_claude(prompt, pdf_path)
 
     def extract_chunk(
         self, pdf_data: bytes, page_offset: int, page_count: int
-    ) -> tuple[ExtractionResult, dict]:
+    ) -> tuple[str, dict]:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(pdf_data)
             tmp_path = Path(f.name)

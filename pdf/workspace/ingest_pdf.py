@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PDF ingester - extracts structured content from PDFs into DoclingDocument JSON."""
+"""PDF ingester - extracts structured content from PDFs into Anomalica record format."""
 
 from __future__ import annotations
 
@@ -13,8 +13,6 @@ from pathlib import Path
 
 from extraction.chunker import get_page_count, split_pdf
 from extraction.claude_code import ClaudeCodeProvider
-from extraction.merger import merge_extraction_results
-from output.builder import build_docling_document
 
 MAX_PAGES_SINGLE_PASS = 100
 CHUNK_SIZE = 50
@@ -44,10 +42,7 @@ def _should_skip(
         meta = json.loads(meta_file.read_text())
         if meta.get("input_hash") == input_hash:
             return True
-        print(
-            "Input file has changed (hash mismatch), re-extracting",
-            file=sys.stderr,
-        )
+        print("Input file has changed (hash mismatch), re-extracting", file=sys.stderr)
         return False
     except (json.JSONDecodeError, KeyError):
         return False
@@ -55,25 +50,29 @@ def _should_skip(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract content from a PDF into DoclingDocument JSON."
+        description="Extract content from a PDF into Anomalica record format."
     )
-    parser.add_argument(
-        "--input", dest="input_file", type=Path, help="Path to the PDF file"
-    )
-    parser.add_argument(
-        "--output",
-        dest="output_dir",
-        type=Path,
-        default=Path("."),
-        help="Output directory (default: current directory)",
-    )
+    parser.add_argument("input_file", nargs="?", type=Path, help="Path to the PDF file")
+    parser.add_argument("output_dir", nargs="?", type=Path, help="Output directory")
     parser.add_argument(
         "--force", action="store_true", help="Re-process even if output file exists"
     )
     args = parser.parse_args()
 
+    # Auto-detect mount paths from container-magic
+    mnt_input = Path("/mnt/input")
+    mnt_output = Path("/mnt/output")
+    if not args.input_file and mnt_input.exists():
+        pdfs = list(mnt_input.glob("*.pdf"))
+        if pdfs:
+            args.input_file = pdfs[0]
+    if not args.output_dir and mnt_output.exists():
+        args.output_dir = mnt_output
+    if not args.output_dir:
+        args.output_dir = Path(".")
+
     if not args.input_file:
-        parser.error("--input is required")
+        parser.error("input_file is required (or use cm run ingest input=<file>)")
 
     if not args.input_file.exists():
         print(f"Error: file not found: {args.input_file}", file=sys.stderr)
@@ -81,7 +80,7 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stem = args.input_file.stem
-    output_file = args.output_dir / f"{stem}.json"
+    output_file = args.output_dir / f"{stem}.md"
     meta_file = args.output_dir / f"{stem}.meta.json"
 
     input_hash = _hash_file(args.input_file)
@@ -101,40 +100,29 @@ def main():
 
     if page_count <= MAX_PAGES_SINGLE_PASS:
         try:
-            result, meta = provider.extract(args.input_file)
-            results = [result]
+            content, meta = provider.extract(args.input_file)
             all_meta.append(meta)
         except RuntimeError:
             print(
                 "Single-pass failed, falling back to chunked extraction",
                 file=sys.stderr,
             )
-            results, chunk_metas = _extract_chunked(
+            content, chunk_metas = _extract_chunked(
                 provider, args.input_file, CHUNK_SIZE
             )
             all_meta.extend(chunk_metas)
     else:
-        results, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
+        content, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
         all_meta.extend(chunk_metas)
 
-    merged = merge_extraction_results(results)
-
-    # Validate page coverage
-    extracted_pages = set()
-    for el in merged.elements:
-        extracted_pages.add(el.page)
-        if el.page_end:
-            for p in range(el.page, el.page_end + 1):
-                extracted_pages.add(p)
-    missing = set(range(1, page_count + 1)) - extracted_pages
-    if missing:
-        print(
-            f"Warning: pages not referenced in extraction: {sorted(missing)}",
-            file=sys.stderr,
+    # Inject content_hash into frontmatter if not already present
+    if "content_hash:" not in content:
+        content = content.replace(
+            "source_type: pdf",
+            f"source_type: pdf\ncontent_hash: sha256:{input_hash}",
         )
 
-    doc = build_docling_document(merged, source_filename=args.input_file.name)
-    output_file.write_text(json.dumps(doc.export_to_dict(), indent=2))
+    output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)
 
     # Save metadata
@@ -154,9 +142,9 @@ def main():
     print(f"Metadata: {meta_file} (cost: ${total_cost:.4f})", file=sys.stderr)
 
 
-def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[list, list]:
+def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, list]:
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
-    results = []
+    contents = []
     metas = []
     for i, chunk in enumerate(chunks, 1):
         page_end = chunk["page_offset"] + chunk["page_count"] - 1
@@ -166,10 +154,10 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[list, l
             file=sys.stderr,
         )
         try:
-            result, meta = provider.extract_chunk(
+            content, meta = provider.extract_chunk(
                 chunk["pdf_data"], chunk["page_offset"], chunk["page_count"]
             )
-            results.append(result)
+            contents.append(content)
             metas.append(meta)
         except RuntimeError:
             if chunk_size <= MIN_CHUNK_SIZE:
@@ -190,17 +178,27 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[list, l
                 f.write(chunk["pdf_data"])
                 chunk_path = Path(f.name)
             try:
-                sub_results, sub_metas = _extract_chunked(provider, chunk_path, smaller)
-                for sub_result in sub_results:
-                    for el in sub_result.elements:
-                        el.page += chunk["page_offset"] - 1
-                        if el.page_end:
-                            el.page_end += chunk["page_offset"] - 1
-                results.extend(sub_results)
+                sub_content, sub_metas = _extract_chunked(provider, chunk_path, smaller)
+                contents.append(sub_content)
                 metas.extend(sub_metas)
             finally:
                 chunk_path.unlink(missing_ok=True)
-    return results, metas
+
+    # First chunk has the frontmatter. Subsequent chunks just have content.
+    # Join them, stripping any duplicate frontmatter from later chunks.
+    if len(contents) == 1:
+        return contents[0], metas
+
+    merged = contents[0]
+    for chunk_content in contents[1:]:
+        # Strip frontmatter from subsequent chunks if present
+        if chunk_content.startswith("---"):
+            parts = chunk_content.split("---", 2)
+            if len(parts) >= 3:
+                chunk_content = parts[2]
+        merged += "\n" + chunk_content
+
+    return merged, metas
 
 
 if __name__ == "__main__":

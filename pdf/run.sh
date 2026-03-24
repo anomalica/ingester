@@ -111,7 +111,6 @@ run_ingest() {
 			local _basename
 			_basename=$(basename "$_resolved")
 			RUN_ARGS+=("-v" "${_resolved}:/mnt/input/${_basename}:ro,z")
-			EXTRA_ARGS+=("--input" "/mnt/input/${_basename}")
 			MANIFEST_LINES+=("${_resolved}:/mnt/input/${_basename}")
 			;;
 		output=*)
@@ -120,7 +119,6 @@ run_ingest() {
 			_resolved=$(realpath "$_host_path")
 			mkdir -p "$_resolved"
 			RUN_ARGS+=("-v" "${_resolved}:/mnt/output:z")
-			EXTRA_ARGS+=("--output" "/mnt/output")
 			MANIFEST_LINES+=("${_resolved}:/mnt/output")
 			;;
 		*)
