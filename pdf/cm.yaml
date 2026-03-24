@@ -33,3 +33,17 @@ stages:
     from: base
     steps:
       - copy: workspace
+
+commands:
+  ingest:
+    command: python workspace/ingest_pdf.py
+    description: Extract structured content from a PDF
+    env:
+      PYTHONUNBUFFERED: "1"
+    mounts:
+      input:
+        mode: ro
+        prefix: "--input "
+      output:
+        mode: rw
+        prefix: "--output "

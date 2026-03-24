@@ -85,6 +85,85 @@ if [[ ${#RUNTIME_PASSTHROUGH[@]} -gt 0 ]]; then
 	BASE_RUN_ARGS+=("${RUNTIME_PASSTHROUGH[@]}")
 fi
 
+# Custom command handlers
+
+run_ingest() {
+	# Extract structured content from a PDF
+	local RUN_ARGS=("${BASE_RUN_ARGS[@]}")
+	local CMD="python workspace/ingest_pdf.py"
+	local EXTRA_ARGS=()
+	# Environment variables
+	RUN_ARGS+=("-e" "PYTHONUNBUFFERED=1")
+
+	# Parse mount arguments
+	local MANIFEST_LINES=()
+	local REMAINING=()
+	for arg in "$@"; do
+		case "$arg" in
+		input=*)
+			local _host_path="${arg#input=}"
+			local _resolved
+			_resolved=$(realpath "$_host_path")
+			if [[ ! -e "$_resolved" ]]; then
+				echo "Error: Mount 'input' not found: $_host_path" >&2
+				return 1
+			fi
+			local _basename
+			_basename=$(basename "$_resolved")
+			RUN_ARGS+=("-v" "${_resolved}:/mnt/input/${_basename}:ro,z")
+			EXTRA_ARGS+=("--input" "/mnt/input/${_basename}")
+			MANIFEST_LINES+=("${_resolved}:/mnt/input/${_basename}")
+			;;
+		output=*)
+			local _host_path="${arg#output=}"
+			local _resolved
+			_resolved=$(realpath "$_host_path")
+			mkdir -p "$_resolved"
+			RUN_ARGS+=("-v" "${_resolved}:/mnt/output:z")
+			EXTRA_ARGS+=("--output" "/mnt/output")
+			MANIFEST_LINES+=("${_resolved}:/mnt/output")
+			;;
+		*)
+			REMAINING+=("$arg")
+			;;
+		esac
+	done
+	local _manifest=""
+	if [[ ${#MANIFEST_LINES[@]} -gt 0 ]]; then
+		_manifest=$(mktemp /tmp/cm-manifest-XXXXXX)
+		printf '%s\n' "${MANIFEST_LINES[@]}" >"$_manifest"
+		RUN_ARGS+=("-v" "${_manifest}:/run/cm/mounts:ro,z")
+	fi
+	if [[ ${#REMAINING[@]} -gt 0 ]]; then
+		EXTRA_ARGS+=("${REMAINING[@]}")
+	fi
+	if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+		${RUNTIME} run "${RUN_ARGS[@]}" \
+			-w "${WORKDIR}" \
+			"${IMAGE_NAME}:${TAG}" \
+			"${SHELL}" -c "${CMD} $(printf '%q ' "${EXTRA_ARGS[@]}")"
+	else
+		${RUNTIME} run "${RUN_ARGS[@]}" \
+			-w "${WORKDIR}" \
+			"${IMAGE_NAME}:${TAG}" \
+			"${SHELL}" -c "${CMD}"
+	fi
+	if [[ -n "$_manifest" ]]; then
+		rm -f "$_manifest"
+	fi
+}
+
+# Check for custom command
+if [ $# -gt 0 ]; then
+	case "$1" in
+	ingest)
+		shift
+		run_ingest "$@"
+		exit $?
+		;;
+	esac
+fi
+
 # Use base run arguments
 RUN_ARGS=("${BASE_RUN_ARGS[@]}")
 

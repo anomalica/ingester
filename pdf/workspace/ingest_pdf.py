@@ -23,11 +23,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Extract content from a PDF into DoclingDocument JSON."
     )
-    parser.add_argument("input_file", type=Path, help="Path to the PDF file")
     parser.add_argument(
-        "output_dir",
+        "--input", dest="input_file", type=Path, help="Path to the PDF file"
+    )
+    parser.add_argument(
+        "--output",
+        dest="output_dir",
         type=Path,
-        nargs="?",
         default=Path("."),
         help="Output directory (default: current directory)",
     )
@@ -35,6 +37,9 @@ def main():
         "--force", action="store_true", help="Re-process even if output file exists"
     )
     args = parser.parse_args()
+
+    if not args.input_file:
+        parser.error("--input is required")
 
     if not args.input_file.exists():
         print(f"Error: file not found: {args.input_file}", file=sys.stderr)
@@ -51,13 +56,12 @@ def main():
         sys.exit(0)
 
     provider = ClaudeCodeProvider()
-    pdf_data = args.input_file.read_bytes()
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
     if page_count <= MAX_PAGES_SINGLE_PASS:
         try:
-            result = provider.extract(pdf_data)
+            result = provider.extract(args.input_file)
             results = [result]
         except RuntimeError:
             print(

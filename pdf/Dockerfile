@@ -71,4 +71,5 @@ ARG USER_GID=1000 \
     USER_NAME=nonroot \
     USER_HOME=/home/nonroot
 COPY workspace ${WORKSPACE}
+COPY .cm-cache/staging/test-corpus ${WORKSPACE}/test-corpus
 USER ${USER_NAME}
