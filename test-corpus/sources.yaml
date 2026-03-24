@@ -1,0 +1,25 @@
+pdf:
+  - url: https://s3.documentcloud.org/documents/20743466/nimitz-unredacted.pdf
+    path: pdf/2009-nimitz-executive-summary.pdf
+
+  - url: https://documents2.theblackvault.com/documents/osd/18-F-0324.pdf
+    path: pdf/2017-10-04-elizondo-resignation-letter.pdf
+
+  - url: https://oversight.house.gov/wp-content/uploads/2023/07/David-Fravor-Statement-for-House-Oversight-Committee.pdf
+    path: pdf/2023-07-26-fravor-written-statement.pdf
+
+  - url: https://www.congress.gov/118/meeting/house/116282/documents/HHRG-118-GO06-Transcript-20230726.pdf
+    path: pdf/2023-07-26-house-oversight-hearing-transcript.pdf
+
+  - url: https://media.defense.gov/2024/Mar/08/2003409233/-1/-1/0/DOPSR-CLEARED-508-COMPLIANT-HRRV1-08-MAR-2024-FINAL.PDF
+    path: pdf/2024-03-08-aaro-historical-record-report-vol1.pdf
+    manual: true
+    note: defense.gov blocks automated downloads
+
+  - url: https://media.defense.gov/2024/Jan/25/2003381266/-1/-1/1/UNCLASSIFIED%20SUMMARY_UNIDENTIFIED%20ANOMALOUS%20PHENOMENA%20SECURE.PDF
+    path: pdf/2024-01-25-dod-ig-uap-report-unclassified-summary.pdf
+    manual: true
+    note: defense.gov blocks automated downloads
+
+  - url: https://oversight.house.gov/wp-content/uploads/2024/11/Written-Testimony-Elizondo.pdf
+    path: pdf/2024-11-13-elizondo-written-testimony.pdf
