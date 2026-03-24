@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from extraction.chunker import get_page_count, split_pdf
@@ -17,6 +19,38 @@ from output.builder import build_docling_document
 MAX_PAGES_SINGLE_PASS = 100
 CHUNK_SIZE = 50
 MIN_CHUNK_SIZE = 5
+
+
+def _hash_file(path: Path) -> str:
+    """SHA-256 hash of a file's contents."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _should_skip(
+    output_file: Path, meta_file: Path, input_hash: str, force: bool
+) -> bool:
+    """Check if extraction can be skipped based on existing output and hash match."""
+    if force:
+        return False
+    if not output_file.exists():
+        return False
+    if not meta_file.exists():
+        return False
+    try:
+        meta = json.loads(meta_file.read_text())
+        if meta.get("input_hash") == input_hash:
+            return True
+        print(
+            "Input file has changed (hash mismatch), re-extracting",
+            file=sys.stderr,
+        )
+        return False
+    except (json.JSONDecodeError, KeyError):
+        return False
 
 
 def main():
@@ -46,11 +80,15 @@ def main():
         sys.exit(1)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = args.output_dir / f"{args.input_file.stem}.json"
+    stem = args.input_file.stem
+    output_file = args.output_dir / f"{stem}.json"
+    meta_file = args.output_dir / f"{stem}.meta.json"
 
-    if output_file.exists() and not args.force:
+    input_hash = _hash_file(args.input_file)
+
+    if _should_skip(output_file, meta_file, input_hash, args.force):
         print(
-            f"Skipping: {output_file} already exists (use --force to re-process)",
+            f"Skipping: {output_file} already exists with matching hash",
             file=sys.stderr,
         )
         sys.exit(0)
@@ -59,18 +97,25 @@ def main():
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
+    all_meta = []
+
     if page_count <= MAX_PAGES_SINGLE_PASS:
         try:
-            result = provider.extract(args.input_file)
+            result, meta = provider.extract(args.input_file)
             results = [result]
+            all_meta.append(meta)
         except RuntimeError:
             print(
                 "Single-pass failed, falling back to chunked extraction",
                 file=sys.stderr,
             )
-            results = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
+            results, chunk_metas = _extract_chunked(
+                provider, args.input_file, CHUNK_SIZE
+            )
+            all_meta.extend(chunk_metas)
     else:
-        results = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
+        results, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
+        all_meta.extend(chunk_metas)
 
     merged = merge_extraction_results(results)
 
@@ -92,10 +137,27 @@ def main():
     output_file.write_text(json.dumps(doc.export_to_dict(), indent=2))
     print(f"Written: {output_file}", file=sys.stderr)
 
+    # Save metadata
+    total_cost = sum(m.get("cost_usd", 0) for m in all_meta)
+    total_duration = sum(m.get("duration_ms", 0) for m in all_meta)
+    combined_meta = {
+        "input_hash": input_hash,
+        "input_filename": args.input_file.name,
+        "pages": page_count,
+        "extracted_at": datetime.now(timezone.utc).isoformat(),
+        "cost_usd": total_cost,
+        "duration_ms": total_duration,
+        "chunks": len(all_meta),
+        "chunk_details": all_meta,
+    }
+    meta_file.write_text(json.dumps(combined_meta, indent=2))
+    print(f"Metadata: {meta_file} (cost: ${total_cost:.4f})", file=sys.stderr)
 
-def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> list:
+
+def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[list, list]:
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
     results = []
+    metas = []
     for i, chunk in enumerate(chunks, 1):
         page_end = chunk["page_offset"] + chunk["page_count"] - 1
         print(
@@ -104,10 +166,11 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> list:
             file=sys.stderr,
         )
         try:
-            result = provider.extract_chunk(
+            result, meta = provider.extract_chunk(
                 chunk["pdf_data"], chunk["page_offset"], chunk["page_count"]
             )
             results.append(result)
+            metas.append(meta)
         except RuntimeError:
             if chunk_size <= MIN_CHUNK_SIZE:
                 print(
@@ -127,16 +190,17 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> list:
                 f.write(chunk["pdf_data"])
                 chunk_path = Path(f.name)
             try:
-                sub_results = _extract_chunked(provider, chunk_path, smaller)
+                sub_results, sub_metas = _extract_chunked(provider, chunk_path, smaller)
                 for sub_result in sub_results:
                     for el in sub_result.elements:
                         el.page += chunk["page_offset"] - 1
                         if el.page_end:
                             el.page_end += chunk["page_offset"] - 1
                 results.extend(sub_results)
+                metas.extend(sub_metas)
             finally:
                 chunk_path.unlink(missing_ok=True)
-    return results
+    return results, metas
 
 
 if __name__ == "__main__":
