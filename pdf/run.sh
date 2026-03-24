@@ -71,6 +71,10 @@ if [[ "${RUNTIME}" == "podman" ]]; then
 	BASE_RUN_ARGS+=("--replace")
 fi
 
+# Additional bind mounts
+BASE_RUN_ARGS+=("-v" "$HOME/.local/bin/claude:/usr/local/bin/claude:ro")
+BASE_RUN_ARGS+=("-v" "$HOME/.claude:/home/nonroot/.claude")
+
 # Load .env file if present
 if [[ -f "$(pwd)/.env" ]]; then
 	BASE_RUN_ARGS+=("--env-file" "$(pwd)/.env")

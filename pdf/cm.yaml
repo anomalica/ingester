@@ -5,6 +5,9 @@ names:
 
 runtime:
   features: []
+  volumes:
+    - ~/.local/bin/claude:/usr/local/bin/claude:ro
+    - ~/.claude:~/.claude
 
 stages:
   base:

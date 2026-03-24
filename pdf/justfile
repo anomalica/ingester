@@ -1,5 +1,5 @@
 ingest-pdf *ARGS:
-    python workspace/ingest_pdf.py {{ARGS}}
+    cm run python workspace/ingest_pdf.py {{ARGS}}
 
 test *ARGS:
-    pytest workspace/tests/ {{ARGS}} -v
+    cm run pytest workspace/tests/ {{ARGS}} -v
