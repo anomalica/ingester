@@ -1,16 +1,16 @@
 from extraction.prompt import build_extraction_prompt
 
 
-def test_prompt_contains_schema():
+def test_prompt_contains_record_format():
     prompt = build_extraction_prompt()
-    assert '"type"' in prompt
-    assert '"page"' in prompt
-    assert "metadata" in prompt
+    assert "anomalica/record/1" in prompt
+    assert "source_type" in prompt
+    assert "page:" in prompt
 
 
 def test_prompt_mentions_redaction():
     prompt = build_extraction_prompt()
-    assert "[REDACTED]" in prompt
+    assert "redacted" in prompt.lower()
 
 
 def test_prompt_mentions_image_description():
