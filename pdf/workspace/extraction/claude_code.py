@@ -49,25 +49,28 @@ class ClaudeCodeProvider:
             f"Return ONLY the markdown output. No commentary, no summary, no preamble."
         )
 
-        result = subprocess.run(
-            [
-                "claude",
-                "--print",
-                "--model",
-                self.model,
-                "--allowedTools",
-                "Read",
-                "--no-session-persistence",
-                "--add-dir",
-                str(pdf_path.parent),
-                "--output-format",
-                "json",
-            ],
-            input=full_prompt,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "claude",
+                    "--print",
+                    "--model",
+                    self.model,
+                    "--allowedTools",
+                    "Read",
+                    "--no-session-persistence",
+                    "--add-dir",
+                    str(pdf_path.parent),
+                    "--output-format",
+                    "json",
+                ],
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Claude Code timed out")
         if result.returncode != 0:
             print(f"Claude Code stderr: {result.stderr.strip()}", file=sys.stderr)
             raise RuntimeError(

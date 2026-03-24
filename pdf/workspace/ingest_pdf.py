@@ -14,8 +14,8 @@ from pathlib import Path
 from extraction.chunker import get_page_count, split_pdf
 from extraction.claude_code import ClaudeCodeProvider
 
-MAX_PAGES_SINGLE_PASS = 100
-CHUNK_SIZE = 50
+MAX_PAGES_SINGLE_PASS = 20
+CHUNK_SIZE = 20
 MIN_CHUNK_SIZE = 5
 
 
@@ -115,12 +115,16 @@ def main():
         content, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
         all_meta.extend(chunk_metas)
 
-    # Inject content_hash into frontmatter if not already present
+    # Fix frontmatter: inject content_hash and correct page count
     if "content_hash:" not in content:
         content = content.replace(
             "source_type: pdf",
             f"source_type: pdf\ncontent_hash: sha256:{input_hash}",
         )
+    # The first chunk may report fewer pages than the full document
+    import re
+
+    content = re.sub(r"pages: \d+", f"pages: {page_count}", content, count=1)
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)
