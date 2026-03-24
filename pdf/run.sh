@@ -72,8 +72,8 @@ if [[ "${RUNTIME}" == "podman" ]]; then
 fi
 
 # Additional bind mounts
-BASE_RUN_ARGS+=("-v" "$HOME/.local/bin/claude:/usr/local/bin/claude:ro")
-BASE_RUN_ARGS+=("-v" "$HOME/.claude:/home/nonroot/.claude")
+BASE_RUN_ARGS+=("-v" "$HOME/.local/bin/claude:/usr/local/bin/claude:ro,z")
+BASE_RUN_ARGS+=("-v" "$HOME/.claude:/home/nonroot/.claude:z")
 
 # Load .env file if present
 if [[ -f "$(pwd)/.env" ]]; then

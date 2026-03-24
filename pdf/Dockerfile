@@ -44,7 +44,9 @@ RUN apt-get update && \
 RUN test -f /opt/venv/pyvenv.cfg || python3 -m venv --system-site-packages /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-RUN pip install --no-cache-dir pikepdf
+RUN pip install --no-cache-dir \
+        pikepdf \
+        pyyaml
 
 ################################################################################
 # Stage: development

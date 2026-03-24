@@ -19,6 +19,7 @@ stages:
       - pip:
           install:
             - pikepdf
+            - pyyaml
 
   development:
     from: base
