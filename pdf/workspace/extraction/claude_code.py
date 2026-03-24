@@ -45,7 +45,15 @@ class ClaudeCodeProvider(ExtractionProvider):
         self, prompt: str, pdf_path: Path
     ) -> tuple[ExtractionResult, dict]:
         schema = json.dumps(ExtractionResult.model_json_schema())
-        full_prompt = f"{prompt}\n\nThe PDF file to extract is: {pdf_path}"
+        full_prompt = (
+            f"{prompt}\n\n"
+            f"The PDF file to extract is: {pdf_path}\n\n"
+            f"IMPORTANT: Read the PDF file directly using the Read tool. "
+            f"Do not use Bash, do not use pdftotext or any other tool. "
+            f"Just read the file with the Read tool - it handles PDFs natively. "
+            f"Your text response should be just the word 'done' - all extraction "
+            f"output goes into the structured output only."
+        )
 
         result = subprocess.run(
             [
