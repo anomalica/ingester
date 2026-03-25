@@ -23,6 +23,30 @@ Current `MAX_PAGES_SINGLE_PASS` is 20. Chunk size is 20.
 - Untested between 16 and 54 for single pass
 - 20-page chunks work reliably
 - Scanned documents (Nimitz 4.7MB, Elizondo FOIA 2.3MB) extract just as well as born-digital
+- The Nimitz scanned document consistently struggles with timeouts and failures, needing 5-page chunks to succeed
+
+## Retry behaviour
+
+Claude Code returns garbage or empty stubs non-deterministically. The same document may succeed or fail on different runs. Retry logic (up to 2 attempts) before falling back to chunking handles this.
+
+Content-size validation catches stub responses: a 20-page chunk returning 326 chars is rejected and retried. Minimum expected is ~200 chars per page.
+
+## Timeouts removed
+
+Artificial timeouts (600s) were removed. They caused more harm than good by killing processes that would have completed, then restarting from scratch. Large scanned PDFs legitimately take longer.
+
+## Footnotes
+
+Claude uses three different footnote styles inconsistently:
+- `[^N]` with `[^N]: text` (standard markdown footnotes) - correct
+- `<sup>N</sup>` (HTML superscript) - wrong, now banned in prompt
+- `[N]` (plain brackets) - acceptable but not preferred
+
+The prompt now specifies markdown footnote syntax and bans HTML tags.
+
+## YAML quoting
+
+Titles containing colons (e.g. "Phenomena: Exposing the Truth") cause YAML parse failures if unquoted. The validator auto-fixes this by quoting values containing colons.
 
 ## Cost per page
 
