@@ -22,6 +22,28 @@ REQUIRED_FRONTMATTER = ["schema", "title", "date", "source_type"]
 CURRENT_SCHEMA = "anomalica/record/1"
 
 
+def _fix_yaml_quoting(frontmatter: str) -> str:
+    """Try to fix unquoted YAML values that contain colons.
+
+    For simple key: value lines where the value contains a colon,
+    wrap the value in double quotes.
+    """
+    import re
+
+    lines = frontmatter.split("\n")
+    fixed = []
+    for line in lines:
+        # Match simple key: value lines (not indented list items, not already quoted)
+        match = re.match(r"^([a-z_]+): (.+)$", line)
+        if match:
+            key, value = match.group(1), match.group(2)
+            if ":" in value and not value.startswith('"') and not value.startswith("'"):
+                value = '"' + value.replace('"', '\\"') + '"'
+                line = f"{key}: {value}"
+        fixed.append(line)
+    return "\n".join(fixed)
+
+
 def _parse_annotation_blocks(body: str) -> list[dict]:
     """Parse YAML annotation blocks from the body content.
 
@@ -84,12 +106,21 @@ def validate(content: str) -> ValidationResult:
         result.errors.append("Incomplete YAML frontmatter (missing closing ---)")
         return result
 
+    # Try to parse frontmatter, auto-fixing unquoted colons if needed
     frontmatter_text = parts[1].strip()
     try:
         frontmatter = yaml.safe_load(frontmatter_text)
     except yaml.YAMLError:
-        result.errors.append("Frontmatter YAML is invalid - could not parse")
-        return result
+        fixed_fm = _fix_yaml_quoting(parts[1])
+        try:
+            frontmatter = yaml.safe_load(fixed_fm)
+            parts[1] = fixed_fm
+            fixed_content = "---".join(parts)
+            result.fixed = fixed_content
+            result.warnings.append("Auto-fixed: quoted YAML values containing colons")
+        except yaml.YAMLError:
+            result.errors.append("Frontmatter YAML is invalid - could not parse")
+            return result
 
     if not isinstance(frontmatter, dict):
         result.errors.append("Frontmatter YAML is not a mapping")

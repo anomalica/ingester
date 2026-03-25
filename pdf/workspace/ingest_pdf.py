@@ -210,11 +210,10 @@ def main():
     validation = validate(content)
     if validation.fixed:
         content = validation.fixed
-        print("Auto-fixed: stripped code fences", file=sys.stderr)
-    for error in validation.errors:
-        print(f"Validation error: {error}", file=sys.stderr)
     for warning in validation.warnings:
         print(f"Validation warning: {warning}", file=sys.stderr)
+    for error in validation.errors:
+        print(f"Validation error: {error}", file=sys.stderr)
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)

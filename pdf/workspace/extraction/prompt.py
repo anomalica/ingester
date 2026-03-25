@@ -63,6 +63,7 @@ The format is markdown with YAML frontmatter, YAML block annotations, and inline
 
 Rules:
 - Start with YAML frontmatter: schema, title, date, authors, source_type, pages
+- Quote YAML values that contain colons (e.g. title: "Document: A Subtitle")
 - Mark page boundaries with YAML block annotations
 - file_page is always the PDF page number (1-indexed from the start of the file)
 - If the page has a printed page number that differs from file_page, include printed_page

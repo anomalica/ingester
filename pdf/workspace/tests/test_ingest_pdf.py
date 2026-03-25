@@ -7,9 +7,9 @@ from pathlib import Path
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_cli_missing_input_file():
+def test_cli_nonexistent_input():
     result = subprocess.run(
-        ["python", "workspace/ingest_pdf.py"],
+        ["python", "workspace/ingest_pdf.py", "/does/not/exist.pdf"],
         capture_output=True,
         text=True,
     )
