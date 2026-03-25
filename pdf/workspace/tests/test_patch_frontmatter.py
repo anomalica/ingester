@@ -1,9 +1,9 @@
-"""Tests for frontmatter patching in ingest_pdf."""
+"""Tests for frontmatter patching and record checking in ingest_pdf."""
 
 import sys
 
 sys.path.insert(0, "workspace")
-from ingest_pdf import _patch_frontmatter
+from ingest_pdf import _check_record, _patch_frontmatter, _strip_frontmatter
 
 
 def test_injects_content_hash():
@@ -41,4 +41,61 @@ def test_does_not_duplicate_content_hash():
 def test_handles_no_frontmatter():
     content = "Just some text without frontmatter."
     result = _patch_frontmatter(content, "abc123", 5)
+    assert result == content
+
+
+# --- _check_record tests ---
+
+
+def test_check_record_valid():
+    content = "---\nschema: anomalica/record/1\n---\n\n" + "x" * 500
+    valid, reason = _check_record(content)
+    assert valid
+    assert reason == ""
+
+
+def test_check_record_no_frontmatter():
+    valid, reason = _check_record("Just plain text without frontmatter.")
+    assert not valid
+    assert "frontmatter" in reason
+
+
+def test_check_record_too_short():
+    content = "---\nschema: test\n---\n\nShort."
+    valid, reason = _check_record(content, min_chars=1000)
+    assert not valid
+    assert "too short" in reason
+
+
+def test_check_record_strips_code_fences():
+    content = "```markdown\n---\nschema: test\n---\n\n" + "x" * 500 + "\n```"
+    valid, reason = _check_record(content)
+    assert valid
+
+
+def test_check_record_code_fences_no_frontmatter():
+    content = "```\nJust some text.\n```"
+    valid, reason = _check_record(content)
+    assert not valid
+
+
+# --- _strip_frontmatter tests ---
+
+
+def test_strip_frontmatter_removes_it():
+    content = "---\nschema: test\ntitle: Doc\n---\n\nBody text."
+    result = _strip_frontmatter(content)
+    assert "Body text." in result
+    assert "schema" not in result
+
+
+def test_strip_frontmatter_no_frontmatter():
+    content = "Just body text."
+    result = _strip_frontmatter(content)
+    assert result == content
+
+
+def test_strip_frontmatter_incomplete():
+    content = "---\nschema: test\nno closing delimiter"
+    result = _strip_frontmatter(content)
     assert result == content

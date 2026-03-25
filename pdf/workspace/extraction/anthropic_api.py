@@ -11,6 +11,7 @@ from pathlib import Path
 
 import anthropic
 
+from extraction import strip_code_fences
 from extraction.prompt import build_extraction_prompt
 
 
@@ -58,15 +59,7 @@ class AnthropicProvider:
 
         content = message.content[0].text
 
-        # Strip code fences if present
-        stripped = content.strip()
-        if stripped.startswith("```"):
-            newline_pos = stripped.find("\n")
-            if newline_pos >= 0:
-                stripped = stripped[newline_pos + 1 :]
-            if stripped.rstrip().endswith("```"):
-                stripped = stripped.rstrip()[:-3]
-            content = stripped.strip()
+        content = strip_code_fences(content)
 
         meta = {
             "input_tokens": message.usage.input_tokens,

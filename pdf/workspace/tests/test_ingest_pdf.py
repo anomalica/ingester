@@ -7,15 +7,6 @@ from pathlib import Path
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def test_cli_nonexistent_input():
-    result = subprocess.run(
-        ["python", "workspace/ingest_pdf.py", "/does/not/exist.pdf"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0
-
-
 def test_cli_nonexistent_file():
     result = subprocess.run(
         ["python", "workspace/ingest_pdf.py", "/nonexistent.pdf"],

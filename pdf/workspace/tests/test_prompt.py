@@ -5,7 +5,7 @@ def test_prompt_contains_record_format():
     prompt = build_extraction_prompt()
     assert "anomalica/record/1" in prompt
     assert "source_type" in prompt
-    assert "page:" in prompt
+    assert "file_page" in prompt
 
 
 def test_prompt_mentions_redaction():

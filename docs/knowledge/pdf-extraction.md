@@ -50,7 +50,13 @@ Titles containing colons (e.g. "Phenomena: Exposing the Truth") cause YAML parse
 
 ## Cost per page
 
-Roughly $0.03-0.04 per page based on small documents. Likely decreases for larger documents due to prompt caching.
+With the Anthropic API (Sonnet 4.6):
+- Input: ~2,000-2,500 tokens per page at $3/million tokens = ~$0.006-0.008 per page input
+- Output varies by content density
+- Batch API halves these costs
+- Prompt caching reduces further on repeated runs
+
+With Claude Code: roughly $0.03-0.04 per page due to multi-turn overhead (6-10 turns per extraction).
 
 ## Claude Code overhead
 

@@ -6,9 +6,12 @@ warnings (worth investigating), and optionally a fixed version of the content.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import yaml
+
+from extraction import strip_code_fences
 
 
 @dataclass
@@ -28,8 +31,6 @@ def _fix_yaml_quoting(frontmatter: str) -> str:
     For simple key: value lines where the value contains a colon,
     wrap the value in double quotes.
     """
-    import re
-
     lines = frontmatter.split("\n")
     fixed = []
     for line in lines:
@@ -88,13 +89,9 @@ def validate(content: str) -> ValidationResult:
     stripped = content.strip()
     if stripped.startswith("```"):
         result.errors.append("Content wrapped in code fence - should be stripped")
-        newline_pos = stripped.find("\n")
-        if newline_pos >= 0:
-            fixed_content = stripped[newline_pos + 1 :]
-        if fixed_content.rstrip().endswith("```"):
-            fixed_content = fixed_content.rstrip()[:-3].rstrip()
+        fixed_content = strip_code_fences(content)
         result.fixed = fixed_content
-        stripped = fixed_content.strip()
+        stripped = fixed_content
 
     # Parse frontmatter
     if not stripped.startswith("---"):
@@ -144,8 +141,6 @@ def validate(content: str) -> ValidationResult:
         return result
 
     # Check for HTML tags
-    import re
-
     html_tags = re.findall(r"<(sup|sub|br|div|span|p|b|i|em|strong)[>\s/]", body)
     if html_tags:
         unique_tags = sorted(set(html_tags))

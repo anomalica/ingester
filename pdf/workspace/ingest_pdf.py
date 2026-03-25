@@ -6,14 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-import os
-
+from extraction import strip_code_fences
 from extraction.chunker import get_page_count, split_pdf
 from validator import validate
 
@@ -58,15 +58,7 @@ def _should_skip(
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
     """Check that content looks like a valid record. Returns (valid, reason)."""
-    stripped = content.strip()
-    # Strip code fences first
-    if stripped.startswith("```"):
-        newline = stripped.find("\n")
-        if newline >= 0:
-            stripped = stripped[newline + 1 :]
-        if stripped.rstrip().endswith("```"):
-            stripped = stripped.rstrip()[:-3]
-        stripped = stripped.strip()
+    stripped = strip_code_fences(content)
     if not stripped.startswith("---"):
         return False, "no frontmatter (doesn't start with ---)"
     if len(stripped) < min_chars:
@@ -105,6 +97,8 @@ def _strip_frontmatter(content: str) -> str:
 
 def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
     """Extract with retries. Validates output is a real record."""
+    from extraction.anthropic_api import ContentFilteredError
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -117,11 +111,9 @@ def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
                 file=sys.stderr,
             )
             last_error = RuntimeError(reason)
+        except ContentFilteredError:
+            raise
         except RuntimeError as e:
-            from extraction.anthropic_api import ContentFilteredError
-
-            if isinstance(e, ContentFilteredError):
-                raise
             print(f"Attempt {attempt + 1} failed: {e}, retrying", file=sys.stderr)
             last_error = e
     raise last_error
@@ -131,6 +123,8 @@ def _extract_chunk_with_retry(
     provider, pdf_data: bytes, page_offset: int, page_count: int
 ) -> tuple[str, dict]:
     """Extract a chunk with retries. Validates content is proportional to page count."""
+    from extraction.anthropic_api import ContentFilteredError
+
     min_chars = max(500, page_count * 200)
     last_error = None
     for attempt in range(MAX_RETRIES):
@@ -145,12 +139,8 @@ def _extract_chunk_with_retry(
                 file=sys.stderr,
             )
             last_error = RuntimeError(reason)
-        except RuntimeError as e:
-            # Don't retry content filtering - it won't help
-            from extraction.anthropic_api import ContentFilteredError
-
-            if isinstance(e, ContentFilteredError):
-                raise
+        except ContentFilteredError:
+            raise
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",
                 file=sys.stderr,
@@ -219,7 +209,6 @@ def main():
         chunk_size = CLAUDE_CODE_CHUNK_SIZE
         print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
 
-    fallback_provider = None
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
@@ -353,6 +342,7 @@ def _extract_chunked(
                 f.write(chunk["pdf_data"])
                 chunk_path = Path(f.name)
             try:
+                # split_pdf returns 1-based page_offset, so base_offset is zero-based
                 sub_content, sub_metas = _extract_chunked(
                     provider, chunk_path, smaller, base_offset=real_offset - 1
                 )

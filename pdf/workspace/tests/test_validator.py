@@ -249,3 +249,25 @@ source_type: pdf
     assert any(
         "empty" in w.lower() or "no content" in w.lower() for w in result.warnings
     )
+
+
+def test_autofix_yaml_quoting():
+    """Titles with colons should be auto-quoted."""
+    record = """---
+schema: anomalica/record/1
+title: Report: Volume 1
+date: 2023-07-26
+source_type: pdf
+---
+
+Content.
+"""
+    result = validate(record)
+    assert result.fixed is not None
+    assert any("quoted" in w.lower() for w in result.warnings)
+    # The fixed version should parse correctly
+    import yaml
+
+    parts = result.fixed.split("---", 2)
+    fm = yaml.safe_load(parts[1])
+    assert fm["title"] == "Report: Volume 1"

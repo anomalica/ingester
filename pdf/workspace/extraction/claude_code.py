@@ -6,6 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from extraction import strip_code_fences
 from extraction.prompt import build_extraction_prompt
 
 
@@ -80,15 +81,7 @@ class ClaudeCodeProvider:
         if not content.strip():
             raise RuntimeError("Claude Code returned empty result")
 
-        # Strip markdown code fences if Claude wrapped the output
-        content = content.strip()
-        if content.startswith("```"):
-            newline_pos = content.find("\n")
-            if newline_pos >= 0:
-                content = content[newline_pos + 1 :]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
+        content = strip_code_fences(content)
 
         meta = _extract_metadata(envelope)
         return content, meta
