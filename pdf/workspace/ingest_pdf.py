@@ -84,6 +84,18 @@ def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
     return f"---{frontmatter}---{parts[2]}"
 
 
+def _renumber_pages(content: str, offset: int) -> str:
+    """Add offset to all file_page annotations in content."""
+    if offset == 0:
+        return content
+
+    def _add_offset(match):
+        page_num = int(match.group(1))
+        return f"file_page: {page_num + offset}"
+
+    return re.sub(r"^file_page: (\d+)", _add_offset, content, flags=re.MULTILINE)
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove YAML frontmatter from content, keeping only the body."""
     stripped = content.strip()
@@ -336,7 +348,8 @@ def _extract_chunked(
     in the original document. Non-zero when recursively re-splitting a failed chunk.
     """
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
-    contents = []
+    # Each entry is (content, real_offset) so we can renumber pages during merge
+    chunk_results = []
     metas = []
 
     for i, chunk in enumerate(chunks, 1):
@@ -353,7 +366,7 @@ def _extract_chunked(
                 real_offset,
                 chunk["page_count"],
             )
-            contents.append(content)
+            chunk_results.append((content, real_offset))
             metas.append(meta)
         except RuntimeError:
             # Retries exhausted - try smaller chunks
@@ -379,18 +392,22 @@ def _extract_chunked(
                 sub_content, sub_metas = _extract_chunked(
                     provider, chunk_path, smaller, base_offset=real_offset - 1
                 )
-                contents.append(sub_content)
+                chunk_results.append((sub_content, real_offset))
                 metas.extend(sub_metas)
             finally:
                 chunk_path.unlink(missing_ok=True)
 
-    if not contents:
+    if not chunk_results:
         raise RuntimeError("All chunks failed - no content extracted")
 
-    # Merge: keep the first chunk's frontmatter, strip from the rest
-    merged = contents[0]
-    for chunk_content in contents[1:]:
+    # Merge: keep the first chunk's frontmatter, strip and renumber the rest.
+    # The model numbers pages from 1 within each chunk PDF, so we renumber
+    # based on the chunk's real offset in the original document.
+    first_content, first_offset = chunk_results[0]
+    merged = _renumber_pages(first_content, first_offset - 1)
+    for chunk_content, real_offset in chunk_results[1:]:
         body = _strip_frontmatter(chunk_content)
+        body = _renumber_pages(body, real_offset - 1)
         merged += "\n" + body
 
     return merged, metas
