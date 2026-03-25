@@ -114,6 +114,10 @@ def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
             )
             last_error = RuntimeError(reason)
         except RuntimeError as e:
+            from extraction.anthropic_api import ContentFilteredError
+
+            if isinstance(e, ContentFilteredError):
+                raise
             print(f"Attempt {attempt + 1} failed: {e}, retrying", file=sys.stderr)
             last_error = e
     raise last_error
@@ -138,6 +142,11 @@ def _extract_chunk_with_retry(
             )
             last_error = RuntimeError(reason)
         except RuntimeError as e:
+            # Don't retry content filtering - it won't help
+            from extraction.anthropic_api import ContentFilteredError
+
+            if isinstance(e, ContentFilteredError):
+                raise
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",
                 file=sys.stderr,
