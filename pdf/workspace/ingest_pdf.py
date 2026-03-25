@@ -200,27 +200,57 @@ def main():
 
         provider = ClaudeCodeProvider()
         print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
+
+    fallback_provider = None
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
     all_meta = []
 
-    if page_count <= MAX_PAGES_SINGLE_PASS:
-        try:
-            content, meta = _extract_with_retry(provider, args.input_file)
-            all_meta.append(meta)
-        except RuntimeError:
-            print(
-                "Single-pass failed after retries, falling back to chunked extraction",
-                file=sys.stderr,
-            )
+    try:
+        if page_count <= MAX_PAGES_SINGLE_PASS:
+            try:
+                content, meta = _extract_with_retry(provider, args.input_file)
+                all_meta.append(meta)
+            except RuntimeError:
+                print(
+                    "Single-pass failed after retries, falling back to chunked extraction",
+                    file=sys.stderr,
+                )
+                content, chunk_metas = _extract_chunked(
+                    provider, args.input_file, CHUNK_SIZE
+                )
+                all_meta.extend(chunk_metas)
+        else:
             content, chunk_metas = _extract_chunked(
                 provider, args.input_file, CHUNK_SIZE
             )
             all_meta.extend(chunk_metas)
-    else:
-        content, chunk_metas = _extract_chunked(provider, args.input_file, CHUNK_SIZE)
-        all_meta.extend(chunk_metas)
+    except Exception as e:
+        # Check for content filtering (API only)
+        from extraction.anthropic_api import ContentFilteredError
+
+        if isinstance(e, ContentFilteredError) or (
+            isinstance(e.__cause__, ContentFilteredError)
+        ):
+            print(
+                "API content filter triggered, falling back to Claude Code",
+                file=sys.stderr,
+            )
+            from extraction.claude_code import ClaudeCodeProvider
+
+            fallback_provider = ClaudeCodeProvider()
+            all_meta = []
+            if page_count <= MAX_PAGES_SINGLE_PASS:
+                content, meta = _extract_with_retry(fallback_provider, args.input_file)
+                all_meta.append(meta)
+            else:
+                content, chunk_metas = _extract_chunked(
+                    fallback_provider, args.input_file, CHUNK_SIZE
+                )
+                all_meta.extend(chunk_metas)
+        else:
+            raise
 
     content = _patch_frontmatter(content, input_hash, page_count)
 
