@@ -1,7 +1,7 @@
 """Extraction provider using the Anthropic API directly.
 
 Sends PDFs as document attachments in a single API call.
-No tool use, no multi-turn conversation.
+No tool use, no multi-turn conversation. Uses streaming to avoid SDK timeout.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ class AnthropicProvider:
         encoded = base64.standard_b64encode(pdf_data).decode("utf-8")
 
         try:
-            message = self.client.messages.create(
+            with self.client.messages.stream(
                 model=self.model,
-                max_tokens=16000,
+                max_tokens=64000,
                 messages=[
                     {
                         "role": "user",
@@ -49,8 +49,8 @@ class AnthropicProvider:
                         ],
                     }
                 ],
-            )
-
+            ) as stream:
+                message = stream.get_final_message()
         except anthropic.BadRequestError as e:
             if "content filtering" in str(e).lower():
                 raise ContentFilteredError(str(e)) from e

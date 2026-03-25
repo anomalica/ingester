@@ -17,8 +17,12 @@ import os
 from extraction.chunker import get_page_count, split_pdf
 from validator import validate
 
-MAX_PAGES_SINGLE_PASS = 20
-CHUNK_SIZE = 20
+# Claude Code limits (multi-turn overhead makes large documents slow)
+CLAUDE_CODE_MAX_PAGES_SINGLE_PASS = 20
+CLAUDE_CODE_CHUNK_SIZE = 20
+# API limits (600 pages supported, no chunking needed for most documents)
+API_MAX_PAGES_SINGLE_PASS = 400
+API_CHUNK_SIZE = 100
 MIN_CHUNK_SIZE = 5
 MAX_RETRIES = 2
 
@@ -199,15 +203,20 @@ def main():
         )
         sys.exit(0)
 
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    using_api = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if using_api:
         from extraction.anthropic_api import AnthropicProvider
 
         provider = AnthropicProvider()
+        max_single_pass = API_MAX_PAGES_SINGLE_PASS
+        chunk_size = API_CHUNK_SIZE
         print("Using Anthropic API", file=sys.stderr)
     else:
         from extraction.claude_code import ClaudeCodeProvider
 
         provider = ClaudeCodeProvider()
+        max_single_pass = CLAUDE_CODE_MAX_PAGES_SINGLE_PASS
+        chunk_size = CLAUDE_CODE_CHUNK_SIZE
         print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
 
     fallback_provider = None
@@ -217,7 +226,7 @@ def main():
     all_meta = []
 
     try:
-        if page_count <= MAX_PAGES_SINGLE_PASS:
+        if page_count <= max_single_pass:
             try:
                 content, meta = _extract_with_retry(provider, args.input_file)
                 all_meta.append(meta)
@@ -227,12 +236,12 @@ def main():
                     file=sys.stderr,
                 )
                 content, chunk_metas = _extract_chunked(
-                    provider, args.input_file, CHUNK_SIZE
+                    provider, args.input_file, chunk_size
                 )
                 all_meta.extend(chunk_metas)
         else:
             content, chunk_metas = _extract_chunked(
-                provider, args.input_file, CHUNK_SIZE
+                provider, args.input_file, chunk_size
             )
             all_meta.extend(chunk_metas)
     except Exception as e:
@@ -250,12 +259,12 @@ def main():
 
             fallback_provider = ClaudeCodeProvider()
             all_meta = []
-            if page_count <= MAX_PAGES_SINGLE_PASS:
+            if page_count <= max_single_pass:
                 content, meta = _extract_with_retry(fallback_provider, args.input_file)
                 all_meta.append(meta)
             else:
                 content, chunk_metas = _extract_chunked(
-                    fallback_provider, args.input_file, CHUNK_SIZE
+                    fallback_provider, args.input_file, CLAUDE_CODE_CHUNK_SIZE
                 )
                 all_meta.extend(chunk_metas)
         else:
