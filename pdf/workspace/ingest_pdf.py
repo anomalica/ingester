@@ -253,29 +253,34 @@ def main():
     print(f"Metadata: {meta_file} (cost: ${total_cost:.4f})", file=sys.stderr)
 
 
-def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, list]:
+def _extract_chunked(
+    provider, pdf_path: Path, chunk_size: int, base_offset: int = 0
+) -> tuple[str, list]:
     """Extract a PDF in chunks, merging results.
 
     Each chunk is retried before falling back to smaller chunks.
     The first successful chunk's frontmatter is kept; subsequent chunks
     have their frontmatter stripped before merging.
+
+    base_offset: added to split_pdf's page_offset to get the real page number
+    in the original document. Non-zero when recursively re-splitting a failed chunk.
     """
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
     contents = []
     metas = []
 
     for i, chunk in enumerate(chunks, 1):
-        page_end = chunk["page_offset"] + chunk["page_count"] - 1
+        real_offset = chunk["page_offset"] + base_offset
+        page_end = real_offset + chunk["page_count"] - 1
         print(
-            f"Processing chunk {i}/{len(chunks)}, "
-            f"pages {chunk['page_offset']}-{page_end}",
+            f"Processing chunk {i}/{len(chunks)}, pages {real_offset}-{page_end}",
             file=sys.stderr,
         )
         try:
             content, meta = _extract_chunk_with_retry(
                 provider,
                 chunk["pdf_data"],
-                chunk["page_offset"],
+                real_offset,
                 chunk["page_count"],
             )
             contents.append(content)
@@ -284,7 +289,7 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, li
             # Retries exhausted - try smaller chunks
             if chunk_size <= MIN_CHUNK_SIZE:
                 print(
-                    f"Error: chunk pages {chunk['page_offset']}-{page_end} "
+                    f"Error: chunk pages {real_offset}-{page_end} "
                     f"failed at minimum chunk size ({MIN_CHUNK_SIZE} pages). "
                     f"Skipping this chunk.",
                     file=sys.stderr,
@@ -293,14 +298,16 @@ def _extract_chunked(provider, pdf_path: Path, chunk_size: int) -> tuple[str, li
             smaller = chunk_size // 2
             print(
                 f"Chunk {i} failed after retries, re-splitting "
-                f"pages {chunk['page_offset']}-{page_end} into {smaller}-page chunks",
+                f"pages {real_offset}-{page_end} into {smaller}-page chunks",
                 file=sys.stderr,
             )
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(chunk["pdf_data"])
                 chunk_path = Path(f.name)
             try:
-                sub_content, sub_metas = _extract_chunked(provider, chunk_path, smaller)
+                sub_content, sub_metas = _extract_chunked(
+                    provider, chunk_path, smaller, base_offset=real_offset - 1
+                )
                 contents.append(sub_content)
                 metas.extend(sub_metas)
             finally:
