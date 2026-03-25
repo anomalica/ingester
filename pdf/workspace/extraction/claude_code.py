@@ -67,10 +67,7 @@ class ClaudeCodeProvider:
                 input=full_prompt,
                 capture_output=True,
                 text=True,
-                timeout=600,
             )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Claude Code timed out")
         if result.returncode != 0:
             print(f"Claude Code stderr: {result.stderr.strip()}", file=sys.stderr)
             raise RuntimeError(
