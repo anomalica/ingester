@@ -64,6 +64,7 @@ class AnthropicProvider:
         meta = {
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,
+            "stop_reason": message.stop_reason,
         }
         if hasattr(message.usage, "cache_creation_input_tokens"):
             meta["cache_creation_input_tokens"] = (
@@ -71,6 +72,12 @@ class AnthropicProvider:
             )
         if hasattr(message.usage, "cache_read_input_tokens"):
             meta["cache_read_input_tokens"] = message.usage.cache_read_input_tokens
+
+        # If output was truncated, raise so retry logic can handle it
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError(
+                f"Output truncated at {message.usage.output_tokens} tokens"
+            )
 
         return content, meta
 

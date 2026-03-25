@@ -190,9 +190,15 @@ def validate(content: str) -> ValidationResult:
     if expected_pages and file_pages:
         max_page = max(file_pages)
         if max_page != expected_pages:
-            result.warnings.append(
-                f"Frontmatter says pages: {expected_pages} but highest "
-                f"file_page annotation is {max_page}"
-            )
+            missing_count = expected_pages - max_page
+            if missing_count > expected_pages * 0.25:
+                result.errors.append(
+                    f"Output truncated: only {max_page} of {expected_pages} pages extracted"
+                )
+            else:
+                result.warnings.append(
+                    f"Frontmatter says pages: {expected_pages} but highest "
+                    f"file_page annotation is {max_page}"
+                )
 
     return result

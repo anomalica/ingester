@@ -20,9 +20,9 @@ from validator import validate
 # Claude Code limits (multi-turn overhead makes large documents slow)
 CLAUDE_CODE_MAX_PAGES_SINGLE_PASS = 20
 CLAUDE_CODE_CHUNK_SIZE = 20
-# API limits (600 pages supported, no chunking needed for most documents)
-API_MAX_PAGES_SINGLE_PASS = 400
-API_CHUNK_SIZE = 100
+# API limits (model may stop early on very long documents)
+API_MAX_PAGES_SINGLE_PASS = 50
+API_CHUNK_SIZE = 50
 MIN_CHUNK_SIZE = 5
 MAX_RETRIES = 2
 

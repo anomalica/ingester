@@ -182,6 +182,46 @@ file_page: 2
 More.
 """
     result = validate(record)
+    # 3 of 5 pages missing (>25%) is an error
+    assert any("truncated" in e.lower() for e in result.errors)
+
+
+def test_page_count_minor_mismatch():
+    """A small page mismatch is a warning, not an error."""
+    record = """---
+schema: anomalica/record/1
+title: Test
+date: 2023-07-26
+source_type: pdf
+pages: 5
+---
+
+---
+file_page: 1
+---
+
+Content.
+
+---
+file_page: 2
+---
+
+More.
+
+---
+file_page: 3
+---
+
+Even more.
+
+---
+file_page: 4
+---
+
+Almost done.
+"""
+    result = validate(record)
+    assert not result.errors
     assert any("pages" in w and "5" in w for w in result.warnings)
 
 
