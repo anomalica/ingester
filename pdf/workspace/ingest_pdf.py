@@ -262,14 +262,46 @@ def main():
 
     content = _patch_frontmatter(content, input_hash, page_count)
 
-    # Validate and auto-fix
-    validation = validate(content)
-    if validation.fixed:
-        content = validation.fixed
-    for warning in validation.warnings:
-        print(f"Validation warning: {warning}", file=sys.stderr)
-    for error in validation.errors:
-        print(f"Validation error: {error}", file=sys.stderr)
+    # Validate, auto-fix, and retry if errors found
+    max_validation_retries = 2
+    for validation_attempt in range(max_validation_retries + 1):
+        validation = validate(content)
+        if validation.fixed:
+            content = validation.fixed
+        for warning in validation.warnings:
+            print(f"Validation warning: {warning}", file=sys.stderr)
+
+        if not validation.errors:
+            break
+
+        for error in validation.errors:
+            print(f"Validation error: {error}", file=sys.stderr)
+
+        if validation_attempt < max_validation_retries:
+            print(
+                f"Re-extracting due to validation errors "
+                f"(attempt {validation_attempt + 2})",
+                file=sys.stderr,
+            )
+            all_meta = []
+            try:
+                if page_count <= max_single_pass:
+                    content, meta = _extract_with_retry(provider, args.input_file)
+                    all_meta.append(meta)
+                else:
+                    content, chunk_metas = _extract_chunked(
+                        provider, args.input_file, chunk_size
+                    )
+                    all_meta.extend(chunk_metas)
+                content = _patch_frontmatter(content, input_hash, page_count)
+            except Exception:
+                print("Re-extraction failed", file=sys.stderr)
+                break
+        else:
+            print(
+                "Validation errors remain after retries, writing best result",
+                file=sys.stderr,
+            )
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)
