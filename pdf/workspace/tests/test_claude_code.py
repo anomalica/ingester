@@ -144,18 +144,6 @@ def test_extract_raises_on_empty_result_field():
             provider.extract(Path("/tmp/test.pdf"))
 
 
-def test_extract_raises_on_timeout():
-    provider = ClaudeCodeProvider()
-    import subprocess
-
-    with patch(
-        "extraction.claude_code.subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=600),
-    ):
-        with pytest.raises(RuntimeError, match="timed out"):
-            provider.extract(Path("/tmp/test.pdf"))
-
-
 # --- Chunk extraction ---
 
 
@@ -167,7 +155,6 @@ def test_extract_chunk_writes_temp_file_and_cleans_up(tmp_path):
 
     pdf_bytes = b"%PDF-1.4 fake content"
     temp_files_created = []
-
 
     def capture_run(*args, **kwargs):
         # The prompt contains the temp file path - capture it

@@ -51,8 +51,8 @@ def _should_skip(
         return False
 
 
-def _is_valid_record(content: str, min_chars: int = 500) -> bool:
-    """Check that content looks like a valid record with meaningful body text."""
+def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
+    """Check that content looks like a valid record. Returns (valid, reason)."""
     stripped = content.strip()
     # Strip code fences first
     if stripped.startswith("```"):
@@ -63,9 +63,10 @@ def _is_valid_record(content: str, min_chars: int = 500) -> bool:
             stripped = stripped.rstrip()[:-3]
         stripped = stripped.strip()
     if not stripped.startswith("---"):
-        return False
-    # Check there's meaningful content beyond just frontmatter
-    return len(stripped) >= min_chars
+        return False, "no frontmatter (doesn't start with ---)"
+    if len(stripped) < min_chars:
+        return False, f"content too short (expected at least {min_chars} chars)"
+    return True, ""
 
 
 def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
@@ -103,13 +104,14 @@ def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
     for attempt in range(MAX_RETRIES):
         try:
             content, meta = provider.extract(pdf_path)
-            if _is_valid_record(content):
+            valid, reason = _check_record(content)
+            if valid:
                 return content, meta
             print(
-                f"Attempt {attempt + 1}: extraction returned non-record output, retrying",
+                f"Attempt {attempt + 1}: {reason}, retrying",
                 file=sys.stderr,
             )
-            last_error = RuntimeError("Extraction returned non-record output")
+            last_error = RuntimeError(reason)
         except RuntimeError as e:
             print(f"Attempt {attempt + 1} failed: {e}, retrying", file=sys.stderr)
             last_error = e
@@ -120,21 +122,20 @@ def _extract_chunk_with_retry(
     provider, pdf_data: bytes, page_offset: int, page_count: int
 ) -> tuple[str, dict]:
     """Extract a chunk with retries. Validates content is proportional to page count."""
-    # Expect at least ~200 chars per page as a sanity check
     min_chars = max(500, page_count * 200)
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
             content, meta = provider.extract_chunk(pdf_data, page_offset, page_count)
-            if _is_valid_record(content, min_chars=min_chars):
+            valid, reason = _check_record(content, min_chars=min_chars)
+            if valid:
                 return content, meta
             print(
-                f"Chunk attempt {attempt + 1}: content too short "
-                f"({len(content.strip())} chars for {page_count} pages, "
-                f"expected at least {min_chars}), retrying",
+                f"Chunk attempt {attempt + 1}: {reason} "
+                f"({len(content.strip())} chars for {page_count} pages), retrying",
                 file=sys.stderr,
             )
-            last_error = RuntimeError("Chunk returned insufficient content")
+            last_error = RuntimeError(reason)
         except RuntimeError as e:
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",
