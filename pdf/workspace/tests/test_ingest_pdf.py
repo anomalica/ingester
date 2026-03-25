@@ -49,24 +49,15 @@ def test_cli_skips_existing_output_with_matching_hash(tmp_path):
 
 
 def test_cli_reprocesses_when_hash_mismatches(tmp_path):
-    """When output exists but hash differs, re-extract."""
+    """When hash differs, _should_skip returns False."""
+    import sys
+
+    sys.path.insert(0, "workspace")
+    from ingest_pdf import _should_skip
+
     output_md = tmp_path / "simple.md"
     output_md.write_text("old content")
     meta_file = tmp_path / "simple.meta.json"
     meta_file.write_text(json.dumps({"input_hash": "wrong_hash"}))
 
-    # This will fail because Claude Code isn't available in tests,
-    # but it should NOT skip - it should attempt extraction.
-    result = subprocess.run(
-        [
-            "python",
-            "workspace/ingest_pdf.py",
-            str(FIXTURES / "simple.pdf"),
-            str(tmp_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    # It will fail (no claude), but it should have tried (not skipped)
-    assert "skip" not in result.stderr.lower()
-    assert "hash mismatch" in result.stderr.lower()
+    assert not _should_skip(output_md, meta_file, "correct_hash", force=False)

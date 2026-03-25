@@ -51,8 +51,8 @@ def _should_skip(
         return False
 
 
-def _is_valid_record(content: str) -> bool:
-    """Quick check that content looks like a valid record (starts with frontmatter)."""
+def _is_valid_record(content: str, min_chars: int = 500) -> bool:
+    """Check that content looks like a valid record with meaningful body text."""
     stripped = content.strip()
     # Strip code fences first
     if stripped.startswith("```"):
@@ -62,7 +62,10 @@ def _is_valid_record(content: str) -> bool:
         if stripped.rstrip().endswith("```"):
             stripped = stripped.rstrip()[:-3]
         stripped = stripped.strip()
-    return stripped.startswith("---")
+    if not stripped.startswith("---"):
+        return False
+    # Check there's meaningful content beyond just frontmatter
+    return len(stripped) >= min_chars
 
 
 def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
@@ -116,18 +119,22 @@ def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
 def _extract_chunk_with_retry(
     provider, pdf_data: bytes, page_offset: int, page_count: int
 ) -> tuple[str, dict]:
-    """Extract a chunk with retries."""
+    """Extract a chunk with retries. Validates content is proportional to page count."""
+    # Expect at least ~200 chars per page as a sanity check
+    min_chars = max(500, page_count * 200)
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
             content, meta = provider.extract_chunk(pdf_data, page_offset, page_count)
-            if _is_valid_record(content) or content.strip():
+            if _is_valid_record(content, min_chars=min_chars):
                 return content, meta
             print(
-                f"Chunk attempt {attempt + 1}: empty result, retrying",
+                f"Chunk attempt {attempt + 1}: content too short "
+                f"({len(content.strip())} chars for {page_count} pages, "
+                f"expected at least {min_chars}), retrying",
                 file=sys.stderr,
             )
-            last_error = RuntimeError("Chunk returned empty result")
+            last_error = RuntimeError("Chunk returned insufficient content")
         except RuntimeError as e:
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",

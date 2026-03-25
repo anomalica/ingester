@@ -171,19 +171,27 @@ def validate(content: str) -> ValidationResult:
             "Found 'page:' annotation without 'file_page:' - should use file_page instead"
         )
 
-    # Check page sequence
+    # Check page sequence and completeness
+    expected_pages = frontmatter.get("pages")
     if file_pages:
+        missing_pages = []
         for i in range(1, len(file_pages)):
             expected = file_pages[i - 1] + 1
             actual = file_pages[i]
             if actual != expected:
-                for missing in range(expected, actual):
-                    result.warnings.append(
-                        f"Missing page annotation for file_page {missing}"
-                    )
+                missing_pages.extend(range(expected, actual))
 
-    # Check page count matches frontmatter
-    expected_pages = frontmatter.get("pages")
+        if missing_pages:
+            # A few missing pages is a warning; many is an error
+            if len(missing_pages) > 3:
+                result.errors.append(
+                    f"Significant content missing: {len(missing_pages)} pages "
+                    f"not found in output ({missing_pages[0]}-{missing_pages[-1]})"
+                )
+            else:
+                for p in missing_pages:
+                    result.warnings.append(f"Missing page annotation for file_page {p}")
+
     if expected_pages and file_pages:
         max_page = max(file_pages)
         if max_page != expected_pages:
