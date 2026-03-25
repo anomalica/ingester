@@ -141,6 +141,7 @@ def _extract_chunk_with_retry(
             last_error = RuntimeError(reason)
         except ContentFilteredError:
             raise
+        except RuntimeError as e:
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",
                 file=sys.stderr,
