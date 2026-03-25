@@ -12,8 +12,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import os
+
 from extraction.chunker import get_page_count, split_pdf
-from extraction.claude_code import ClaudeCodeProvider
 from validator import validate
 
 MAX_PAGES_SINGLE_PASS = 20
@@ -189,7 +190,16 @@ def main():
         )
         sys.exit(0)
 
-    provider = ClaudeCodeProvider()
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        from extraction.anthropic_api import AnthropicProvider
+
+        provider = AnthropicProvider()
+        print("Using Anthropic API", file=sys.stderr)
+    else:
+        from extraction.claude_code import ClaudeCodeProvider
+
+        provider = ClaudeCodeProvider()
+        print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 

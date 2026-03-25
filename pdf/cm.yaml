@@ -18,6 +18,7 @@ stages:
             - curl
       - pip:
           install:
+            - anthropic
             - pikepdf
             - pyyaml
 
