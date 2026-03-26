@@ -23,3 +23,29 @@ pdf:
 
   - url: https://oversight.house.gov/wp-content/uploads/2024/11/Written-Testimony-Elizondo.pdf
     path: pdf/2024-11-13-elizondo-written-testimony.pdf
+
+web:
+  - url: https://www.nytimes.com/2017/12/16/us/politics/pentagon-program-ufo-harry-reid.html
+    title: "Glowing Auras and 'Black Money': The Pentagon's Mysterious U.F.O. Program"
+    date: 2017-12-16
+    note: paywalled - will need Wayback Machine
+
+  - url: https://theintercept.com/2019/06/01/ufo-unidentified-history-channel-luis-elizondo-pentagon/
+    title: The Media Loves the UFO Expert Who Says He Worked for an Obscure Pentagon Program. Did He?
+    date: 2019-06-01
+
+  - url: https://www.theblackvault.com/documentarchive/pentagon-reinforces-mr-luis-elizondo-had-no-responsibilities-on-aatip-senator-harry-reids-2009-memo-changes-nothing/
+    title: Pentagon Reinforces Mr. Luis Elizondo Had No Responsibilities on AATIP
+    date: 2019-01-01
+
+  - url: https://thehill.com/opinion/4038159-stunning-ufo-crash-retrieval-allegations-deemed-credible-urgent/
+    title: Stunning UFO Crash Retrieval Allegations Deemed Credible, Urgent
+    date: 2022-07-01
+
+  - url: https://thedebrief.org/intelligence-officials-say-u-s-has-retrieved-non-human-craft/
+    title: Intelligence Officials Say U.S. Has Retrieved Craft of Non-Human Origin
+    date: 2023-06-05
+
+  - url: https://burlison.house.gov/media/press-releases/rep-burlison-welcomes-former-us-air-force-officer-david-grusch-special-advisor
+    title: Rep. Burlison Welcomes David Grusch as Special Advisor
+    date: 2025-03-01

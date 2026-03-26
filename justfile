@@ -5,6 +5,29 @@ ingest-pdf FILE:
     cd pdf
     cm run ingest input="$(realpath ../{{FILE}})" output="$(realpath ../output/)" -- --force
 
+test-web-extract URL:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p output
+    cd web
+    cm run ingest "{{URL}}" -- --force
+
+test-web-corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p output
+    cd web
+    python3 -c "
+    import yaml
+    with open('../test-corpus/sources.yaml') as f:
+        sources = yaml.safe_load(f)
+    for entry in sources.get('web', []):
+        print(entry['url'])
+    " | while read -r url; do
+        echo "Extracting: $url"
+        cm run ingest "$url" || echo "FAILED: $url"
+    done
+
 download-test-corpus: download-test-corpus-pdf
 
 download-test-corpus-pdf:
