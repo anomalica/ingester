@@ -66,6 +66,9 @@ STAGING_DIR=".cm-cache/staging"
 rm -rf "${STAGING_DIR}"
 trap 'rm -rf "${STAGING_DIR}"' EXIT
 
+echo "Staging symlink: workspace/shared"
+mkdir -p "${STAGING_DIR}/$(dirname "shared")"
+cp -rL "workspace/shared" "${STAGING_DIR}/shared"
 echo "Staging symlink: workspace/test-corpus"
 mkdir -p "${STAGING_DIR}/$(dirname "test-corpus")"
 cp -rL "workspace/test-corpus" "${STAGING_DIR}/test-corpus"

@@ -1,9 +1,6 @@
-"""Tests for record format validator."""
+"""Tests for record format validator (shared)."""
 
-import sys
-
-sys.path.insert(0, "workspace")
-from validator import validate
+from shared.validator import validate
 
 
 VALID_RECORD = """---
@@ -133,114 +130,6 @@ Content.
 """
     result = validate(record)
     assert not result.errors
-
-
-def test_non_sequential_pages():
-    record = """---
-schema: anomalica/record/1
-title: Test
-date: 2023-07-26
-source_type: pdf
-pages: 3
----
-
----
-file_page: 1
----
-
-Content.
-
----
-file_page: 3
----
-
-More content.
-"""
-    result = validate(record)
-    assert any("page" in w and "2" in w for w in result.warnings)
-
-
-def test_page_count_mismatch():
-    record = """---
-schema: anomalica/record/1
-title: Test
-date: 2023-07-26
-source_type: pdf
-pages: 5
----
-
----
-file_page: 1
----
-
-Content.
-
----
-file_page: 2
----
-
-More.
-"""
-    result = validate(record)
-    # 3 of 5 pages missing (>25%) is an error
-    assert any("truncated" in e.lower() for e in result.errors)
-
-
-def test_page_count_minor_mismatch():
-    """A small page mismatch is a warning, not an error."""
-    record = """---
-schema: anomalica/record/1
-title: Test
-date: 2023-07-26
-source_type: pdf
-pages: 5
----
-
----
-file_page: 1
----
-
-Content.
-
----
-file_page: 2
----
-
-More.
-
----
-file_page: 3
----
-
-Even more.
-
----
-file_page: 4
----
-
-Almost done.
-"""
-    result = validate(record)
-    assert not result.errors
-    assert any("pages" in w and "5" in w for w in result.warnings)
-
-
-def test_old_page_field_detected():
-    record = """---
-schema: anomalica/record/1
-title: Test
-date: 2023-07-26
-source_type: pdf
----
-
----
-page: 1
----
-
-Content.
-"""
-    result = validate(record)
-    assert any("page:" in w and "file_page" in w for w in result.warnings)
 
 
 def test_invalid_frontmatter_yaml():

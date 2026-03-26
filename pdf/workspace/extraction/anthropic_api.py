@@ -11,7 +11,7 @@ from pathlib import Path
 
 import anthropic
 
-from extraction import strip_code_fences
+from shared.validator import strip_code_fences
 from extraction.prompt import build_extraction_prompt
 
 

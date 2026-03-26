@@ -1,8 +1,5 @@
 """Tests for frontmatter patching and record checking in ingest_pdf."""
 
-import sys
-
-sys.path.insert(0, "workspace")
 from ingest_pdf import _check_record, _patch_frontmatter, _strip_frontmatter
 
 

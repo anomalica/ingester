@@ -5,6 +5,10 @@ names:
 
 runtime:
   features: []
+  # Claude Code volumes are for development only (fallback provider)
+  volumes:
+    - ~/.local/bin/claude:/usr/local/bin/claude:ro
+    - ~/.claude:~/.claude
 
 stages:
   base:
@@ -21,10 +25,6 @@ stages:
 
   development:
     from: base
-    runtime:
-      volumes:
-        - ~/.local/bin/claude:/usr/local/bin/claude:ro
-        - ~/.claude:~/.claude
     steps:
       - pip:
           install:
@@ -41,6 +41,7 @@ commands:
     description: Extract structured content from a PDF
     env:
       PYTHONUNBUFFERED: "1"
+      PYTHONPATH: workspace
     mounts:
       input:
         mode: ro

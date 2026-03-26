@@ -72,6 +72,7 @@ ARG USER_GID=1000 \
     USER_NAME=nonroot \
     USER_HOME=/home/nonroot
 COPY workspace ${WORKSPACE}
+COPY .cm-cache/staging/shared ${WORKSPACE}/shared
 COPY .cm-cache/staging/test-corpus ${WORKSPACE}/test-corpus
 RUN chown -R "${USER_UID}:${USER_GID}" /opt/venv
 USER ${USER_NAME}

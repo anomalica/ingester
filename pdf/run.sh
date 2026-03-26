@@ -17,7 +17,7 @@ if command -v docker >/dev/null 2>&1; then
 elif command -v podman >/dev/null 2>&1; then
 	RUNTIME="podman"
 else
-	echo "Error: Neither docker nor podman found in PATH" >&2
+	echo "Error: Neither docker nor podman found in PATH"
 	exit 1
 fi
 
@@ -71,6 +71,10 @@ if [[ "${RUNTIME}" == "podman" ]]; then
 	BASE_RUN_ARGS+=("--replace")
 fi
 
+# Additional bind mounts
+BASE_RUN_ARGS+=("-v" "$HOME/.local/bin/claude:/usr/local/bin/claude:ro,z")
+BASE_RUN_ARGS+=("-v" "$HOME/.claude:/home/nonroot/.claude:z")
+
 # Load .env files (walk parent directories, most distant first so closer values win)
 _env_files=()
 _search_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -102,6 +106,7 @@ run_ingest() {
 	local EXTRA_ARGS=()
 	# Environment variables
 	RUN_ARGS+=("-e" "PYTHONUNBUFFERED=1")
+	RUN_ARGS+=("-e" "PYTHONPATH=workspace")
 
 	# Parse mount arguments
 	local MANIFEST_LINES=()
@@ -137,7 +142,6 @@ run_ingest() {
 	local _manifest=""
 	if [[ ${#MANIFEST_LINES[@]} -gt 0 ]]; then
 		_manifest=$(mktemp /tmp/cm-manifest-XXXXXX)
-		trap 'rm -f "$_manifest"' EXIT
 		printf '%s\n' "${MANIFEST_LINES[@]}" >"$_manifest"
 		RUN_ARGS+=("-v" "${_manifest}:/run/cm/mounts:ro,z")
 	fi

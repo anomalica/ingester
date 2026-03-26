@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import os
 import re
 import sys
@@ -13,9 +11,10 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from extraction import strip_code_fences
 from extraction.chunker import extract_page, get_page_count, split_pdf
-from validator import validate
+from shared.hashing import content_hash_label, hash_file, store_exists
+from shared.record import write_record
+from shared.validator import strip_code_fences, validate
 
 # Claude Code limits (multi-turn overhead makes large documents slow)
 CLAUDE_CODE_MAX_PAGES_SINGLE_PASS = 20
@@ -27,52 +26,6 @@ MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
 OUTPUT_DIR = Path("/mnt/output")
-
-
-def _hash_file(path: Path) -> str:
-    """SHA-256 hash of a file's contents."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _slugify(text: str) -> str:
-    """Convert text to a URL-friendly slug."""
-    text = text.lower()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text.strip("-")[:80]
-
-
-def _build_symlink_name(content: str) -> str | None:
-    """Extract date, source_type, and title from frontmatter to build a symlink name."""
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return None
-    try:
-        import yaml
-
-        fm = yaml.safe_load(parts[1])
-    except Exception:
-        return None
-    if not isinstance(fm, dict):
-        return None
-
-    date = str(fm.get("date", "undated"))
-    source_type = fm.get("source_type", "unknown")
-    title = fm.get("title", "untitled")
-    slug = _slugify(title)
-    return f"{date}-{source_type}-{slug}.md"
-
-
-def _should_skip(store_dir: Path, input_hash: str, force: bool) -> bool:
-    """Check if extraction can be skipped. The hash IS the filename."""
-    if force:
-        return False
-    return (store_dir / f"{input_hash}.md").exists()
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
@@ -95,7 +48,8 @@ def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
 
     if "content_hash:" not in frontmatter:
         frontmatter = (
-            frontmatter.rstrip("\n") + f"\ncontent_hash: sha256:{input_hash}\n"
+            frontmatter.rstrip("\n")
+            + f"\ncontent_hash: {content_hash_label(input_hash)}\n"
         )
 
     frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
@@ -138,7 +92,6 @@ def _repair_missing_pages(
                 page_body = _strip_frontmatter(page_content)
                 page_body = _renumber_pages(page_body, page_num - 1)
 
-                # Insert before the next page annotation or at the end
                 next_page = page_num + 1
                 insertion_point = content.find(f"\nfile_page: {next_page}\n")
                 if insertion_point >= 0:
@@ -182,6 +135,20 @@ def _strip_frontmatter(content: str) -> str:
     if len(parts) >= 3:
         return parts[2]
     return content
+
+
+def _extract_frontmatter(content: str) -> dict | None:
+    """Parse the YAML frontmatter from content."""
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        import yaml
+
+        fm = yaml.safe_load(parts[1])
+        return fm if isinstance(fm, dict) else None
+    except Exception:
+        return None
 
 
 def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
@@ -263,13 +230,10 @@ def main():
     store_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
 
-    input_hash = _hash_file(args.input_file)
+    input_hash = hash_file(args.input_file)
 
-    if _should_skip(store_dir, input_hash, args.force):
-        print(
-            f"Skipping: {input_hash}.md already exists in store",
-            file=sys.stderr,
-        )
+    if not args.force and store_exists(store_dir, input_hash):
+        print(f"Skipping: {input_hash}.md already exists in store", file=sys.stderr)
         sys.exit(0)
 
     using_api = bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -323,6 +287,22 @@ def main():
     for error in validation.errors:
         print(f"Validation error: {error}", file=sys.stderr)
 
+    # PDF-specific: check page completeness
+    found_pages = set(
+        int(m) for m in re.findall(r"^file_page: (\d+)", content, re.MULTILINE)
+    )
+    if found_pages:
+        max_page = max(found_pages)
+        missing_count = page_count - max_page
+        if missing_count > page_count * 0.25:
+            validation.errors.append(
+                f"Output truncated: only {max_page} of {page_count} pages extracted"
+            )
+            print(
+                f"Validation error: Output truncated: only {max_page} of {page_count} pages",
+                file=sys.stderr,
+            )
+
     # If pages are missing, try to repair them individually
     if validation.errors:
         missing = _find_missing_pages(content, page_count)
@@ -333,7 +313,6 @@ def main():
             )
             content = _patch_frontmatter(content, input_hash, page_count)
 
-            # Re-validate after repair
             validation = validate(content)
             if validation.fixed:
                 content = validation.fixed
@@ -344,14 +323,13 @@ def main():
             if not validation.errors:
                 print("Repair successful", file=sys.stderr)
 
-    # Write to store (hash-named)
-    store_file = store_dir / f"{input_hash}.md"
-    meta_file = store_dir / f"{input_hash}.meta.json"
+    # Extract frontmatter for symlink naming
+    fm = _extract_frontmatter(content)
+    date = str(fm.get("date", "undated")) if fm else "undated"
+    source_type = fm.get("source_type", "pdf") if fm else "pdf"
+    title = fm.get("title", "untitled") if fm else "untitled"
 
-    store_file.write_text(content)
-    print(f"Written: {store_file}", file=sys.stderr)
-
-    # Save metadata
+    # Build metadata
     total_cost = sum(m.get("cost_usd", 0) for m in all_meta)
     total_duration = sum(m.get("duration_ms", 0) for m in all_meta)
     combined_meta = {
@@ -364,19 +342,20 @@ def main():
         "chunks": len(all_meta),
         "chunk_details": all_meta,
     }
-    meta_file.write_text(json.dumps(combined_meta, indent=2))
-    print(f"Metadata: {meta_file}", file=sys.stderr)
 
-    # Create human-readable symlink in records/
-    symlink_name = _build_symlink_name(content)
-    if symlink_name:
-        symlink_path = records_dir / symlink_name
-        # Remove existing symlink if it points elsewhere
-        if symlink_path.is_symlink():
-            symlink_path.unlink()
-        if not symlink_path.exists():
-            symlink_path.symlink_to(f"../store/{input_hash}.md")
-            print(f"Symlink: {symlink_path}", file=sys.stderr)
+    # Write to store and create symlink
+    record_path, symlink_path = write_record(
+        store_dir=store_dir,
+        records_dir=records_dir,
+        hex_hash=input_hash,
+        content=content,
+        metadata=combined_meta,
+        date=date,
+        source_type=source_type,
+        title=title,
+    )
+    print(f"Written: {record_path}", file=sys.stderr)
+    print(f"Symlink: {symlink_path}", file=sys.stderr)
 
 
 def _extract_chunked(
@@ -392,7 +371,6 @@ def _extract_chunked(
     in the original document. Non-zero when recursively re-splitting a failed chunk.
     """
     chunks = split_pdf(pdf_path, max_pages=chunk_size)
-    # Each entry is (content, real_offset) so we can renumber pages during merge
     chunk_results = []
     metas = []
 
@@ -413,9 +391,7 @@ def _extract_chunked(
             chunk_results.append((content, real_offset))
             metas.append(meta)
         except RuntimeError:
-            # Retries exhausted - try smaller chunks or Claude Code
             if chunk_size <= MIN_CHUNK_SIZE:
-                # Single page failed via API - try Claude Code as last resort
                 print(
                     f"API failed for page {real_offset}, trying Claude Code",
                     file=sys.stderr,
@@ -457,9 +433,6 @@ def _extract_chunked(
     if not chunk_results:
         raise RuntimeError("All chunks failed - no content extracted")
 
-    # Merge: keep the first chunk's frontmatter, strip and renumber the rest.
-    # The model numbers pages from 1 within each chunk PDF, so we renumber
-    # based on the chunk's real offset in the original document.
     first_content, first_offset = chunk_results[0]
     merged = _renumber_pages(first_content, first_offset - 1)
     for chunk_content, real_offset in chunk_results[1:]:
