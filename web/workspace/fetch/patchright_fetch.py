@@ -17,16 +17,21 @@ BROWSER_ARGS = [
     "--disable-gpu",
     "--disable-extensions",
 ]
-TIMEOUT_MS = 30_000
+TIMEOUT_MS = 60_000
 
 
 async def _fetch_async(url: str) -> str | None:
-    """Fetch a URL using a headless Chromium browser."""
+    """Fetch a URL using a headless Chromium browser.
+
+    Tries networkidle first (waits for all requests to finish). If that
+    times out (sites with persistent analytics connections), falls back
+    to domcontentloaded which fires once the HTML is parsed.
+    """
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=BROWSER_ARGS,
+                args=BROWSER_ARGS + ["--headless=new"],
             )
             context = await browser.new_context(
                 user_agent=USER_AGENT,
@@ -34,7 +39,10 @@ async def _fetch_async(url: str) -> str | None:
                 locale="en-GB",
             )
             page = await context.new_page()
-            await page.goto(url, timeout=TIMEOUT_MS, wait_until="networkidle")
+            try:
+                await page.goto(url, timeout=TIMEOUT_MS, wait_until="networkidle")
+            except Exception:
+                await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
             html = await page.content()
             await browser.close()
             return html
