@@ -52,7 +52,7 @@ class AnthropicProvider:
                 ],
             ) as stream:
                 message = stream.get_final_message()
-        except anthropic.BadRequestError as e:
+        except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
             if "content filtering" in str(e).lower():
                 raise ContentFilteredError(str(e)) from e
             raise RuntimeError(str(e)) from e
