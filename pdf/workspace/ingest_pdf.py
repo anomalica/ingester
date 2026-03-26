@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from extraction import strip_code_fences
-from extraction.chunker import get_page_count, split_pdf
+from extraction.chunker import extract_page, get_page_count, split_pdf
 from validator import validate
 
 # Claude Code limits (multi-turn overhead makes large documents slow)
@@ -94,6 +94,65 @@ def _renumber_pages(content: str, offset: int) -> str:
         return f"file_page: {page_num + offset}"
 
     return re.sub(r"^file_page: (\d+)", _add_offset, content, flags=re.MULTILINE)
+
+
+def _find_missing_pages(content: str, expected_pages: int) -> list[int]:
+    """Find page numbers that should be in the output but aren't."""
+    found = set(int(m) for m in re.findall(r"^file_page: (\d+)", content, re.MULTILINE))
+    return sorted(set(range(1, expected_pages + 1)) - found)
+
+
+def _repair_missing_pages(
+    content: str,
+    missing_pages: list[int],
+    provider,
+    pdf_path: Path,
+    max_attempts: int = 3,
+) -> str:
+    """Extract and insert missing pages into existing content."""
+    for page_num in missing_pages:
+        print(f"Repairing missing page {page_num}", file=sys.stderr)
+        page_data = extract_page(pdf_path, page_num)
+        for attempt in range(max_attempts):
+            try:
+                page_content, _ = provider.extract_chunk(page_data, page_num, 1)
+                page_body = _strip_frontmatter(page_content)
+                page_body = _renumber_pages(page_body, page_num - 1)
+
+                # Insert before the next page annotation or at the end
+                next_page = page_num + 1
+                insertion_point = content.find(f"\nfile_page: {next_page}\n")
+                if insertion_point >= 0:
+                    # Find the --- before the next page annotation
+                    block_start = content.rfind("\n---\n", 0, insertion_point)
+                    if block_start >= 0:
+                        content = (
+                            content[:block_start]
+                            + "\n"
+                            + page_body
+                            + content[block_start:]
+                        )
+                    else:
+                        content = (
+                            content[:insertion_point]
+                            + "\n"
+                            + page_body
+                            + content[insertion_point:]
+                        )
+                else:
+                    content += "\n" + page_body
+
+                print(f"  Page {page_num} repaired", file=sys.stderr)
+                break
+            except RuntimeError as e:
+                print(
+                    f"  Page {page_num} attempt {attempt + 1} failed: {e}",
+                    file=sys.stderr,
+                )
+                if attempt == max_attempts - 1:
+                    print(f"  Giving up on page {page_num}", file=sys.stderr)
+
+    return content
 
 
 def _strip_frontmatter(content: str) -> str:
@@ -222,6 +281,7 @@ def main():
         chunk_size = CLAUDE_CODE_CHUNK_SIZE
         print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
 
+    fallback_provider = None
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
@@ -274,46 +334,38 @@ def main():
 
     content = _patch_frontmatter(content, input_hash, page_count)
 
-    # Validate, auto-fix, and retry if errors found
-    max_validation_retries = 2
-    for validation_attempt in range(max_validation_retries + 1):
-        validation = validate(content)
-        if validation.fixed:
-            content = validation.fixed
-        for warning in validation.warnings:
-            print(f"Validation warning: {warning}", file=sys.stderr)
+    # Validate, auto-fix, and repair missing pages
+    # Determine which provider to use for repairs (may be fallback)
+    repair_provider = fallback_provider if fallback_provider else provider
 
-        if not validation.errors:
-            break
+    validation = validate(content)
+    if validation.fixed:
+        content = validation.fixed
+    for warning in validation.warnings:
+        print(f"Validation warning: {warning}", file=sys.stderr)
+    for error in validation.errors:
+        print(f"Validation error: {error}", file=sys.stderr)
 
-        for error in validation.errors:
-            print(f"Validation error: {error}", file=sys.stderr)
-
-        if validation_attempt < max_validation_retries:
-            print(
-                f"Re-extracting due to validation errors "
-                f"(attempt {validation_attempt + 2})",
-                file=sys.stderr,
+    # If pages are missing, try to repair them individually
+    if validation.errors:
+        missing = _find_missing_pages(content, page_count)
+        if missing:
+            print(f"Attempting to repair {len(missing)} missing pages", file=sys.stderr)
+            content = _repair_missing_pages(
+                content, missing, repair_provider, args.input_file
             )
-            all_meta = []
-            try:
-                if page_count <= max_single_pass:
-                    content, meta = _extract_with_retry(provider, args.input_file)
-                    all_meta.append(meta)
-                else:
-                    content, chunk_metas = _extract_chunked(
-                        provider, args.input_file, chunk_size
-                    )
-                    all_meta.extend(chunk_metas)
-                content = _patch_frontmatter(content, input_hash, page_count)
-            except Exception:
-                print("Re-extraction failed", file=sys.stderr)
-                break
-        else:
-            print(
-                "Validation errors remain after retries, writing best result",
-                file=sys.stderr,
-            )
+            content = _patch_frontmatter(content, input_hash, page_count)
+
+            # Re-validate after repair
+            validation = validate(content)
+            if validation.fixed:
+                content = validation.fixed
+            for warning in validation.warnings:
+                print(f"Validation warning: {warning}", file=sys.stderr)
+            for error in validation.errors:
+                print(f"Validation error: {error}", file=sys.stderr)
+            if not validation.errors:
+                print("Repair successful", file=sys.stderr)
 
     output_file.write_text(content)
     print(f"Written: {output_file}", file=sys.stderr)

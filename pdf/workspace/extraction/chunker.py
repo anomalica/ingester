@@ -11,6 +11,19 @@ def get_page_count(pdf_path: Path) -> int:
         return len(pdf.pages)
 
 
+def extract_page(pdf_path: Path, page_number: int) -> bytes:
+    """Extract a single page from a PDF as a standalone PDF bytes.
+
+    page_number is 1-based.
+    """
+    with pikepdf.Pdf.open(pdf_path) as pdf:
+        single = pikepdf.Pdf.new()
+        single.pages.append(pdf.pages[page_number - 1])
+        buf = io.BytesIO()
+        single.save(buf)
+        return buf.getvalue()
+
+
 def split_pdf(pdf_path: Path, max_pages: int = 50) -> list[dict]:
     """Split a PDF into chunks of at most max_pages pages.
 
