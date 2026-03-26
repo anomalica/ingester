@@ -23,7 +23,7 @@ CLAUDE_CODE_CHUNK_SIZE = 20
 # API limits (model may stop early on very long documents)
 API_MAX_PAGES_SINGLE_PASS = 50
 API_CHUNK_SIZE = 50
-MIN_CHUNK_SIZE = 5
+MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
 
@@ -168,8 +168,6 @@ def _strip_frontmatter(content: str) -> str:
 
 def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
     """Extract with retries. Validates output is a real record."""
-    from extraction.anthropic_api import ContentFilteredError
-
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -182,8 +180,6 @@ def _extract_with_retry(provider, pdf_path: Path) -> tuple[str, dict]:
                 file=sys.stderr,
             )
             last_error = RuntimeError(reason)
-        except ContentFilteredError:
-            raise
         except RuntimeError as e:
             print(f"Attempt {attempt + 1} failed: {e}, retrying", file=sys.stderr)
             last_error = e
@@ -194,8 +190,6 @@ def _extract_chunk_with_retry(
     provider, pdf_data: bytes, page_offset: int, page_count: int
 ) -> tuple[str, dict]:
     """Extract a chunk with retries. Validates content is proportional to page count."""
-    from extraction.anthropic_api import ContentFilteredError
-
     min_chars = max(500, page_count * 200)
     last_error = None
     for attempt in range(MAX_RETRIES):
@@ -210,8 +204,6 @@ def _extract_chunk_with_retry(
                 file=sys.stderr,
             )
             last_error = RuntimeError(reason)
-        except ContentFilteredError:
-            raise
         except RuntimeError as e:
             print(
                 f"Chunk attempt {attempt + 1} failed: {e}, retrying",
@@ -281,62 +273,33 @@ def main():
         chunk_size = CLAUDE_CODE_CHUNK_SIZE
         print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
 
-    fallback_provider = None
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
     all_meta = []
 
-    try:
-        if page_count <= max_single_pass:
-            try:
-                content, meta = _extract_with_retry(provider, args.input_file)
-                all_meta.append(meta)
-            except RuntimeError:
-                print(
-                    "Single-pass failed after retries, falling back to chunked extraction",
-                    file=sys.stderr,
-                )
-                content, chunk_metas = _extract_chunked(
-                    provider, args.input_file, chunk_size
-                )
-                all_meta.extend(chunk_metas)
-        else:
+    if page_count <= max_single_pass:
+        try:
+            content, meta = _extract_with_retry(provider, args.input_file)
+            all_meta.append(meta)
+        except RuntimeError:
+            print(
+                "Single-pass failed, falling back to chunked extraction",
+                file=sys.stderr,
+            )
             content, chunk_metas = _extract_chunked(
                 provider, args.input_file, chunk_size
             )
             all_meta.extend(chunk_metas)
-    except Exception as e:
-        # Check for content filtering (API only)
-        from extraction.anthropic_api import ContentFilteredError
-
-        if isinstance(e, ContentFilteredError) or (
-            isinstance(e.__cause__, ContentFilteredError)
-        ):
-            print(
-                "API content filter triggered, falling back to Claude Code",
-                file=sys.stderr,
-            )
-            from extraction.claude_code import ClaudeCodeProvider
-
-            fallback_provider = ClaudeCodeProvider()
-            all_meta = []
-            if page_count <= max_single_pass:
-                content, meta = _extract_with_retry(fallback_provider, args.input_file)
-                all_meta.append(meta)
-            else:
-                content, chunk_metas = _extract_chunked(
-                    fallback_provider, args.input_file, CLAUDE_CODE_CHUNK_SIZE
-                )
-                all_meta.extend(chunk_metas)
-        else:
-            raise
+    else:
+        content, chunk_metas = _extract_chunked(provider, args.input_file, chunk_size)
+        all_meta.extend(chunk_metas)
 
     content = _patch_frontmatter(content, input_hash, page_count)
 
     # Validate, auto-fix, and repair missing pages
     # Determine which provider to use for repairs (may be fallback)
-    repair_provider = fallback_provider if fallback_provider else provider
+    repair_provider = provider
 
     validation = validate(content)
     if validation.fixed:
@@ -421,14 +384,27 @@ def _extract_chunked(
             chunk_results.append((content, real_offset))
             metas.append(meta)
         except RuntimeError:
-            # Retries exhausted - try smaller chunks
+            # Retries exhausted - try smaller chunks or Claude Code
             if chunk_size <= MIN_CHUNK_SIZE:
+                # Single page failed via API - try Claude Code as last resort
                 print(
-                    f"Error: chunk pages {real_offset}-{page_end} "
-                    f"failed at minimum chunk size ({MIN_CHUNK_SIZE} pages). "
-                    f"Skipping this chunk.",
+                    f"API failed for page {real_offset}, trying Claude Code",
                     file=sys.stderr,
                 )
+                try:
+                    from extraction.claude_code import ClaudeCodeProvider
+
+                    cc = ClaudeCodeProvider()
+                    content, meta = cc.extract_chunk(
+                        chunk["pdf_data"], real_offset, chunk["page_count"]
+                    )
+                    chunk_results.append((content, real_offset))
+                    metas.append(meta)
+                except RuntimeError as e:
+                    print(
+                        f"Claude Code also failed for page {real_offset}: {e}. Skipping.",
+                        file=sys.stderr,
+                    )
                 continue
             smaller = chunk_size // 2
             print(
