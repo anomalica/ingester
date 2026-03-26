@@ -7,9 +7,10 @@ The orchestrator iterates FETCHERS in order, trying extraction after each
 successful fetch to determine whether the HTML contains usable content.
 """
 
-from fetch import http, wayback
+from fetch import http, patchright_fetch, wayback
 
 FETCHERS = [
     ("http", http.fetch),
     ("wayback", wayback.fetch),
+    ("patchright", patchright_fetch.fetch),
 ]
