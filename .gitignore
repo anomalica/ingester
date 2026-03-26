@@ -1,5 +1,6 @@
 .env
 CLAUDE.md
+__pycache__/
 test-corpus/pdf/
 test-corpus/media/
 test-corpus/ebook/
