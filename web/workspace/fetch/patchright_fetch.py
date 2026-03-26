@@ -30,7 +30,7 @@ async def _fetch_async(url: str) -> str | None:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
-                headless=True,
+                ignore_default_args=["--headless"],
                 args=BROWSER_ARGS + ["--headless=new"],
             )
             context = await browser.new_context(
