@@ -5,9 +5,6 @@ names:
 
 runtime:
   features: []
-  volumes:
-    - ~/.local/bin/claude:/usr/local/bin/claude:ro
-    - ~/.claude:~/.claude
 
 stages:
   base:
@@ -24,6 +21,10 @@ stages:
 
   development:
     from: base
+    runtime:
+      volumes:
+        - ~/.local/bin/claude:/usr/local/bin/claude:ro
+        - ~/.claude:~/.claude
     steps:
       - pip:
           install:

@@ -17,7 +17,7 @@ if command -v docker >/dev/null 2>&1; then
 elif command -v podman >/dev/null 2>&1; then
 	RUNTIME="podman"
 else
-	echo "Error: Neither docker nor podman found in PATH"
+	echo "Error: Neither docker nor podman found in PATH" >&2
 	exit 1
 fi
 
@@ -71,14 +71,22 @@ if [[ "${RUNTIME}" == "podman" ]]; then
 	BASE_RUN_ARGS+=("--replace")
 fi
 
-# Additional bind mounts
-BASE_RUN_ARGS+=("-v" "$HOME/.local/bin/claude:/usr/local/bin/claude:ro")
-BASE_RUN_ARGS+=("-v" "$HOME/.claude:/home/nonroot/.claude")
-
-# Load .env file if present
-if [[ -f "$(pwd)/.env" ]]; then
-	BASE_RUN_ARGS+=("--env-file" "$(pwd)/.env")
-fi
+# Load .env files (walk parent directories, most distant first so closer values win)
+_env_files=()
+_search_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+while true; do
+	if [[ -f "${_search_dir}/.env" ]]; then
+		_env_files=("${_search_dir}/.env" "${_env_files[@]}")
+	fi
+	_parent="$(dirname "${_search_dir}")"
+	if [[ "${_parent}" == "${_search_dir}" ]]; then
+		break
+	fi
+	_search_dir="${_parent}"
+done
+for _env_file in "${_env_files[@]}"; do
+	BASE_RUN_ARGS+=("--env-file" "${_env_file}")
+done
 
 # Runtime passthrough args
 if [[ ${#RUNTIME_PASSTHROUGH[@]} -gt 0 ]]; then
@@ -129,6 +137,7 @@ run_ingest() {
 	local _manifest=""
 	if [[ ${#MANIFEST_LINES[@]} -gt 0 ]]; then
 		_manifest=$(mktemp /tmp/cm-manifest-XXXXXX)
+		trap 'rm -f "$_manifest"' EXIT
 		printf '%s\n' "${MANIFEST_LINES[@]}" >"$_manifest"
 		RUN_ARGS+=("-v" "${_manifest}:/run/cm/mounts:ro,z")
 	fi

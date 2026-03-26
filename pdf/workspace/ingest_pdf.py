@@ -26,6 +26,8 @@ API_CHUNK_SIZE = 50
 MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
+OUTPUT_DIR = Path("/mnt/output")
+
 
 def _hash_file(path: Path) -> str:
     """SHA-256 hash of a file's contents."""
@@ -36,24 +38,41 @@ def _hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _should_skip(
-    output_file: Path, meta_file: Path, input_hash: str, force: bool
-) -> bool:
-    """Check if extraction can be skipped based on existing output and hash match."""
+def _slugify(text: str) -> str:
+    """Convert text to a URL-friendly slug."""
+    text = text.lower()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"-+", "-", text)
+    return text.strip("-")[:80]
+
+
+def _build_symlink_name(content: str) -> str | None:
+    """Extract date, source_type, and title from frontmatter to build a symlink name."""
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        import yaml
+
+        fm = yaml.safe_load(parts[1])
+    except Exception:
+        return None
+    if not isinstance(fm, dict):
+        return None
+
+    date = str(fm.get("date", "undated"))
+    source_type = fm.get("source_type", "unknown")
+    title = fm.get("title", "untitled")
+    slug = _slugify(title)
+    return f"{date}-{source_type}-{slug}.md"
+
+
+def _should_skip(store_dir: Path, input_hash: str, force: bool) -> bool:
+    """Check if extraction can be skipped. The hash IS the filename."""
     if force:
         return False
-    if not output_file.exists():
-        return False
-    if not meta_file.exists():
-        return False
-    try:
-        meta = json.loads(meta_file.read_text())
-        if meta.get("input_hash") == input_hash:
-            return True
-        print("Input file has changed (hash mismatch), re-extracting", file=sys.stderr)
-        return False
-    except json.JSONDecodeError:
-        return False
+    return (store_dir / f"{input_hash}.md").exists()
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
@@ -123,7 +142,6 @@ def _repair_missing_pages(
                 next_page = page_num + 1
                 insertion_point = content.find(f"\nfile_page: {next_page}\n")
                 if insertion_point >= 0:
-                    # Find the --- before the next page annotation
                     block_start = content.rfind("\n---\n", 0, insertion_point)
                     if block_start >= 0:
                         content = (
@@ -218,7 +236,6 @@ def main():
         description="Extract content from a PDF into Anomalica record format."
     )
     parser.add_argument("input_file", nargs="?", type=Path, help="Path to the PDF file")
-    parser.add_argument("output_dir", nargs="?", type=Path, help="Output directory")
     parser.add_argument(
         "--force", action="store_true", help="Re-process even if output file exists"
     )
@@ -231,10 +248,8 @@ def main():
         pdfs = list(mnt_input.glob("*.pdf"))
         if pdfs:
             args.input_file = pdfs[0]
-    if not args.output_dir and mnt_output.exists():
-        args.output_dir = mnt_output
-    if not args.output_dir:
-        args.output_dir = Path(".")
+
+    output_dir = mnt_output if mnt_output.exists() else OUTPUT_DIR
 
     if not args.input_file:
         parser.error("input_file is required (or use cm run ingest input=<file>)")
@@ -243,16 +258,16 @@ def main():
         print(f"Error: file not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    stem = args.input_file.stem
-    output_file = args.output_dir / f"{stem}.md"
-    meta_file = args.output_dir / f"{stem}.meta.json"
+    store_dir = output_dir / "store"
+    records_dir = output_dir / "records"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    records_dir.mkdir(parents=True, exist_ok=True)
 
     input_hash = _hash_file(args.input_file)
 
-    if _should_skip(output_file, meta_file, input_hash, args.force):
+    if _should_skip(store_dir, input_hash, args.force):
         print(
-            f"Skipping: {output_file} already exists with matching hash",
+            f"Skipping: {input_hash}.md already exists in store",
             file=sys.stderr,
         )
         sys.exit(0)
@@ -298,7 +313,6 @@ def main():
     content = _patch_frontmatter(content, input_hash, page_count)
 
     # Validate, auto-fix, and repair missing pages
-    # Determine which provider to use for repairs (may be fallback)
     repair_provider = provider
 
     validation = validate(content)
@@ -330,8 +344,12 @@ def main():
             if not validation.errors:
                 print("Repair successful", file=sys.stderr)
 
-    output_file.write_text(content)
-    print(f"Written: {output_file}", file=sys.stderr)
+    # Write to store (hash-named)
+    store_file = store_dir / f"{input_hash}.md"
+    meta_file = store_dir / f"{input_hash}.meta.json"
+
+    store_file.write_text(content)
+    print(f"Written: {store_file}", file=sys.stderr)
 
     # Save metadata
     total_cost = sum(m.get("cost_usd", 0) for m in all_meta)
@@ -347,7 +365,18 @@ def main():
         "chunk_details": all_meta,
     }
     meta_file.write_text(json.dumps(combined_meta, indent=2))
-    print(f"Metadata: {meta_file} (cost: ${total_cost:.4f})", file=sys.stderr)
+    print(f"Metadata: {meta_file}", file=sys.stderr)
+
+    # Create human-readable symlink in records/
+    symlink_name = _build_symlink_name(content)
+    if symlink_name:
+        symlink_path = records_dir / symlink_name
+        # Remove existing symlink if it points elsewhere
+        if symlink_path.is_symlink():
+            symlink_path.unlink()
+        if not symlink_path.exists():
+            symlink_path.symlink_to(f"../store/{input_hash}.md")
+            print(f"Symlink: {symlink_path}", file=sys.stderr)
 
 
 def _extract_chunked(

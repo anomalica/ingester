@@ -1,9 +1,9 @@
-test-pdf-extract FILE:
+ingest-pdf FILE:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p output/pdf
+    mkdir -p output/store output/records
     cd pdf
-    cm run ingest input="$(realpath ../{{FILE}})" output="$(realpath ../output/pdf/)" -- --force
+    cm run ingest input="$(realpath ../{{FILE}})" output="$(realpath ../output/)" -- --force
 
 download-test-corpus: download-test-corpus-pdf
 

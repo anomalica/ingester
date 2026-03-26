@@ -59,6 +59,7 @@ ARG USER_GID=1000 \
     USER_NAME=nonroot \
     USER_HOME=/home/nonroot
 RUN pip install --no-cache-dir pytest
+RUN chown -R "${USER_UID}:${USER_GID}" /opt/venv
 USER ${USER_NAME}
 
 ################################################################################
@@ -72,4 +73,5 @@ ARG USER_GID=1000 \
     USER_HOME=/home/nonroot
 COPY workspace ${WORKSPACE}
 COPY .cm-cache/staging/test-corpus ${WORKSPACE}/test-corpus
+RUN chown -R "${USER_UID}:${USER_GID}" /opt/venv
 USER ${USER_NAME}
