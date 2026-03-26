@@ -25,10 +25,8 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
     ]
-    if ":" in title:
-        lines.append(f'title: "{title}"')
-    else:
-        lines.append(f"title: {title}")
+    escaped_title = title.replace('"', '\\"')
+    lines.append(f'title: "{escaped_title}"')
     lines.extend(
         [
             f"date: {date}",
