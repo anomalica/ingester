@@ -1,6 +1,12 @@
-"""Tests for frontmatter patching and record checking in ingest_pdf."""
+"""Tests for frontmatter patching, record checking, and page utilities in ingest_pdf."""
 
-from ingest_pdf import _check_record, _patch_frontmatter, _strip_frontmatter
+from ingest_pdf import (
+    _check_record,
+    _find_missing_pages,
+    _patch_frontmatter,
+    _renumber_pages,
+    _strip_frontmatter,
+)
 
 
 def test_injects_content_hash():
@@ -96,3 +102,37 @@ def test_strip_frontmatter_incomplete():
     content = "---\nschema: test\nno closing delimiter"
     result = _strip_frontmatter(content)
     assert result == content
+
+
+# --- _find_missing_pages tests ---
+
+
+def test_find_missing_pages_none_missing():
+    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 2\n---\n\n---\nfile_page: 3\n---\n"
+    assert _find_missing_pages(content, 3) == []
+
+
+def test_find_missing_pages_gap():
+    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 3\n---\n"
+    assert _find_missing_pages(content, 3) == [2]
+
+
+def test_find_missing_pages_truncated():
+    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 2\n---\n"
+    assert _find_missing_pages(content, 5) == [3, 4, 5]
+
+
+# --- _renumber_pages tests ---
+
+
+def test_renumber_pages_zero_offset():
+    content = "---\nfile_page: 1\n---\nContent."
+    assert _renumber_pages(content, 0) == content
+
+
+def test_renumber_pages_with_offset():
+    content = "---\nfile_page: 1\n---\nContent.\n---\nfile_page: 2\n---\nMore."
+    result = _renumber_pages(content, 50)
+    assert "file_page: 51" in result
+    assert "file_page: 52" in result
+    assert "file_page: 1" not in result
