@@ -7,3 +7,12 @@ test-corpus/ebook/
 test-corpus/web/
 output/
 staging/
+acquire/Dockerfile
+acquire/build.sh
+acquire/run.sh
+formats/webpage/Dockerfile
+formats/webpage/build.sh
+formats/webpage/run.sh
+formats/pdf/Dockerfile
+formats/pdf/build.sh
+formats/pdf/run.sh

@@ -1,5 +1,0 @@
-.cm-cache/
-__pycache__/
-Dockerfile
-build.sh
-run.sh
