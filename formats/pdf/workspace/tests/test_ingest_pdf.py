@@ -8,11 +8,12 @@ from shared.hashing import store_exists
 from shared.record import slugify, symlink_name
 
 FIXTURES = Path(__file__).parent / "fixtures"
+INGEST_SCRIPT = Path(__file__).parent.parent / "ingest_pdf.py"
 
 
 def test_cli_nonexistent_file():
     result = subprocess.run(
-        ["python", "workspace/ingest_pdf.py", "/nonexistent.pdf"],
+        ["python", str(INGEST_SCRIPT), "/nonexistent.pdf"],
         capture_output=True,
         text=True,
     )

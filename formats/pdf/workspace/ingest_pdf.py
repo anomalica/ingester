@@ -206,7 +206,23 @@ def main():
     parser.add_argument(
         "--force", action="store_true", help="Re-process even if output file exists"
     )
+    parser.add_argument(
+        "--staging-dir",
+        type=Path,
+        help="Path to staging directory (alternative to input_file)",
+    )
     args = parser.parse_args()
+
+    # If staging dir provided, read the asset path from the manifest
+    if args.staging_dir:
+        import json
+
+        manifest_path = args.staging_dir / "manifest.json"
+        if not manifest_path.exists():
+            print(f"Error: no manifest.json in {args.staging_dir}", file=sys.stderr)
+            sys.exit(1)
+        manifest = json.loads(manifest_path.read_text())
+        args.input_file = args.staging_dir / manifest["asset"]
 
     # Auto-detect mount paths from container-magic
     mnt_input = Path("/mnt/input")

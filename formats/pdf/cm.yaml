@@ -5,10 +5,11 @@ names:
 
 runtime:
   features: []
-  # Claude Code volumes are for development only (fallback provider)
   volumes:
     - ~/.local/bin/claude:/usr/local/bin/claude:ro
     - ~/.claude:~/.claude
+    - ../../staging:/mnt/staging:ro
+    - ../../output:/mnt/output:rw
 
 stages:
   base:
