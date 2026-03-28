@@ -1,0 +1,4 @@
+name: ebook
+handles:
+  - application/epub+zip
+  - application/x-mobipocket-ebook
