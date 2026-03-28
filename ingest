@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STAGING_DIR="${SCRIPT_DIR}/staging"
+
+usage() {
+	echo "Usage: ingest [--force] <url-or-path>" >&2
+	echo "" >&2
+	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
+	echo "" >&2
+	echo "Options:" >&2
+	echo "  --force    Re-process even if output already exists" >&2
+	exit 1
+}
+
+FORCE=""
+INPUT=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--force)
+		FORCE="--force"
+		shift
+		;;
+	--help | -h) usage ;;
+	-*)
+		echo "Unknown option: $1" >&2
+		usage
+		;;
+	*)
+		if [[ -n "$INPUT" ]]; then
+			echo "Error: multiple inputs not supported" >&2
+			usage
+		fi
+		INPUT="$1"
+		shift
+		;;
+	esac
+done
+
+if [[ -z "$INPUT" ]]; then
+	usage
+fi
+
+UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+RUN_DIR="${STAGING_DIR}/${UUID}"
+mkdir -p "$RUN_DIR"
+
+echo "Run: ${UUID}" >&2
+
+is_url() {
+	[[ "$1" =~ ^https?:// ]]
+}
+
+if is_url "$INPUT"; then
+	echo "Acquiring: ${INPUT}" >&2
+	(cd "${SCRIPT_DIR}/acquire" && cm run acquire "$INPUT" -- --staging-dir "/mnt/staging/${UUID}")
+else
+	if [[ ! -f "$INPUT" ]]; then
+		echo "Error: file not found: ${INPUT}" >&2
+		exit 1
+	fi
+
+	RESOLVED="$(realpath "$INPUT")"
+	EXT="${RESOLVED##*.}"
+	cp "$RESOLVED" "${RUN_DIR}/asset.${EXT}"
+
+	DETECTED_TYPE="$(python3 -c "
+import sys
+sys.path.insert(0, '${SCRIPT_DIR}/acquire/workspace')
+from detect import detect_from_bytes, detect_from_extension
+with open('${RUN_DIR}/asset.${EXT}', 'rb') as f:
+    data = f.read(8192)
+result = detect_from_bytes(data)
+if not result:
+    result = detect_from_extension('${RUN_DIR}/asset.${EXT}')
+print(result or 'application/octet-stream')
+")"
+
+	python3 -c "
+import json
+from datetime import datetime, timezone
+manifest = {
+    'source': '${RESOLVED}',
+    'asset': 'asset.${EXT}',
+    'detected_type': '${DETECTED_TYPE}',
+    'fetch_method': 'local',
+    'fetched_at': datetime.now(timezone.utc).isoformat(),
+}
+with open('${RUN_DIR}/manifest.json', 'w') as f:
+    json.dump(manifest, f, indent=2)
+"
+	echo "Local file staged: ${DETECTED_TYPE}" >&2
+fi
+
+MANIFEST="${RUN_DIR}/manifest.json"
+if [[ ! -f "$MANIFEST" ]]; then
+	echo "Error: no manifest found after acquisition" >&2
+	exit 1
+fi
+
+DETECTED_TYPE="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('detected_type') or '')")"
+ASSET="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('asset') or '')")"
+
+if [[ -z "$DETECTED_TYPE" || -z "$ASSET" ]]; then
+	ERROR="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('error', 'unknown error'))")"
+	echo "Error: acquisition failed - ${ERROR}" >&2
+	exit 1
+fi
+
+echo "Detected type: ${DETECTED_TYPE}" >&2
+
+HANDLER=""
+for format_yaml in "${SCRIPT_DIR}"/formats/*/format.yaml; do
+	FORMAT_DIR="$(dirname "$format_yaml")"
+	FORMAT_NAME="$(basename "$FORMAT_DIR")"
+
+	if python3 -c "
+import yaml, sys
+with open('${format_yaml}') as f:
+    fmt = yaml.safe_load(f)
+sys.exit(0 if '${DETECTED_TYPE}' in fmt.get('handles', []) else 1)
+"; then
+		HANDLER="$FORMAT_NAME"
+		break
+	fi
+done
+
+if [[ -z "$HANDLER" ]]; then
+	echo "Error: no format handler for type: ${DETECTED_TYPE}" >&2
+	echo "Staging directory preserved: ${RUN_DIR}" >&2
+	exit 1
+fi
+
+echo "Routing to: ${HANDLER}" >&2
+
+case "$HANDLER" in
+webpage)
+	(cd "${SCRIPT_DIR}/formats/webpage" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	;;
+pdf)
+	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE)
+	;;
+*)
+	echo "Error: handler '${HANDLER}' is not yet implemented" >&2
+	exit 1
+	;;
+esac
+
+echo "Done. Staging: ${RUN_DIR}" >&2
