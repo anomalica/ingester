@@ -1,34 +1,3 @@
-ingest URL_OR_PATH *FLAGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ./ingest {{FLAGS}} "{{URL_OR_PATH}}"
-
-ingest-pdf FILE:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p output/store output/records
-    cd formats/pdf
-    cm run ingest input="$(realpath ../../{{FILE}})" output="$(realpath ../../output/)" -- --force
-
-test-web-extract URL:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ./ingest --force "{{URL}}"
-
-test-web-corpus:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    python3 -c "
-    import yaml
-    with open('test-corpus/sources.yaml') as f:
-        sources = yaml.safe_load(f)
-    for entry in sources.get('web', []):
-        print(entry['url'])
-    " | while read -r url; do
-        echo "Extracting: $url"
-        ./ingest --force "$url" || echo "FAILED: $url"
-    done
-
 test-acquire:
     #!/usr/bin/env bash
     set -euo pipefail
