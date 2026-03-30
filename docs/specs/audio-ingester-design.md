@@ -1,10 +1,10 @@
-# Media Ingester Design
+# Audio Ingester Design
 
-Converts audio and video sources (podcasts, YouTube, broadcast interviews) into the Anomalica record format - markdown with YAML annotations, speaker turn boundaries, and timestamps.
+Converts audio and video sources (podcasts, YouTube, broadcast interviews) into the Anomalica record format - markdown with YAML annotations, speaker turn boundaries, and timestamps. Only the audio track is processed; video frames are not analysed.
 
 ## Scope
 
-This spec covers the `formats/media/` format handler. It receives a pre-fetched audio or video file from the acquire/staging pipeline and produces a structured transcript as an Anomalica record.
+This spec covers the `formats/audio/` format handler. It receives a pre-fetched audio or video file from the acquire/staging pipeline, extracts the audio track, and produces a structured transcript as an Anomalica record.
 
 The acquire layer already handles downloading. This handler receives a local file path via the staging directory, same as the webpage and PDF handlers.
 
@@ -121,11 +121,11 @@ These are detected heuristically during transcription alignment (Phase 1 can ski
 ## Architecture
 
 ```
-formats/media/
+formats/audio/
   cm.yaml                    # container-magic config (heavy: PyTorch, WhisperX, pyannote)
   format.yaml                # declares handled MIME types
   workspace/
-    ingest_media.py           # CLI entry point and orchestration
+    ingest_audio.py           # CLI entry point and orchestration
     transcription/
       whisperx_transcribe.py  # WhisperX transcription wrapper
     diarisation/
@@ -134,11 +134,11 @@ formats/media/
       align.py                # Align WhisperX words to pyannote speaker segments
     tests/
       conftest.py
-      test_ingest_media.py
+      test_ingest_audio.py
       test_alignment.py
 ```
 
-### ingest_media.py
+### ingest_audio.py
 
 Reads the staging directory manifest, runs the pipeline, writes the record. Same pattern as `ingest_webpage.py` and `ingest_pdf.py`.
 
@@ -246,9 +246,9 @@ The alignment logic:
 The media container is heavy - it needs PyTorch, WhisperX, and pyannote.audio. GPU access (NVIDIA Container Toolkit) is strongly recommended for reasonable transcription speed.
 
 ```yaml
-# formats/media/cm.yaml
+# formats/audio/cm.yaml
 names:
-  image: anomalica-ingester-media
+  image: anomalica-ingester-audio
   workspace: workspace
   user: nonroot
 
@@ -288,7 +288,7 @@ stages:
 
 commands:
   ingest:
-    command: python workspace/ingest_media.py
+    command: python workspace/ingest_audio.py
     description: Transcribe and diarise audio/video into Anomalica record format
     env:
       PYTHONUNBUFFERED: "1"
@@ -300,7 +300,7 @@ The PyTorch base image is ~6 GB. The WhisperX model (Large V3 Turbo, 809M parame
 
 ## format.yaml
 
-Already exists at `formats/media/format.yaml`:
+Already exists at `formats/audio/format.yaml`:
 
 ```yaml
 name: media
