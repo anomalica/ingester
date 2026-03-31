@@ -1,0 +1,47 @@
+names:
+  image: anomalica-ingester-audio
+  workspace: workspace
+  user: nonroot
+
+runtime:
+  features:
+    - gpu
+  volumes:
+    - ../../staging:/mnt/staging:ro
+    - ../../output:/mnt/output:rw
+    - ../../shared:/mnt/shared:ro
+
+stages:
+  base:
+    from: pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
+    steps:
+      - apt-get:
+          install:
+            - ffmpeg
+            - git
+      - pip:
+          install:
+            - whisperx
+            - pyannote.audio
+            - pyyaml
+
+  development:
+    from: base
+    steps:
+      - pip:
+          install:
+            - pytest
+
+  production:
+    from: base
+    steps:
+      - copy: workspace
+
+commands:
+  ingest:
+    command: python workspace/ingest_audio.py
+    description: Transcribe and diarise audio/video into Anomalica record format
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/mnt/shared"
+      HF_TOKEN: "${HF_TOKEN}"
