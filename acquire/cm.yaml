@@ -16,6 +16,7 @@ stages:
           PLAYWRIGHT_BROWSERS_PATH: /opt/playwright
       - apt-get:
           install:
+            - ffmpeg
             - libnss3
             - libnspr4
             - libatk1.0-0
@@ -39,6 +40,7 @@ stages:
             - pyyaml
             - patchright
             - playwright
+            - yt-dlp
       - run:
           - mkdir -p /opt/playwright && chmod 777 /opt/playwright
           - playwright install chromium
