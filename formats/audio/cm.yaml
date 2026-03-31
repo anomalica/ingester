@@ -45,4 +45,3 @@ commands:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/mnt/shared"
-      HF_TOKEN: "${HF_TOKEN}"
