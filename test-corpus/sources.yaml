@@ -24,6 +24,12 @@ pdf:
   - url: https://oversight.house.gov/wp-content/uploads/2024/11/Written-Testimony-Elizondo.pdf
     path: pdf/2024-11-13-elizondo-written-testimony.pdf
 
+audio:
+  - url: https://www.youtube.com/watch?v=ZBtMbBPzqHY
+    title: "60 Minutes - Navy pilots describe encounters with UFOs"
+    date: 2021-05-16
+    note: ~13 minutes, 2-3 speakers, good first test for audio pipeline
+
 web:
   - url: https://www.nytimes.com/2017/12/16/us/politics/pentagon-program-ufo-harry-reid.html
     title: "Glowing Auras and 'Black Money': The Pentagon's Mysterious U.F.O. Program"

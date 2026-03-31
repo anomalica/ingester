@@ -17,10 +17,14 @@ MIME_TO_EXT = {
     "application/xhtml+xml": ".html",
     "application/pdf": ".pdf",
     "audio/mpeg": ".mp3",
-    "video/mp4": ".mp4",
-    "audio/wav": ".wav",
-    "video/webm": ".webm",
+    "audio/mp4": ".m4a",
+    "audio/opus": ".opus",
     "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/flac": ".flac",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
     "application/epub+zip": ".epub",
 }
 
