@@ -45,7 +45,13 @@ def acquire(url: str, staging_dir: Path) -> int:
             print(f"  {method_name}: no response", file=sys.stderr)
             continue
 
-        content, content_type_header = result
+        # Fetchers return (content, content_type) or (content, content_type, metadata)
+        fetcher_metadata = None
+        if len(result) == 3:
+            content, content_type_header, fetcher_metadata = result
+        else:
+            content, content_type_header = result
+
         detected_type = detect(
             data=content,
             content_type_header=content_type_header,
@@ -74,6 +80,19 @@ def acquire(url: str, staging_dir: Path) -> int:
             "fetch_method": method_name,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        # Include metadata from fetcher if available (e.g. yt-dlp title, date)
+        if fetcher_metadata:
+            if fetcher_metadata.get("title"):
+                manifest["title"] = fetcher_metadata["title"]
+            upload_date = fetcher_metadata.get("upload_date")
+            if upload_date and len(upload_date) == 8:
+                manifest["date"] = (
+                    f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+                )
+            if fetcher_metadata.get("duration"):
+                manifest["duration"] = fetcher_metadata["duration"]
+
         (staging_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
         print(f"  {method_name}: success ({detected_type})", file=sys.stderr)

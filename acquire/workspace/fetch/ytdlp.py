@@ -33,6 +33,26 @@ def _is_supported(url: str) -> bool:
     return any(pattern.search(url) for pattern in SUPPORTED_PATTERNS)
 
 
+def _extract_metadata(url: str) -> dict | None:
+    """Extract video metadata via yt-dlp --dump-json.
+
+    Returns a dict with title, upload_date, duration, etc., or None on failure.
+    """
+    result = subprocess.run(
+        ["yt-dlp", "--dump-json", "--no-playlist", url],
+        capture_output=True,
+        timeout=TIMEOUT,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        import json
+
+        return json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def _download(url: str, output_dir: Path) -> Path | None:
     """Download audio track to output_dir via yt-dlp.
 
@@ -60,14 +80,18 @@ def _download(url: str, output_dir: Path) -> Path | None:
     return audio_files[0] if audio_files else None
 
 
-def fetch(url: str) -> tuple[bytes, str | None] | None:
+def fetch(url: str) -> tuple[bytes, str | None, dict | None] | None:
     """Download audio from a video platform via yt-dlp.
 
     Returns None immediately for unsupported URLs. For supported URLs,
-    downloads the audio track and returns (bytes, content_type).
+    downloads the audio track and returns (bytes, content_type, metadata).
+    The metadata dict contains yt-dlp extracted fields (title, upload_date, etc.)
+    or None if metadata extraction failed.
     """
     if not _is_supported(url):
         return None
+
+    metadata = _extract_metadata(url)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         audio_file = _download(url, Path(tmp_dir))
@@ -77,4 +101,4 @@ def fetch(url: str) -> tuple[bytes, str | None] | None:
         content_type = EXTENSION_TO_MIME.get(
             audio_file.suffix.lower(), "application/octet-stream"
         )
-        return (audio_file.read_bytes(), content_type)
+        return (audio_file.read_bytes(), content_type, metadata)

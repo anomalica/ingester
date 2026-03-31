@@ -40,30 +40,37 @@ def test_fetch_returns_none_for_unsupported_url():
     assert result is None
 
 
+@patch("fetch.ytdlp._extract_metadata", return_value=None)
 @patch("fetch.ytdlp._download")
-def test_fetch_returns_audio_bytes_mp3(mock_download, tmp_path):
+def test_fetch_returns_audio_bytes_mp3(mock_download, mock_metadata, tmp_path):
     audio_file = tmp_path / "audio.mp3"
     audio_file.write_bytes(b"fake mp3 content")
     mock_download.return_value = audio_file
 
     result = fetch("https://www.youtube.com/watch?v=abc123")
     assert result is not None
-    content, content_type = result
+    content, content_type, metadata = result
     assert content == b"fake mp3 content"
     assert content_type == "audio/mpeg"
+    assert metadata is None
 
 
+@patch(
+    "fetch.ytdlp._extract_metadata",
+    return_value={"title": "Test Video", "upload_date": "20210516"},
+)
 @patch("fetch.ytdlp._download")
-def test_fetch_returns_audio_bytes_opus(mock_download, tmp_path):
+def test_fetch_returns_audio_bytes_opus(mock_download, mock_metadata, tmp_path):
     audio_file = tmp_path / "audio.opus"
     audio_file.write_bytes(b"fake opus content")
     mock_download.return_value = audio_file
 
     result = fetch("https://youtu.be/abc123")
     assert result is not None
-    content, content_type = result
+    content, content_type, metadata = result
     assert content == b"fake opus content"
     assert content_type == "audio/opus"
+    assert metadata["title"] == "Test Video"
 
 
 @patch("fetch.ytdlp._download")
