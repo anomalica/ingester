@@ -9,11 +9,13 @@ from models import SpeakerSegment
 
 DIARISATION_MODEL = "pyannote/speaker-diarization-3.1"
 
-# Default clustering threshold: 0.7045 (model default).
+# Clustering threshold: 0.7045 is the model default.
 # Higher = stricter merging = more speakers (over-split).
 # Lower = looser merging = fewer speakers (under-split).
-# Over-splitting is preferable: easier to merge than to untangle.
-CLUSTERING_THRESHOLD = 0.85
+# Tested 0.50-0.95 on broadcast content (60 Minutes): 0.60-0.92 all produce
+# 7 speakers (correct count). Below 0.60 fragments real speakers; above 0.92
+# merges them. Archival/cockpit audio conflation is a voice similarity issue
+# that thresholds can't resolve without breaking other speakers.
 
 
 def diarise(audio_path: Path) -> list[SpeakerSegment]:
@@ -45,15 +47,6 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, token=hf_token)
-    pipeline.instantiate(
-        {
-            "clustering": {
-                "method": "centroid",
-                "min_cluster_size": 12,
-                "threshold": CLUSTERING_THRESHOLD,
-            },
-        }
-    )
     pipeline.to(torch.device(device))
 
     import torchaudio
