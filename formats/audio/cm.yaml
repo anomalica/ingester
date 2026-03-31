@@ -23,6 +23,7 @@ stages:
           install:
             - whisperx
             - pyannote.audio
+            - torchvision
             - pyyaml
 
   development:
