@@ -7,7 +7,7 @@ from pathlib import Path
 from models import Segment, Word
 
 WHISPER_MODEL = "large-v3-turbo"
-BATCH_SIZE = 16
+BATCH_SIZE = 4
 
 
 def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
@@ -36,6 +36,9 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
     result = model.transcribe(str(audio_path), batch_size=BATCH_SIZE)
 
     detected_language = result.get("language", language or "en")
+
+    del model
+    torch.cuda.empty_cache()
 
     model_a, metadata = whisperx.load_align_model(
         language_code=detected_language, device=device
