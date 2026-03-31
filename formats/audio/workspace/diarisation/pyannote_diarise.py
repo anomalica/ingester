@@ -45,10 +45,13 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
 
     waveform, sample_rate = torchaudio.load(str(audio_path))
     audio_input = {"waveform": waveform, "sample_rate": sample_rate}
-    diarization = pipeline(audio_input)
+    result = pipeline(audio_input)
+
+    # pyannote 4.x returns DiarizeOutput; extract the Annotation object
+    annotation = getattr(result, "speaker_diarization", result)
 
     segments = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
+    for turn, _, speaker in annotation.itertracks(yield_label=True):
         segments.append(SpeakerSegment(speaker=speaker, start=turn.start, end=turn.end))
 
     return segments
