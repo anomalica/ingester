@@ -8,6 +8,11 @@ test-webpage:
     set -euo pipefail
     python3 -m pytest formats/webpage/workspace/tests/ -v
 
+test-audio:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 -m pytest formats/audio/workspace/tests/ -v
+
 test-pdf:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -30,6 +35,9 @@ test-all:
     echo ""
     echo "=== webpage ==="
     python3 -m pytest formats/webpage/workspace/tests/ -v
+    echo ""
+    echo "=== audio ==="
+    python3 -m pytest formats/audio/workspace/tests/ -v
     echo ""
     echo "=== pdf ==="
     cd formats/pdf && cm run pytest workspace/tests/ -v

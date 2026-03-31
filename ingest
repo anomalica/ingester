@@ -141,6 +141,9 @@ webpage)
 pdf)
 	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE)
 	;;
+audio)
+	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	;;
 *)
 	echo "Error: handler '${HANDLER}' is not yet implemented" >&2
 	exit 1
