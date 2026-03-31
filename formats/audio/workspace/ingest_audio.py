@@ -26,9 +26,13 @@ def _build_frontmatter(
     source_url: str | None,
     duration: float,
     hex_hash: str,
-    speakers: list[str],
+    speakers: dict[str, float],
 ) -> str:
-    """Assemble YAML frontmatter for an audio/video record."""
+    """Assemble YAML frontmatter for an audio/video record.
+
+    speakers is a dict mapping speaker ID to the time (seconds) of their
+    first appearance, used to help humans identify speakers.
+    """
     escaped_title = title.replace('"', '\\"')
     lines = [
         "---",
@@ -42,12 +46,14 @@ def _build_frontmatter(
     lines.append(f"duration: {int(duration)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append("speakers:")
-    for speaker_id in speakers:
+    for speaker_id, first_time in speakers.items():
         display_id = speaker_id.lower()
         label = display_id.replace("_", " ").title()
         lines.append(f"  - id: {display_id}")
         lines.append(f"    name: {label}")
-        lines.append("    confirmed: false")
+        lines.append(
+            f"    confirmed: false  # first appears at {format_time(first_time)}"
+        )
     lines.append("---")
     return "\n".join(lines)
 
@@ -63,14 +69,15 @@ def _build_content(turns: list[Turn]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def _unique_speakers(turns: list[Turn]) -> list[str]:
-    """Extract unique speaker IDs in order of first appearance."""
-    seen = set()
-    speakers = []
+def _unique_speakers(turns: list[Turn]) -> dict[str, float]:
+    """Extract unique speaker IDs in order of first appearance.
+
+    Returns a dict mapping speaker ID to the timestamp of their first turn.
+    """
+    speakers: dict[str, float] = {}
     for turn in turns:
-        if turn.speaker not in seen:
-            seen.add(turn.speaker)
-            speakers.append(turn.speaker)
+        if turn.speaker not in speakers:
+            speakers[turn.speaker] = turn.time
     return speakers
 
 
