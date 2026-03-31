@@ -38,7 +38,7 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, use_auth_token=hf_token)
+    pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, token=hf_token)
     pipeline.to(torch.device(device))
 
     diarization = pipeline(str(audio_path))
