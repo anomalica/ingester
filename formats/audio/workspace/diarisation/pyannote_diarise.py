@@ -41,7 +41,11 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
     pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, token=hf_token)
     pipeline.to(torch.device(device))
 
-    diarization = pipeline(str(audio_path))
+    import torchaudio
+
+    waveform, sample_rate = torchaudio.load(str(audio_path))
+    audio_input = {"waveform": waveform, "sample_rate": sample_rate}
+    diarization = pipeline(audio_input)
 
     segments = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
