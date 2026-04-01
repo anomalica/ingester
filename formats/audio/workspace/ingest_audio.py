@@ -127,7 +127,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         return 1
 
     source_type = detect_source_type(detected_type)
-    speakers = _unique_speakers(turns)
+    speakers_unordered = _unique_speakers(turns)
+
+    # Renumber speaker IDs by order of first appearance
+    remap = {}
+    for i, old_id in enumerate(speakers_unordered):
+        remap[old_id] = f"SPEAKER_{i:02d}"
+    turns = [Turn(speaker=remap[t.speaker], time=t.time, text=t.text) for t in turns]
+    speakers = {remap[k]: v for k, v in speakers_unordered.items()}
+
     duration = segments[-1].end
 
     is_url = source.startswith("http://") or source.startswith("https://")
