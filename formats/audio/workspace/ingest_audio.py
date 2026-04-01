@@ -48,11 +48,9 @@ def _build_frontmatter(
     lines.append("speakers:")
     for speaker_id, first_time in speakers.items():
         display_id = speaker_id.lower()
-        label = display_id.replace("_", " ").title()
         lines.append(f"  - id: {display_id}")
-        lines.append(f"    name: {label}")
+        lines.append("    name: Unknown")
         lines.append(f"    first_appearance: {format_time(first_time)}")
-        lines.append("    confirmed: false")
     lines.append("---")
     return "\n".join(lines)
 

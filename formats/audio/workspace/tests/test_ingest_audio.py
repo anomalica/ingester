@@ -191,7 +191,8 @@ def test_run_speaker_roster_in_frontmatter(mock_transcribe, mock_diarise, tmp_pa
     content = md_files[0].read_text()
     assert "speakers:" in content
     assert "id: speaker_00" in content
-    assert "confirmed: false" in content
+    assert "name: Unknown" in content
+    assert "first_appearance:" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
