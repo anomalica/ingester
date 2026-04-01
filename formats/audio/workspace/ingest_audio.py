@@ -51,6 +51,7 @@ def _build_frontmatter(
         lines.append(f"  - id: {display_id}")
         lines.append("    name: Unknown")
         lines.append(f"    first_appearance: {format_time(first_time)}")
+        lines.append("    relevant: true")
     lines.append("---")
     return "\n".join(lines)
 
