@@ -1,102 +1,84 @@
 # anomalica-ingester
 
-Converts raw source material into the Anomalica record format for downstream knowledge extraction.
-
-Each input format has its own container-magic project with independent dependencies:
+Converts raw source material (PDFs, audio, video, web pages) into the Anomalica record format for downstream knowledge extraction.
 
 ```
 anomalica-ingester/
-  pdf/          - PDF extraction (born-digital and scanned)
-  media/        - audio/video transcription (planned)
-  ebook/        - ebook text extraction (planned)
-  web/          - web page scraping (planned)
-  test-corpus/  - test input files (gitignored, downloaded via justfile)
-  output/       - extraction output (gitignored)
+  ingest              - host script: routes by content type
+  acquire/            - stage 1: fetch and cache source material
+  formats/
+    pdf/              - PDF extraction (born-digital and scanned)
+    audio/            - audio/video transcription and speaker diarisation
+    webpage/          - web page content extraction
+    ebook/            - ebook text extraction (planned)
+  shared/             - utilities shared across format handlers
+  staging/            - transient staging directories (gitignored)
+  output/             - extraction output (gitignored)
+    store/            - hash-named record files (source of truth)
+    records/          - human-readable symlinks
+  test-corpus/        - test input files (gitignored, downloaded via justfile)
+  docs/
+    specs/            - format handler design specifications
+    labelling-guide.md - guide for reviewing and labelling records
 ```
+
+## Usage
+
+```bash
+# Ingest any URL or local file
+./ingest https://www.youtube.com/watch?v=ZBtMbBPzqHY
+./ingest /path/to/document.pdf
+./ingest --force https://example.com/article    # re-process even if already in store
+```
+
+The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in `output/store/` with a human-readable symlink in `output/records/`.
 
 ## Record format
 
-All ingesters produce markdown files with YAML frontmatter and annotations. The format specification is in the meta-repository at `architecture/record-format.md`.
+All format handlers produce markdown files with YAML frontmatter and annotations. The full specification is in the [meta-repository](https://github.com/anomalica/anomalica/blob/main/architecture/record-format.md).
 
-A record file looks like:
+## After ingestion
 
-```markdown
----
-schema: anomalica/record/1
-title: Document Title
-date: 2023-07-26
-authors:
-  - Author Name
-source_type: pdf
-pages: 3
----
+Records need human review before downstream processing. See the [labelling guide](docs/labelling-guide.md) for conventions on speaker identification, naming, and relevance marking.
 
----
-file_page: 1
----
+## Setup
 
-# Heading
-
-Paragraph text. Any {{redacted: ~3 words}} appear inline.
-
----
-file_page: 2
----
-
-More content on page two.
-```
-
-## PDF ingester
-
-### Setup
-
-Requires container-magic and Docker.
+Requires [container-magic](https://github.com/markhedleyjones/container-magic) and Docker. Each format handler has its own container with independent dependencies.
 
 ```bash
-cd pdf
-cm build
+# Build all containers
+cd acquire && cm build && cd ..
+cd formats/pdf && cm build && cd ../..
+cd formats/audio && cm build && cd ../..
+cd formats/webpage && cm build && cd ../..
 ```
 
-Set `ANTHROPIC_API_KEY` in a `.env` file at the repository root for direct API access (faster, cheaper). Without it, falls back to Claude Code headless mode.
+### Environment
 
-### Usage
+Add to `.env` at the repository root:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...    # for PDF extraction
+HF_TOKEN=hf_...                 # for audio diarisation (pyannote model access)
+```
+
+The HF_TOKEN requires a [HuggingFace account](https://huggingface.co/settings/tokens) with access to the [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) gated model.
+
+## Testing
 
 ```bash
-# Via container-magic command
-cd pdf
-cm run ingest input=/path/to/document.pdf output=/path/to/output/
-
-# Via justfile
-just test-pdf-extract test-corpus/pdf/document.pdf
+just test-shared      # shared utilities
+just test-acquire     # acquisition layer
+just test-webpage     # webpage handler
+just test-audio       # audio handler
+just test-pdf         # PDF handler (runs in container)
+just test-all         # everything
 ```
 
-Output: `<filename>.md` (the record) and `<filename>.meta.json` (extraction metadata with token counts).
-
-### How it works
-
-1. Sends the PDF to a vision model for comprehension-based extraction
-2. Anthropic API by default (single request, no tool use)
-3. Documents over 50 pages are chunked, with page annotations renumbered after merge
-4. If the API content filter blocks output, progressively halves chunk size down to single pages
-5. Individual pages that the API cannot process fall back to Claude Code
-6. Validates output: checks frontmatter, page completeness, no HTML tags
-7. Repairs missing pages by re-extracting just those pages
-8. Hash-based idempotency: skips re-extraction if the input file hasn't changed
-
-### Test corpus
+## Test corpus
 
 ```bash
-just download-test-corpus    # downloads publicly available test PDFs
+just download-test-corpus    # downloads publicly available test files
 ```
 
-Sources are listed in `test-corpus/sources.yaml`. Some files require manual download (defence.gov blocks automated requests).
-
-## Adding a new format
-
-Each format is a separate container-magic project:
-
-1. Create a directory (e.g. `ebook/`)
-2. Add `cm.yaml` with dependencies
-3. Implement extraction that produces the record format
-4. Add a validator if the format has specific requirements
-5. Add test corpus entries to `test-corpus/sources.yaml`
+Sources are listed in `test-corpus/sources.yaml`.
