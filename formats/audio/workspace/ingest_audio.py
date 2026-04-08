@@ -47,8 +47,7 @@ def _build_frontmatter(
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append("speakers:")
     for speaker_id, first_time in speakers.items():
-        display_id = speaker_id.lower()
-        lines.append(f"  - id: {display_id}")
+        lines.append(f"  - id: {speaker_id}")
         lines.append("    name: Unknown")
         lines.append(f"    first_appearance: {format_time(first_time)}")
         lines.append("    relevant: true")
@@ -60,9 +59,8 @@ def _build_content(turns: list[Turn]) -> str:
     """Build the record body with speaker turn annotations."""
     blocks = []
     for turn in turns:
-        speaker_id = turn.speaker.lower()
         timestamp = format_time(turn.time)
-        block = f"---\nspeaker: {speaker_id}\ntime: {timestamp}\n---\n{turn.text}"
+        block = f"---\nspeaker: {turn.speaker}\ntime: {timestamp}\n---\n{turn.text}"
         blocks.append(block)
     return "\n\n".join(blocks) + "\n"
 
@@ -132,7 +130,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     # Renumber speaker IDs by order of first appearance
     remap = {}
     for i, old_id in enumerate(speakers_unordered):
-        remap[old_id] = f"SPEAKER_{i:02d}"
+        remap[old_id] = f"Speaker {i + 1}"
     turns = [Turn(speaker=remap[t.speaker], time=t.time, text=t.text) for t in turns]
     speakers = {remap[k]: v for k, v in speakers_unordered.items()}
 

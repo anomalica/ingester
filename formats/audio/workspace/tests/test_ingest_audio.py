@@ -65,8 +65,8 @@ def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
     content = md_files[0].read_text()
     assert "schema: anomalica/record/1" in content
     assert "source_type: audio" in content
-    assert "speaker: speaker_00" in content
-    assert "speaker: speaker_01" in content
+    assert "speaker: Speaker 1" in content
+    assert "speaker: Speaker 2" in content
     assert "Hello there" in content
     assert "I am fine thanks" in content
 
@@ -190,7 +190,7 @@ def test_run_speaker_roster_in_frontmatter(mock_transcribe, mock_diarise, tmp_pa
     md_files = list((output / "store").glob("*.md"))
     content = md_files[0].read_text()
     assert "speakers:" in content
-    assert "id: speaker_00" in content
+    assert "id: Speaker 1" in content
     assert "name: Unknown" in content
     assert "first_appearance:" in content
 
