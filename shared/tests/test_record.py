@@ -1,6 +1,4 @@
-import json
-
-from record import slugify, symlink_name, write_record
+from record import get_version, slugify, symlink_name, write_record
 
 
 def test_slugify_basic():
@@ -26,17 +24,22 @@ def test_symlink_name():
     assert name == "2023-06-05-web-some-article-title.md"
 
 
+def test_get_version_returns_string():
+    version = get_version()
+    assert isinstance(version, str)
+    assert len(version) > 0
+    assert version != "unknown"
+
+
 def test_write_record_creates_files(tmp_path):
     store = tmp_path / "store"
     records = tmp_path / "records"
-    metadata = {"input_url": "https://example.com"}
 
     record_path, link_path = write_record(
         store_dir=store,
         records_dir=records,
         hex_hash="abc123",
         content="---\ntitle: Test\n---\nBody",
-        metadata=metadata,
         date="2023-06-05",
         source_type="web",
         title="Test Article",
@@ -44,8 +47,7 @@ def test_write_record_creates_files(tmp_path):
 
     assert record_path.exists()
     assert record_path.read_text() == "---\ntitle: Test\n---\nBody"
-    assert (store / "abc123.meta.json").exists()
-    assert json.loads((store / "abc123.meta.json").read_text()) == metadata
+    assert not (store / "abc123.meta.json").exists()
     assert link_path.is_symlink()
     assert link_path.resolve() == record_path.resolve()
     assert link_path.name == "2023-06-05-web-test-article.md"
@@ -61,6 +63,6 @@ def test_write_record_overwrites_existing_symlink(tmp_path):
     stale.symlink_to("/nonexistent")
 
     write_record(
-        store, records, "abc123", "content", {}, "2023-06-05", "web", "Test Article"
+        store, records, "abc123", "content", "2023-06-05", "web", "Test Article"
     )
     assert stale.resolve() == (store / "abc123.md").resolve()

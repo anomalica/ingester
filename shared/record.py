@@ -2,10 +2,28 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import subprocess
 from pathlib import Path
+
+
+def get_version() -> str:
+    """Get the short git commit hash of the ingester repository."""
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return "unknown"
 
 
 def slugify(text: str, max_length: int = 60) -> str:
@@ -29,7 +47,6 @@ def write_record(
     records_dir: Path,
     hex_hash: str,
     content: str,
-    metadata: dict,
     date: str,
     source_type: str,
     title: str,
@@ -43,10 +60,7 @@ def write_record(
     records_dir.mkdir(parents=True, exist_ok=True)
 
     record_path = store_dir / f"{hex_hash}.md"
-    meta_path = store_dir / f"{hex_hash}.meta.json"
-
     record_path.write_text(content)
-    meta_path.write_text(json.dumps(metadata, indent=2))
 
     link_name = symlink_name(date, source_type, title)
     link_path = records_dir / link_name

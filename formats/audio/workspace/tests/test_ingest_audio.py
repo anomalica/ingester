@@ -73,19 +73,25 @@ def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
 @patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
-def test_run_writes_metadata(mock_transcribe, mock_diarise, tmp_path):
+def test_run_includes_processing_in_frontmatter(
+    mock_transcribe, mock_diarise, tmp_path
+):
     import ingest_audio
 
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
     ingest_audio.run(staging, output, force=False)
 
-    meta_files = list((output / "store").glob("*.meta.json"))
-    assert len(meta_files) == 1
-    meta = json.loads(meta_files[0].read_text())
-    assert "input_hash" in meta
-    assert meta["source_url"] == "https://example.com/ep.mp3"
-    assert "duration_seconds" in meta
+    md_files = list((output / "store").glob("*.md"))
+    content = md_files[0].read_text()
+    assert "processing:" in content
+    assert "handler: audio" in content
+    assert "name: whisperx" in content
+    assert "role: transcription" in content
+    assert "name: pyannote" in content
+    assert "role: diarisation" in content
+    assert "provider: local" in content
+    assert "extracted_at:" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)

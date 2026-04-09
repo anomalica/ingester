@@ -6,39 +6,64 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from hashing import content_hash_label, hash_string, store_exists
-from record import write_record
+from record import get_version, write_record
 from validator import validate
 
 from extraction.trafilatura_ext import extract_article
 
 
+def _get_trafilatura_version() -> str:
+    try:
+        import trafilatura
+
+        return trafilatura.__version__
+    except (ImportError, AttributeError):
+        return "unknown"
+
+
 def _build_frontmatter(
-    title: str, date: str, url: str, authors: list[str] | None, hex_hash: str
+    title: str,
+    date: str,
+    url: str,
+    authors: list[str] | None,
+    hex_hash: str,
+    sitename: str | None,
+    description: str | None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
+    escaped_title = title.replace('"', '\\"')
     lines = [
         "---",
         "schema: anomalica/record/1",
+        f'title: "{escaped_title}"',
+        f"date: {date}",
+        "source_type: web",
+        f"source_url: {url}",
     ]
-    escaped_title = title.replace('"', '\\"')
-    lines.append(f'title: "{escaped_title}"')
-    lines.extend(
-        [
-            f"date: {date}",
-            "source_type: web",
-            f"source_url: {url}",
-        ]
-    )
     if authors:
         lines.append("authors:")
         for author in authors:
             lines.append(f"  - {author}")
+    if sitename:
+        escaped_sitename = sitename.replace('"', '\\"')
+        lines.append(f'sitename: "{escaped_sitename}"')
+    if description:
+        escaped_desc = description.replace('"', '\\"')
+        lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
+    lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
+    lines.append("processing:")
+    lines.append("  handler: webpage")
+    lines.append(f"  version: {get_version()}")
+    lines.append("  tools:")
+    lines.append("    - name: trafilatura")
+    lines.append(f'      version: "{_get_trafilatura_version()}"')
+    lines.append("      role: extraction")
+    lines.append("      provider: local")
     lines.append("---")
     return "\n".join(lines)
 
@@ -47,7 +72,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     """Run the webpage ingestion pipeline. Returns 0 on success, 1 on failure."""
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
-    start_time = time.monotonic()
 
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
@@ -57,7 +81,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     manifest = json.loads(manifest_path.read_text())
     url = manifest["source"]
     asset_name = manifest["asset"]
-    fetch_method = manifest.get("fetch_method", "unknown")
 
     asset_path = staging_dir / asset_name
     if not asset_path.exists():
@@ -84,7 +107,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     date = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     title = article.title or "Untitled"
-    frontmatter = _build_frontmatter(title, date, url, article.authors, hex_hash)
+    frontmatter = _build_frontmatter(
+        title,
+        date,
+        url,
+        article.authors,
+        hex_hash,
+        article.sitename,
+        article.description,
+    )
     content = frontmatter + "\n\n" + article.text + "\n"
 
     result = validate(content, extra_required=["source_url"])
@@ -95,24 +126,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
 
-    duration_ms = int((time.monotonic() - start_time) * 1000)
-    metadata = {
-        "input_url": url,
-        "input_hash": content_hash_label(hex_hash),
-        "extracted_at": datetime.now(timezone.utc).isoformat(),
-        "fetch_method": fetch_method,
-        "duration_ms": duration_ms,
-        "trafilatura_metadata": {
-            "title": article.title,
-            "authors": article.authors,
-            "date": article.date,
-            "sitename": article.sitename,
-            "description": article.description,
-        },
-    }
-
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, metadata, date, "web", title
+        store_dir, records_dir, hex_hash, content, date, "web", title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

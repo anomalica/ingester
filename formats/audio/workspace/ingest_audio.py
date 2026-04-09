@@ -6,17 +6,34 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from alignment.align import align
-from diarisation.pyannote_diarise import diarise
+from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists
 from models import Turn, detect_source_type, format_time
-from record import write_record
-from transcription.whisperx_transcribe import transcribe
+from record import get_version, write_record
+from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
+
+
+def _get_tool_versions() -> dict[str, str]:
+    """Get installed versions of audio processing tools."""
+    versions = {}
+    try:
+        import whisperx
+
+        versions["whisperx"] = whisperx.__version__
+    except (ImportError, AttributeError):
+        versions["whisperx"] = "unknown"
+    try:
+        import pyannote.audio
+
+        versions["pyannote"] = pyannote.audio.__version__
+    except (ImportError, AttributeError):
+        versions["pyannote"] = "unknown"
+    return versions
 
 
 def _build_frontmatter(
@@ -27,12 +44,9 @@ def _build_frontmatter(
     duration: float,
     hex_hash: str,
     speakers: dict[str, float],
+    language: str,
 ) -> str:
-    """Assemble YAML frontmatter for an audio/video record.
-
-    speakers is a dict mapping speaker ID to the time (seconds) of their
-    first appearance, used to help humans identify speakers.
-    """
+    """Assemble YAML frontmatter for an audio/video record."""
     escaped_title = title.replace('"', '\\"')
     lines = [
         "---",
@@ -45,12 +59,29 @@ def _build_frontmatter(
         lines.append(f"source_url: {source_url}")
     lines.append(f"duration: {int(duration)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
+    lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
     lines.append("speakers:")
     for speaker_id, first_time in speakers.items():
         lines.append(f"  - id: {speaker_id}")
         lines.append("    name: Unknown")
         lines.append(f"    first_appearance: {format_time(first_time)}")
         lines.append("    relevant: true")
+    tool_versions = _get_tool_versions()
+    lines.append("processing:")
+    lines.append("  handler: audio")
+    lines.append(f"  version: {get_version()}")
+    lines.append("  tools:")
+    lines.append("    - name: whisperx")
+    lines.append(f'      version: "{tool_versions["whisperx"]}"')
+    lines.append(f"      model: {WHISPER_MODEL}")
+    lines.append("      role: transcription")
+    lines.append("      provider: local")
+    lines.append("    - name: pyannote")
+    lines.append(f'      version: "{tool_versions["pyannote"]}"')
+    lines.append(f"      model: {DIARISATION_MODEL}")
+    lines.append("      role: diarisation")
+    lines.append("      provider: local")
+    lines.append(f"  language: {language}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -81,7 +112,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     """Run the audio ingestion pipeline. Returns 0 on success, 1 on failure."""
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
-    start_time = time.monotonic()
 
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
@@ -135,6 +165,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     speakers = {remap[k]: v for k, v in speakers_unordered.items()}
 
     duration = segments[-1].end
+    language = "en"
 
     is_url = source.startswith("http://") or source.startswith("https://")
     source_url = source if is_url else None
@@ -151,6 +182,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         duration=duration,
         hex_hash=hex_hash,
         speakers=speakers,
+        language=language,
     )
     body = _build_content(turns)
     content = frontmatter + "\n\n" + body
@@ -163,23 +195,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
 
-    duration_ms = int((time.monotonic() - start_time) * 1000)
-    metadata = {
-        "input_hash": content_hash_label(hex_hash),
-        "source_url": source if is_url else None,
-        "source_file": source if not is_url else None,
-        "detected_type": detected_type,
-        "source_type": source_type,
-        "duration_seconds": duration,
-        "speaker_count": len(speakers),
-        "turn_count": len(turns),
-        "segment_count": len(segments),
-        "extracted_at": datetime.now(timezone.utc).isoformat(),
-        "duration_ms": duration_ms,
-    }
-
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, metadata, date, source_type, title
+        store_dir, records_dir, hex_hash, content, date, source_type, title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.hashing import content_hash_label, hash_file, store_exists
-from shared.record import write_record
+from shared.record import get_version, write_record
 from shared.validator import strip_code_fences, validate
 
 # Claude Code limits (multi-turn overhead makes large documents slow)
@@ -38,8 +38,15 @@ def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
     return True, ""
 
 
-def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
-    """Inject content_hash and fix page count in the YAML frontmatter."""
+def _patch_frontmatter(
+    content: str,
+    input_hash: str,
+    page_count: int,
+    model: str | None = None,
+    provider: str | None = None,
+    chunks: int | None = None,
+) -> str:
+    """Inject content_hash, processing block, and fix page count in the YAML frontmatter."""
     parts = content.split("---", 2)
     if len(parts) < 3:
         return content
@@ -53,6 +60,29 @@ def _patch_frontmatter(content: str, input_hash: str, page_count: int) -> str:
         )
 
     frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
+
+    if "processing:" not in frontmatter:
+        extracted_at = datetime.now(timezone.utc).isoformat()
+        sdk_version = "unknown"
+        try:
+            import anthropic
+
+            sdk_version = anthropic.__version__
+        except (ImportError, AttributeError):
+            pass
+        processing = f"\nextracted_at: {extracted_at}"
+        processing += "\nprocessing:"
+        processing += "\n  handler: pdf"
+        processing += f"\n  version: {get_version()}"
+        processing += "\n  tools:"
+        processing += "\n    - name: claude"
+        processing += f'\n      version: "{model or "unknown"}"'
+        processing += "\n      role: extraction"
+        processing += f"\n      provider: {provider or 'unknown'}"
+        processing += f'\n      sdk_version: "{sdk_version}"'
+        if chunks and chunks > 1:
+            processing += f"\n  chunks: {chunks}"
+        frontmatter = frontmatter.rstrip("\n") + processing + "\n"
 
     return f"---{frontmatter}---{parts[2]}"
 
@@ -290,7 +320,16 @@ def main():
         content, chunk_metas = _extract_chunked(provider, args.input_file, chunk_size)
         all_meta.extend(chunk_metas)
 
-    content = _patch_frontmatter(content, input_hash, page_count)
+    model_name = getattr(provider, "model", "unknown")
+    provider_name = "anthropic-api" if using_api else "claude-code"
+    content = _patch_frontmatter(
+        content,
+        input_hash,
+        page_count,
+        model=model_name,
+        provider=provider_name,
+        chunks=len(all_meta),
+    )
 
     # Validate, auto-fix, and repair missing pages
     repair_provider = provider
@@ -327,7 +366,14 @@ def main():
             content = _repair_missing_pages(
                 content, missing, repair_provider, args.input_file
             )
-            content = _patch_frontmatter(content, input_hash, page_count)
+            content = _patch_frontmatter(
+                content,
+                input_hash,
+                page_count,
+                model=model_name,
+                provider=provider_name,
+                chunks=len(all_meta),
+            )
 
             validation = validate(content)
             if validation.fixed:
@@ -345,27 +391,12 @@ def main():
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = fm.get("title", "untitled") if fm else "untitled"
 
-    # Build metadata
-    total_cost = sum(m.get("cost_usd", 0) for m in all_meta)
-    total_duration = sum(m.get("duration_ms", 0) for m in all_meta)
-    combined_meta = {
-        "input_hash": input_hash,
-        "input_filename": args.input_file.name,
-        "pages": page_count,
-        "extracted_at": datetime.now(timezone.utc).isoformat(),
-        "cost_usd": total_cost,
-        "duration_ms": total_duration,
-        "chunks": len(all_meta),
-        "chunk_details": all_meta,
-    }
-
     # Write to store and create symlink
     record_path, symlink_path = write_record(
         store_dir=store_dir,
         records_dir=records_dir,
         hex_hash=input_hash,
         content=content,
-        metadata=combined_meta,
         date=date,
         source_type=source_type,
         title=title,
