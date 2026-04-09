@@ -25,7 +25,9 @@ API_CHUNK_SIZE = 50
 MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
-OUTPUT_DIR = Path("/mnt/output")
+OUTPUT_DIR = (
+    Path(__file__).resolve().parent.parent.parent.parent.parent / "anomalica-ingests"
+)
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:

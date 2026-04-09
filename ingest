@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STAGING_DIR="${SCRIPT_DIR}/staging"
+INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/anomalica-ingests"
 
 usage() {
 	echo "Usage: ingest [--force] <url-or-path>" >&2
@@ -15,11 +16,13 @@ usage() {
 }
 
 FORCE=""
+FORCE_FLAG=0
 INPUT=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--force)
 		FORCE="--force"
+		FORCE_FLAG=1
 		shift
 		;;
 	--help | -h) usage ;;
@@ -42,25 +45,40 @@ if [[ -z "$INPUT" ]]; then
 	usage
 fi
 
+if [[ ! -d "$INGESTS_DIR" ]]; then
+	echo "Error: anomalica-ingests not found at ${INGESTS_DIR}" >&2
+	echo "Clone it with: gh repo clone anomalica/anomalica-ingests $(dirname "${INGESTS_DIR}")" >&2
+	exit 1
+fi
+
+is_url() {
+	[[ "$1" =~ ^https?:// ]]
+}
+
+# For local files, pre-hash and check if already in the ingests repo
+if ! is_url "$INPUT"; then
+	if [[ ! -f "$INPUT" ]]; then
+		echo "Error: file not found: ${INPUT}" >&2
+		exit 1
+	fi
+	FILE_HASH="$(sha256sum "$INPUT" | cut -d' ' -f1)"
+	if [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
+		echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
+		echo "Existing record: ${INGESTS_DIR}/store/${FILE_HASH}.md" >&2
+		exit 0
+	fi
+fi
+
 UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 RUN_DIR="${STAGING_DIR}/${UUID}"
 mkdir -p "$RUN_DIR"
 
 echo "Run: ${UUID}" >&2
 
-is_url() {
-	[[ "$1" =~ ^https?:// ]]
-}
-
 if is_url "$INPUT"; then
 	echo "Acquiring: ${INPUT}" >&2
 	(cd "${SCRIPT_DIR}/acquire" && cm run acquire "$INPUT" -- --staging-dir "/mnt/staging/${UUID}")
 else
-	if [[ ! -f "$INPUT" ]]; then
-		echo "Error: file not found: ${INPUT}" >&2
-		exit 1
-	fi
-
 	RESOLVED="$(realpath "$INPUT")"
 	EXT="${RESOLVED##*.}"
 	cp "$RESOLVED" "${RUN_DIR}/asset.${EXT}"
@@ -151,3 +169,25 @@ audio)
 esac
 
 echo "Done. Staging: ${RUN_DIR}" >&2
+
+# Auto-commit any new records to anomalica-ingests
+cd "$INGESTS_DIR"
+if [[ -n "$(git status --porcelain)" ]]; then
+	echo "" >&2
+	echo "Committing new records to anomalica-ingests..." >&2
+	git add store/ records/
+	NEW_FILES="$(git diff --cached --name-only --diff-filter=A | grep '^store/' | wc -l)"
+	if [[ "$NEW_FILES" -gt 0 ]]; then
+		COMMIT_MSG="add ${NEW_FILES} record(s) from ${HANDLER} ingestion"
+	else
+		COMMIT_MSG="update records from ${HANDLER} ingestion"
+	fi
+	GIT_AUTHOR_NAME="Anomalica Ingester" \
+		GIT_AUTHOR_EMAIL="ingester@anomalica.is" \
+		GIT_COMMITTER_NAME="Anomalica Ingester" \
+		GIT_COMMITTER_EMAIL="ingester@anomalica.is" \
+		git commit -m "$COMMIT_MSG" >&2
+	echo "Committed. Run 'git push' from ${INGESTS_DIR} to publish." >&2
+else
+	echo "No new records to commit." >&2
+fi

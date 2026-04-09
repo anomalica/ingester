@@ -215,7 +215,10 @@ def main():
 
     output_dir = Path("/mnt/output")
     if not output_dir.exists():
-        output_dir = Path(__file__).resolve().parent.parent.parent.parent / "output"
+        output_dir = (
+            Path(__file__).resolve().parent.parent.parent.parent.parent
+            / "anomalica-ingests"
+        )
 
     sys.exit(run(args.staging_dir, output_dir, args.force))
 

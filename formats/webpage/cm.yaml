@@ -7,7 +7,7 @@ runtime:
   features: []
   volumes:
     - ../../staging:/mnt/staging:ro
-    - ../../output:/mnt/output:rw
+    - ../../../anomalica-ingests:/mnt/output:rw
     - ../../shared:/mnt/shared:ro
 
 stages:

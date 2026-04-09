@@ -9,7 +9,7 @@ runtime:
     - ~/.local/bin/claude:/usr/local/bin/claude:ro
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
-    - ../../output:/mnt/output:rw
+    - ../../../anomalica-ingests:/mnt/output:rw
 
 stages:
   base:
@@ -43,8 +43,3 @@ commands:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: workspace
-    mounts:
-      input:
-        mode: ro
-      output:
-        mode: rw
