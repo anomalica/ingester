@@ -16,3 +16,6 @@ formats/webpage/run.sh
 formats/pdf/Dockerfile
 formats/pdf/build.sh
 formats/pdf/run.sh
+formats/audio/Dockerfile
+formats/audio/build.sh
+formats/audio/run.sh
