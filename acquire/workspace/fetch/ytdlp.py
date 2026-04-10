@@ -36,7 +36,12 @@ def _is_supported(url: str) -> bool:
 def _extract_metadata(url: str) -> dict | None:
     """Extract video metadata via yt-dlp --dump-json.
 
-    Returns a dict with title, upload_date, duration, etc., or None on failure.
+    Returns a dict with title, upload_date, duration, media_type, source_id, etc.,
+    or None on failure. media_type is 'video' or 'audio' depending on the
+    original source - yt-dlp always downloads just the audio track, so
+    the MIME type of the downloaded file alone does not indicate whether
+    the source was a video. source_id is a stable platform-specific
+    identifier in the form '{extractor}:{id}' (e.g. 'youtube:ZBtMbBPzqHY').
     """
     result = subprocess.run(
         ["yt-dlp", "--dump-json", "--no-playlist", url],
@@ -48,9 +53,16 @@ def _extract_metadata(url: str) -> dict | None:
     try:
         import json
 
-        return json.loads(result.stdout)
+        data = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
         return None
+
+    extractor = data.get("extractor")
+    video_id = data.get("id")
+    if extractor and video_id:
+        data["source_id"] = f"{extractor}:{video_id}"
+
+    return data
 
 
 def _download(url: str, output_dir: Path) -> Path | None:

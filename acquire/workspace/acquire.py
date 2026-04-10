@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -11,6 +12,17 @@ from pathlib import Path
 
 from detect import detect
 from fetch import FETCHERS
+
+
+def _url_source_id(url: str) -> str:
+    """Generate a stable source_id for a URL by hashing it.
+
+    Used when no platform-specific extractor (like yt-dlp) provides one.
+    Format: 'url:{12-char hash}' for readability.
+    """
+    h = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    return f"url:{h[:12]}"
+
 
 MIME_TO_EXT = {
     "text/html": ".html",
@@ -92,6 +104,14 @@ def acquire(url: str, staging_dir: Path) -> int:
                 )
             if fetcher_metadata.get("duration"):
                 manifest["duration"] = fetcher_metadata["duration"]
+            if fetcher_metadata.get("media_type"):
+                manifest["original_type"] = fetcher_metadata["media_type"]
+            if fetcher_metadata.get("source_id"):
+                manifest["source_id"] = fetcher_metadata["source_id"]
+
+        # Fall back to URL-derived source_id if fetcher didn't provide one
+        if "source_id" not in manifest:
+            manifest["source_id"] = _url_source_id(url)
 
         (staging_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 

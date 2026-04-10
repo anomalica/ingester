@@ -30,6 +30,15 @@ def content_hash_label(hex_hash: str) -> str:
     return f"sha256:{hex_hash}"
 
 
+def source_id_to_filename(source_id: str) -> str:
+    """Convert a source_id like 'youtube:ZBtMbBPzqHY' to a filename-safe form.
+
+    Replaces colons with hyphens. Result is used as the store filename
+    stem (without .md extension) for URL-based content.
+    """
+    return source_id.replace(":", "-")
+
+
 def store_path(store_dir: Path, hex_hash: str, suffix: str = ".md") -> Path:
     """Path to a file in the output store."""
     return store_dir / f"{hex_hash}{suffix}"

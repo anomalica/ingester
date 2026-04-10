@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hashing import content_hash_label, hash_string, store_exists
+from hashing import content_hash_label, hash_string, source_id_to_filename, store_exists
 from record import get_version, write_record
 from validator import validate
 
@@ -29,6 +29,7 @@ def _build_frontmatter(
     title: str,
     date: str,
     url: str,
+    source_id: str | None,
     authors: list[str] | None,
     hex_hash: str,
     sitename: str | None,
@@ -44,6 +45,8 @@ def _build_frontmatter(
         "source_type: web",
         f"source_url: {url}",
     ]
+    if source_id:
+        lines.append(f"source_id: {source_id}")
     if authors:
         lines.append("authors:")
         for author in authors:
@@ -81,6 +84,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     manifest = json.loads(manifest_path.read_text())
     url = manifest["source"]
     asset_name = manifest["asset"]
+    source_id = manifest.get("source_id")
 
     asset_path = staging_dir / asset_name
     if not asset_path.exists():
@@ -98,9 +102,13 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     hex_hash = hash_string(article.text)
 
-    if not force and store_exists(store_dir, hex_hash):
+    # Web articles are URL-based: use source_id from acquire as the store key.
+    # Falls back to content hash only if source_id is missing for some reason.
+    store_key = source_id_to_filename(source_id) if source_id else hex_hash
+
+    if not force and store_exists(store_dir, store_key):
         print(
-            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
+            f"Skipping: record already exists ({store_key})",
             file=sys.stderr,
         )
         return 0
@@ -111,6 +119,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         title,
         date,
         url,
+        source_id,
         article.authors,
         hex_hash,
         article.sitename,
@@ -127,7 +136,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date, "web", title
+        store_dir, records_dir, store_key, content, date, "web", title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
