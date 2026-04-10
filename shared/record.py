@@ -7,9 +7,20 @@ import re
 import subprocess
 from pathlib import Path
 
+INGESTER_VERSION_ENV = "INGESTER_VERSION"
+
 
 def get_version() -> str:
-    """Get the short git commit hash of the ingester repository."""
+    """Get the short git commit hash of the ingester repository.
+
+    Reads from the INGESTER_VERSION environment variable first (set by the
+    host script for containerised runs where .git/ is not available).
+    Falls back to running git rev-parse on the local checkout.
+    """
+    env_version = os.environ.get(INGESTER_VERSION_ENV)
+    if env_version:
+        return env_version
+
     try:
         repo_root = Path(__file__).resolve().parent.parent
         result = subprocess.run(

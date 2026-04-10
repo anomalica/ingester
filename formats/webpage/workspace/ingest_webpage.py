@@ -17,11 +17,11 @@ from extraction.trafilatura_ext import extract_article
 
 
 def _get_trafilatura_version() -> str:
-    try:
-        import trafilatura
+    from importlib.metadata import PackageNotFoundError, version
 
-        return trafilatura.__version__
-    except (ImportError, AttributeError):
+    try:
+        return version("trafilatura")
+    except PackageNotFoundError:
         return "unknown"
 
 

@@ -67,20 +67,15 @@ def _merge_audio_entry(existing: list[dict], new_entry: dict) -> list[dict]:
 
 
 def _get_tool_versions() -> dict[str, str]:
-    """Get installed versions of audio processing tools."""
+    """Get installed versions of audio processing tools via importlib.metadata."""
+    from importlib.metadata import PackageNotFoundError, version
+
     versions = {}
-    try:
-        import whisperx
-
-        versions["whisperx"] = whisperx.__version__
-    except (ImportError, AttributeError):
-        versions["whisperx"] = "unknown"
-    try:
-        import pyannote.audio
-
-        versions["pyannote"] = pyannote.audio.__version__
-    except (ImportError, AttributeError):
-        versions["pyannote"] = "unknown"
+    for pkg_name, key in [("whisperx", "whisperx"), ("pyannote.audio", "pyannote")]:
+        try:
+            versions[key] = version(pkg_name)
+        except PackageNotFoundError:
+            versions[key] = "unknown"
     return versions
 
 

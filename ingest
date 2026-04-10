@@ -51,6 +51,18 @@ if [[ ! -d "$INGESTS_DIR" ]]; then
 	exit 1
 fi
 
+# Capture the ingester version (git short hash) and write it to .env so the
+# format containers (which don't have .git/) can read it via the auto-loaded
+# .env file. This makes the version field of each record reproducible.
+INGESTER_VERSION="$(cd "$SCRIPT_DIR" && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+ENV_FILE="${SCRIPT_DIR}/.env"
+touch "$ENV_FILE"
+if grep -q "^INGESTER_VERSION=" "$ENV_FILE"; then
+	sed -i "s|^INGESTER_VERSION=.*|INGESTER_VERSION=${INGESTER_VERSION}|" "$ENV_FILE"
+else
+	echo "INGESTER_VERSION=${INGESTER_VERSION}" >>"$ENV_FILE"
+fi
+
 is_url() {
 	[[ "$1" =~ ^https?:// ]]
 }
