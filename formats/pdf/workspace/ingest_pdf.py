@@ -47,6 +47,7 @@ def _patch_frontmatter(
     model: str | None = None,
     provider: str | None = None,
     chunks: int | None = None,
+    existing_copyright: dict | None = None,
 ) -> str:
     """Inject content_hash, processing block, and fix page count in the YAML frontmatter."""
     parts = content.split("---", 2)
@@ -70,7 +71,17 @@ def _patch_frontmatter(
         )
 
     if "copyright:" not in frontmatter:
-        frontmatter = frontmatter.rstrip("\n") + "\ncopyright:\n  status: restricted\n"
+        if existing_copyright and isinstance(existing_copyright, dict):
+            import yaml
+
+            copyright_yaml = yaml.dump(
+                {"copyright": existing_copyright}, default_flow_style=False
+            ).rstrip("\n")
+            frontmatter = frontmatter.rstrip("\n") + "\n" + copyright_yaml + "\n"
+        else:
+            frontmatter = (
+                frontmatter.rstrip("\n") + "\ncopyright:\n  status: restricted\n"
+            )
 
     if "processing:" not in frontmatter:
         sdk_version = "unknown"
@@ -291,6 +302,14 @@ def main():
         print(f"Skipping: {input_hash}.md already exists in store", file=sys.stderr)
         sys.exit(0)
 
+    # Preserve existing copyright block when re-ingesting with --force
+    existing_copyright = None
+    existing_record = store_dir / f"{input_hash}.md"
+    if existing_record.exists():
+        existing_fm = _extract_frontmatter(existing_record.read_text())
+        if existing_fm and "copyright" in existing_fm:
+            existing_copyright = existing_fm["copyright"]
+
     using_api = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if using_api:
         from extraction.anthropic_api import AnthropicProvider
@@ -338,6 +357,7 @@ def main():
         model=model_name,
         provider=provider_name,
         chunks=len(all_meta),
+        existing_copyright=existing_copyright,
     )
 
     # Validate, auto-fix, and repair missing pages
@@ -382,6 +402,7 @@ def main():
                 model=model_name,
                 provider=provider_name,
                 chunks=len(all_meta),
+                existing_copyright=existing_copyright,
             )
 
             validation = validate(content)
