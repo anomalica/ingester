@@ -182,6 +182,20 @@ esac
 
 echo "Done. Staging: ${RUN_DIR}" >&2
 
+# Archive original source file for workbench access
+SOURCES_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/sources"
+mkdir -p "$SOURCES_DIR"
+ASSET_PATH="${RUN_DIR}/${ASSET}"
+if [[ -f "$ASSET_PATH" ]]; then
+	CONTENT_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
+	ASSET_EXT="${ASSET##*.}"
+	TARGET="${SOURCES_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
+	if [[ ! -f "$TARGET" ]]; then
+		cp "$ASSET_PATH" "$TARGET"
+		echo "Source archived: ${TARGET}" >&2
+	fi
+fi
+
 # Auto-commit any new records to anomalica-ingests
 cd "$INGESTS_DIR"
 if [[ -n "$(git status --porcelain)" ]]; then
