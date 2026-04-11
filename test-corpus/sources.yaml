@@ -28,7 +28,12 @@ audio:
   - url: https://www.youtube.com/watch?v=ZBtMbBPzqHY
     title: "60 Minutes - Navy pilots describe encounters with UFOs"
     date: 2021-05-16
-    note: ~13 minutes, 2-3 speakers, good first test for audio pipeline
+    note: ~13 minutes, 2-3 speakers
+
+  - url: https://www.youtube.com/watch?v=sm6AL5lA4Zc
+    title: "7NEWS Spotlight: The UFO Phenomenon"
+    date: 2021-09-06
+    note: ~79 minutes, broadcast documentary, many speakers
 
 web:
   - url: https://www.nytimes.com/2017/12/16/us/politics/pentagon-program-ufo-harry-reid.html
