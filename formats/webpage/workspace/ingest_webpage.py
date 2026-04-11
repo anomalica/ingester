@@ -30,6 +30,7 @@ def _build_frontmatter(
     date: str,
     url: str,
     source_id: str | None,
+    fetched_url: str | None,
     authors: list[str] | None,
     hex_hash: str,
     sitename: str | None,
@@ -47,6 +48,8 @@ def _build_frontmatter(
     ]
     if source_id:
         lines.append(f"source_id: {source_id}")
+    if fetched_url and fetched_url != url:
+        lines.append(f"fetched_url: {fetched_url}")
     if authors:
         lines.append("authors:")
         for author in authors:
@@ -59,6 +62,8 @@ def _build_frontmatter(
         lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
+    lines.append("copyright:")
+    lines.append("  status: restricted")
     lines.append("processing:")
     lines.append("  handler: webpage")
     lines.append(f"  version: {get_version()}")
@@ -85,6 +90,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     url = manifest["source"]
     asset_name = manifest["asset"]
     source_id = manifest.get("source_id")
+    fetched_url = manifest.get("fetched_url")
 
     asset_path = staging_dir / asset_name
     if not asset_path.exists():
@@ -120,6 +126,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         date,
         url,
         source_id,
+        fetched_url,
         article.authors,
         hex_hash,
         article.sitename,

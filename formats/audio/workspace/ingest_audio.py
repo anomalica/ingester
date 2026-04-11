@@ -107,6 +107,8 @@ def _build_frontmatter(
     lines.append(f"duration: {int(duration)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
+    lines.append("copyright:")
+    lines.append("  status: restricted")
     lines.append("speakers:")
     for speaker_id, first_time in speakers.items():
         lines.append(f"  - id: {speaker_id}")

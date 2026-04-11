@@ -14,6 +14,9 @@ from detect import detect
 from fetch import FETCHERS
 
 
+WAYBACK_PREFIX = "https://web.archive.org/web/"
+
+
 def _url_source_id(url: str) -> str:
     """Generate a stable source_id for a URL by hashing it.
 
@@ -22,6 +25,25 @@ def _url_source_id(url: str) -> str:
     """
     h = hashlib.sha256(url.encode("utf-8")).hexdigest()
     return f"url:{h[:12]}"
+
+
+def _parse_wayback_url(url: str) -> tuple[str, str] | None:
+    """If url is a Wayback Machine URL, extract the original URL and archive URL.
+
+    Returns (original_url, archive_url) or None if not a Wayback URL.
+    Wayback format: https://web.archive.org/web/{timestamp}/{original_url}
+    """
+    if not url.startswith(WAYBACK_PREFIX):
+        return None
+    rest = url[len(WAYBACK_PREFIX) :]
+    # Format is {timestamp}/{original_url} - timestamp is digits, then /
+    slash_pos = rest.find("/")
+    if slash_pos < 1:
+        return None
+    original_url = rest[slash_pos + 1 :]
+    if not original_url.startswith("http"):
+        return None
+    return (original_url, url)
 
 
 MIME_TO_EXT = {
@@ -46,9 +68,19 @@ MIN_HTML_SIZE = 1024
 def acquire(url: str, staging_dir: Path) -> int:
     """Fetch a URL and write the asset and manifest to staging_dir.
 
-    Returns 0 on success, 1 on failure.
+    If the URL is a Wayback Machine URL, extracts the original URL and
+    records the Wayback URL as the fetched_url. Returns 0 on success, 1 on failure.
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
+
+    # If the input is a Wayback Machine URL, decompose it
+    wayback_parsed = _parse_wayback_url(url)
+    if wayback_parsed:
+        original_url, archive_url = wayback_parsed
+        url = original_url
+        forced_fetched_url = archive_url
+    else:
+        forced_fetched_url = None
 
     for method_name, fetcher in FETCHERS:
         print(f"Trying {method_name}...", file=sys.stderr)
@@ -112,6 +144,14 @@ def acquire(url: str, staging_dir: Path) -> int:
         # Fall back to URL-derived source_id if fetcher didn't provide one
         if "source_id" not in manifest:
             manifest["source_id"] = _url_source_id(url)
+
+        # Record the actual URL we fetched from (may differ from source URL)
+        if forced_fetched_url:
+            manifest["fetched_url"] = forced_fetched_url
+        elif fetcher_metadata and fetcher_metadata.get("fetched_url"):
+            manifest["fetched_url"] = fetcher_metadata["fetched_url"]
+        else:
+            manifest["fetched_url"] = url
 
         (staging_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 

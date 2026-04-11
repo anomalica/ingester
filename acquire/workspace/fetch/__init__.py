@@ -9,7 +9,7 @@ from fetch import http, patchright_fetch, wayback, ytdlp
 
 FETCHERS = [
     ("ytdlp", ytdlp.fetch),
-    ("http", http.fetch),
     ("wayback", wayback.fetch),
+    ("http", http.fetch),
     ("patchright", patchright_fetch.fetch),
 ]

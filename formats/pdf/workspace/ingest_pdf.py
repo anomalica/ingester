@@ -73,6 +73,8 @@ def _patch_frontmatter(
         except (ImportError, AttributeError):
             pass
         processing = f"\nextracted_at: {extracted_at}"
+        processing += "\ncopyright:"
+        processing += "\n  status: restricted"
         processing += "\nprocessing:"
         processing += "\n  handler: pdf"
         processing += f"\n  version: {get_version()}"

@@ -28,9 +28,10 @@ def test_fetch_returns_archived_content(mock_get):
     mock_get.side_effect = [availability_resp, page_resp]
     result = fetch("https://example.com")
     assert result is not None
-    content, content_type = result
+    content, content_type, metadata = result
     assert content == b"<html><body>Archived article</body></html>"
     assert content_type == "text/html"
+    assert metadata["fetched_url"] == archive_url
 
 
 @patch("fetch.wayback.requests.get")
