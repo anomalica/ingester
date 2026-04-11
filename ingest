@@ -204,9 +204,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
 	git add store/ records/
 	NEW_FILES="$(git diff --cached --name-only --diff-filter=A | grep '^store/' | wc -l)"
 	if [[ "$NEW_FILES" -gt 0 ]]; then
-		COMMIT_MSG="add ${NEW_FILES} record(s) from ${HANDLER} ingestion"
+		COMMIT_MSG="feat: add ${NEW_FILES} record(s) from ${HANDLER} ingestion"
 	else
-		COMMIT_MSG="update records from ${HANDLER} ingestion"
+		COMMIT_MSG="chore: update records from ${HANDLER} ingestion"
 	fi
 	GIT_AUTHOR_NAME="Anomalica Ingester" \
 		GIT_AUTHOR_EMAIL="ingester@anomalica.is" \
