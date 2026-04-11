@@ -63,7 +63,7 @@ def _build_frontmatter(
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append("  status: restricted")
+    lines.append("  status: publicly_accessible")
     lines.append("processing:")
     lines.append("  handler: webpage")
     lines.append(f"  version: {get_version()}")

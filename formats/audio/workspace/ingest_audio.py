@@ -108,7 +108,7 @@ def _build_frontmatter(
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append("  status: restricted")
+    lines.append("  status: publicly_accessible")
     lines.append("speakers:")
     for speaker_id, first_time in speakers.items():
         lines.append(f"  - id: {speaker_id}")
@@ -155,7 +155,7 @@ def _build_content(turns: list[Turn]) -> str:
     blocks = []
     for turn in turns:
         timestamp = format_time(turn.time)
-        block = f"---\nspeaker: {turn.speaker}\ntime: {timestamp}\n---\n{turn.text}"
+        block = f"<!-- anomalica\nspeaker: {turn.speaker}\ntime: {timestamp}\n-->\n{turn.text}"
         blocks.append(block)
     return "\n\n".join(blocks) + "\n"
 
