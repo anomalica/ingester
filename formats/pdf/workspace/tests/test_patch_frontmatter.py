@@ -108,17 +108,17 @@ def test_strip_frontmatter_incomplete():
 
 
 def test_find_missing_pages_none_missing():
-    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 2\n---\n\n---\nfile_page: 3\n---\n"
+    content = "---\n---\n\n<!-- anomalica\nfile_page: 1\n-->\n\n<!-- anomalica\nfile_page: 2\n-->\n\n<!-- anomalica\nfile_page: 3\n-->\n"
     assert _find_missing_pages(content, 3) == []
 
 
 def test_find_missing_pages_gap():
-    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 3\n---\n"
+    content = "---\n---\n\n<!-- anomalica\nfile_page: 1\n-->\n\n<!-- anomalica\nfile_page: 3\n-->\n"
     assert _find_missing_pages(content, 3) == [2]
 
 
 def test_find_missing_pages_truncated():
-    content = "---\n---\n\n---\nfile_page: 1\n---\n\n---\nfile_page: 2\n---\n"
+    content = "---\n---\n\n<!-- anomalica\nfile_page: 1\n-->\n\n<!-- anomalica\nfile_page: 2\n-->\n"
     assert _find_missing_pages(content, 5) == [3, 4, 5]
 
 
@@ -126,12 +126,12 @@ def test_find_missing_pages_truncated():
 
 
 def test_renumber_pages_zero_offset():
-    content = "---\nfile_page: 1\n---\nContent."
+    content = "<!-- anomalica\nfile_page: 1\n-->\nContent."
     assert _renumber_pages(content, 0) == content
 
 
 def test_renumber_pages_with_offset():
-    content = "---\nfile_page: 1\n---\nContent.\n---\nfile_page: 2\n---\nMore."
+    content = "<!-- anomalica\nfile_page: 1\n-->\nContent.\n<!-- anomalica\nfile_page: 2\n-->\nMore."
     result = _renumber_pages(content, 50)
     assert "file_page: 51" in result
     assert "file_page: 52" in result

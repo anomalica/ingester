@@ -129,7 +129,7 @@ def _repair_missing_pages(
                 next_page = page_num + 1
                 insertion_point = content.find(f"\nfile_page: {next_page}\n")
                 if insertion_point >= 0:
-                    block_start = content.rfind("\n---\n", 0, insertion_point)
+                    block_start = content.rfind("<!-- anomalica\n", 0, insertion_point)
                     if block_start >= 0:
                         content = (
                             content[:block_start]
