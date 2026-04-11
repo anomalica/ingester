@@ -63,8 +63,16 @@ def _patch_frontmatter(
 
     frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
 
+    if "extracted_at:" not in frontmatter:
+        frontmatter = (
+            frontmatter.rstrip("\n")
+            + f"\nextracted_at: {datetime.now(timezone.utc).isoformat()}\n"
+        )
+
+    if "copyright:" not in frontmatter:
+        frontmatter = frontmatter.rstrip("\n") + "\ncopyright:\n  status: restricted\n"
+
     if "processing:" not in frontmatter:
-        extracted_at = datetime.now(timezone.utc).isoformat()
         sdk_version = "unknown"
         try:
             import anthropic
@@ -72,10 +80,7 @@ def _patch_frontmatter(
             sdk_version = anthropic.__version__
         except (ImportError, AttributeError):
             pass
-        processing = f"\nextracted_at: {extracted_at}"
-        processing += "\ncopyright:"
-        processing += "\n  status: restricted"
-        processing += "\nprocessing:"
+        processing = "\nprocessing:"
         processing += "\n  handler: pdf"
         processing += f"\n  version: {get_version()}"
         processing += "\n  tools:"
