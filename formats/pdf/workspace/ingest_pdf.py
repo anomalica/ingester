@@ -40,6 +40,11 @@ def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
     return True, ""
 
 
+def _clean_annotations(content: str) -> str:
+    """Remove blank lines before --> in anomalica comment blocks."""
+    return re.sub(r"\n\n(-->)", r"\n\1", content)
+
+
 def _patch_frontmatter(
     content: str,
     input_hash: str,
@@ -348,6 +353,7 @@ def main():
         content, chunk_metas = _extract_chunked(provider, args.input_file, chunk_size)
         all_meta.extend(chunk_metas)
 
+    content = _clean_annotations(content)
     model_name = getattr(provider, "model", "unknown")
     provider_name = "anthropic-api" if using_api else "claude-code"
     content = _patch_frontmatter(
