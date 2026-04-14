@@ -3,7 +3,7 @@ from __future__ import annotations
 EXAMPLE = """---
 schema: anomalica/record/1
 title: "Example Document"
-date: 2023-07-26
+date_published: 2023-07-26
 authors:
   - Author Name
 source_type: pdf
@@ -56,7 +56,7 @@ def build_extraction_prompt(
 The format is markdown with YAML frontmatter and HTML comment annotations.
 
 Rules:
-- Start with YAML frontmatter: schema, title, date, authors, source_type, pages
+- Start with YAML frontmatter: schema, title, date_published, authors, source_type, pages
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
 - Mark page boundaries with single-line HTML comments: <!-- file_page: 1 -->

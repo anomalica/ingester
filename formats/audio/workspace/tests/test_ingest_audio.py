@@ -91,7 +91,7 @@ def test_run_includes_processing_in_frontmatter(
     assert "name: pyannote" in content
     assert "role: diarisation" in content
     assert "provider: local" in content
-    assert "extracted_at:" in content
+    assert "date_extracted:" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)

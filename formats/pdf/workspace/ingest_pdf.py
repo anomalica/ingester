@@ -76,10 +76,14 @@ def _patch_frontmatter(
 
     frontmatter = re.sub(r"pages: \d+", f"pages: {page_count}", frontmatter, count=1)
 
-    if "extracted_at:" not in frontmatter:
+    # Rename date to date_published if present
+    if "\ndate:" in frontmatter and "\ndate_published:" not in frontmatter:
+        frontmatter = re.sub(r"\ndate: ", "\ndate_published: ", frontmatter, count=1)
+
+    if "date_extracted:" not in frontmatter:
         frontmatter = (
             frontmatter.rstrip("\n")
-            + f"\nextracted_at: {datetime.now(timezone.utc).isoformat()}\n"
+            + f"\ndate_extracted: {datetime.now(timezone.utc).isoformat()}\n"
         )
 
     if "copyright:" not in frontmatter:
@@ -432,7 +436,7 @@ def main():
 
     # Extract frontmatter for symlink naming
     fm = _extract_frontmatter(content)
-    date = str(fm.get("date", "undated")) if fm else "undated"
+    date = str(fm.get("date_published", fm.get("date", "undated"))) if fm else "undated"
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = fm.get("title", "untitled") if fm else "untitled"
 

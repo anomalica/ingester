@@ -81,12 +81,13 @@ def _get_tool_versions() -> dict[str, str]:
 
 def _build_frontmatter(
     title: str,
-    date: str,
+    date_published: str,
     source_type: str,
     source_url: str | None,
     source_id: str | None,
     duration: float,
     hex_hash: str,
+    date_accessed: str | None,
     language: str,
     source_audio: list[dict],
 ) -> str:
@@ -96,7 +97,7 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
         f'title: "{escaped_title}"',
-        f"date: {date}",
+        f"date_published: {date_published}",
         f"source_type: {source_type}",
     ]
     if source_url:
@@ -105,7 +106,9 @@ def _build_frontmatter(
         lines.append(f"source_id: {source_id}")
     lines.append(f"duration: {int(duration)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
-    lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
+    if date_accessed:
+        lines.append(f"date_accessed: {date_accessed}")
+    lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
     lines.append("  status: publicly_accessible")
     tool_versions = _get_tool_versions()
@@ -255,18 +258,20 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     is_url = source.startswith("http://") or source.startswith("https://")
     source_url = source if is_url else None
     title = manifest.get("title", Path(asset_name).stem)
-    date = manifest.get("date", manifest.get("fetched_at", "")[:10])
-    if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
+    if not date_published:
+        date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_accessed = manifest.get("fetched_at")
 
     frontmatter = _build_frontmatter(
         title=title,
-        date=date,
+        date_published=date_published,
         source_type=source_type,
         source_url=source_url,
         source_id=source_id,
         duration=duration,
         hex_hash=hex_hash,
+        date_accessed=date_accessed,
         language=language,
         source_audio=source_audio_list,
     )
@@ -282,7 +287,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date, source_type, title
+        store_dir, records_dir, hex_hash, content, date_published, source_type, title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

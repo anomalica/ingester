@@ -27,10 +27,11 @@ def _get_trafilatura_version() -> str:
 
 def _build_frontmatter(
     title: str,
-    date: str,
+    date_published: str,
     url: str,
     source_id: str | None,
     fetched_url: str | None,
+    date_accessed: str | None,
     authors: list[str] | None,
     hex_hash: str,
     sitename: str | None,
@@ -42,7 +43,7 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
         f'title: "{escaped_title}"',
-        f"date: {date}",
+        f"date_published: {date_published}",
         "source_type: web",
         f"source_url: {url}",
     ]
@@ -61,7 +62,9 @@ def _build_frontmatter(
         escaped_desc = description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
-    lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
+    if date_accessed:
+        lines.append(f"date_accessed: {date_accessed}")
+    lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
     lines.append("  status: publicly_accessible")
     lines.append("processing:")
@@ -117,14 +120,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         )
         return 0
 
-    date = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_published = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_accessed = manifest.get("fetched_at")
     title = article.title or "Untitled"
     frontmatter = _build_frontmatter(
         title,
-        date,
+        date_published,
         url,
         source_id,
         fetched_url,
+        date_accessed,
         article.authors,
         hex_hash,
         article.sitename,
@@ -141,7 +146,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date, "web", title
+        store_dir, records_dir, hex_hash, content, date_published, "web", title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

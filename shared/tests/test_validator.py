@@ -4,7 +4,7 @@ from validator import validate
 VALID_RECORD = """---
 schema: anomalica/record/1
 title: Test Document
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 source_url: https://example.com
 ---
@@ -16,7 +16,7 @@ VALID_RECORD_CODE_FENCED = """```markdown
 ---
 schema: anomalica/record/1
 title: Test Document
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 
@@ -26,7 +26,7 @@ Article content here.
 RECORD_WITH_COLON_IN_TITLE = """---
 schema: anomalica/record/1
 title: Document: A Subtitle
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 
@@ -53,7 +53,7 @@ def test_missing_required_field():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 ---
 
 Content.
@@ -66,7 +66,7 @@ def test_wrong_schema_version():
     record = """---
 schema: anomalica/record/99
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 
@@ -94,7 +94,7 @@ def test_html_tags_warned():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 
@@ -108,7 +108,7 @@ def test_empty_body_warned():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 """
@@ -120,7 +120,7 @@ def test_extra_required_field_missing():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: web
 ---
 

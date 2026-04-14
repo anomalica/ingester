@@ -20,7 +20,7 @@ class ValidationResult:
     fixed: str | None = None
 
 
-REQUIRED_FRONTMATTER = ["schema", "title", "date", "source_type"]
+REQUIRED_FRONTMATTER = ["schema", "title", "date_published", "source_type"]
 CURRENT_SCHEMA = "anomalica/record/1"
 
 

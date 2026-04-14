@@ -6,7 +6,7 @@ from shared.validator import validate
 VALID_RECORD = """---
 schema: anomalica/record/1
 title: Test Document
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 pages: 2
 ---
@@ -33,7 +33,7 @@ def test_valid_record_passes():
 def test_missing_schema():
     record = """---
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -47,7 +47,7 @@ def test_wrong_schema_version():
     record = """---
 schema: anomalica/record/99
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -60,7 +60,7 @@ Content.
 def test_missing_title():
     record = """---
 schema: anomalica/record/1
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -87,7 +87,7 @@ def test_missing_source_type():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 ---
 
 Content.
@@ -101,7 +101,7 @@ def test_code_fences_detected():
 ---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -116,7 +116,7 @@ def test_trailing_delimiter_is_harmless():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -136,7 +136,7 @@ def test_invalid_frontmatter_yaml():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
   bad_indent: true
 ---
@@ -154,7 +154,7 @@ def test_autofix_strips_code_fences():
 ---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 
@@ -170,7 +170,7 @@ def test_empty_content_warning():
     record = """---
 schema: anomalica/record/1
 title: Test
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 """
@@ -185,7 +185,7 @@ def test_autofix_yaml_quoting():
     record = """---
 schema: anomalica/record/1
 title: Report: Volume 1
-date: 2023-07-26
+date_published: 2023-07-26
 source_type: pdf
 ---
 

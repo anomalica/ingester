@@ -63,7 +63,7 @@ def test_ingest_includes_processing_in_frontmatter(mock_extract, tmp_path):
     assert "name: trafilatura" in content
     assert "role: extraction" in content
     assert "provider: local" in content
-    assert "extracted_at:" in content
+    assert "date_extracted:" in content
 
 
 @patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
