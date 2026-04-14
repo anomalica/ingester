@@ -65,8 +65,8 @@ def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
     content = md_files[0].read_text()
     assert "schema: anomalica/record/1" in content
     assert "source_type: audio" in content
-    assert "speaker: Speaker 1" in content
-    assert "speaker: Speaker 2" in content
+    assert "<!-- speaker: Speaker 1 -->" in content
+    assert "<!-- speaker: Speaker 2 -->" in content
     assert "Hello there" in content
     assert "I am fine thanks" in content
 
@@ -199,8 +199,8 @@ def test_run_speakers_in_body_not_frontmatter(mock_transcribe, mock_diarise, tmp
     frontmatter = content.split("---", 2)[1]
     assert "speakers:" not in frontmatter
     # But speaker turns should be in the body
-    assert "speaker: Speaker 1" in content
-    assert "speaker: Speaker 2" in content
+    assert "<!-- speaker: Speaker 1 -->" in content
+    assert "<!-- speaker: Speaker 2 -->" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
@@ -228,8 +228,8 @@ def test_run_time_annotations_formatted(mock_transcribe, mock_diarise, tmp_path)
 
     md_files = list((output / "store").glob("*.md"))
     content = md_files[0].read_text()
-    assert "time: 00:00:00" in content
-    assert "time: 00:00:02" in content
+    assert "00:00:00.0 Hello there" in content
+    assert "00:00:02.5 I am fine thanks" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)

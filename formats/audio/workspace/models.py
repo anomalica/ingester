@@ -34,12 +34,19 @@ class SpeakerSegment:
 
 
 @dataclass
+class TimedSentence:
+    """A single sentence with its start timestamp."""
+
+    time: float  # seconds
+    text: str
+
+
+@dataclass
 class Turn:
     """A speaker turn - aligned transcription attributed to a speaker."""
 
-    speaker: str  # "SPEAKER_00", etc.
-    time: float  # seconds (start of turn)
-    text: str  # transcript text for this turn
+    speaker: str
+    sentences: list[TimedSentence]
 
 
 def format_time(seconds: float) -> str:
@@ -49,6 +56,16 @@ def format_time(seconds: float) -> str:
     minutes = (total % 3600) // 60
     secs = total % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def format_time_precise(seconds: float) -> str:
+    """Format seconds as HH:MM:SS.D (one decimal place, fixed 10 chars)."""
+    total_int = int(seconds)
+    tenths = int((seconds - total_int) * 10)
+    hours = total_int // 3600
+    minutes = (total_int % 3600) // 60
+    secs = total_int % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{tenths}"
 
 
 def detect_source_type(mime_type: str) -> str:

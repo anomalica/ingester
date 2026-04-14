@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import Segment, SpeakerSegment, Turn
+from models import Segment, SpeakerSegment, TimedSentence, Turn
 
 
 def align(
@@ -15,16 +15,15 @@ def align(
     sentence boundaries and punctuation from the transcription, rather than
     splitting mid-sentence when diarisation boundaries don't align perfectly.
 
-    Consecutive segments from the same speaker are grouped into turns,
-    separated by newlines to preserve natural paragraph breaks.
+    Consecutive segments from the same speaker are grouped into turns.
+    Each segment becomes a TimedSentence with its own timestamp.
     """
     if not segments or not speaker_segments:
         return []
 
     turns: list[Turn] = []
     current_speaker: str | None = None
-    current_texts: list[str] = []
-    current_start: float = 0.0
+    current_sentences: list[TimedSentence] = []
 
     for segment in segments:
         if not segment.text.strip():
@@ -33,28 +32,19 @@ def align(
         speaker = _majority_speaker(segment, speaker_segments)
 
         if speaker != current_speaker:
-            if current_speaker is not None and current_texts:
-                turns.append(
-                    Turn(
-                        speaker=current_speaker,
-                        time=current_start,
-                        text="\n".join(current_texts),
-                    )
-                )
+            if current_speaker is not None and current_sentences:
+                turns.append(Turn(speaker=current_speaker, sentences=current_sentences))
             current_speaker = speaker
-            current_texts = [segment.text.strip()]
-            current_start = segment.start
+            current_sentences = [
+                TimedSentence(time=segment.start, text=segment.text.strip())
+            ]
         else:
-            current_texts.append(segment.text.strip())
-
-    if current_speaker is not None and current_texts:
-        turns.append(
-            Turn(
-                speaker=current_speaker,
-                time=current_start,
-                text="\n".join(current_texts),
+            current_sentences.append(
+                TimedSentence(time=segment.start, text=segment.text.strip())
             )
-        )
+
+    if current_speaker is not None and current_sentences:
+        turns.append(Turn(speaker=current_speaker, sentences=current_sentences))
 
     return turns
 

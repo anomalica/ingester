@@ -12,7 +12,7 @@ from pathlib import Path
 from alignment.align import align
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists
-from models import Turn, detect_source_type, format_time
+from models import Turn, detect_source_type, format_time_precise
 from probe import probe
 from record import get_version, write_record
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
@@ -147,24 +147,31 @@ def _build_frontmatter(
 
 
 def _build_content(turns: list[Turn]) -> str:
-    """Build the record body with speaker turn annotations."""
+    """Build the record body with speaker turn annotations and sentence-level timestamps.
+
+    Each speaker change is marked with an HTML comment. Each sentence
+    starts on its own line prefixed with HH:MM:SS.D timestamp. An empty
+    line indicates a paragraph break.
+    """
     blocks = []
     for turn in turns:
-        timestamp = format_time(turn.time)
-        block = f"<!--\nspeaker: {turn.speaker}\ntime: {timestamp}\n-->\n{turn.text}"
-        blocks.append(block)
+        lines = [f"<!-- speaker: {turn.speaker} -->"]
+        for sentence in turn.sentences:
+            ts = format_time_precise(sentence.time)
+            lines.append(f"{ts} {sentence.text}")
+        blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
 
 
 def _unique_speakers(turns: list[Turn]) -> dict[str, float]:
     """Extract unique speaker IDs in order of first appearance.
 
-    Returns a dict mapping speaker ID to the timestamp of their first turn.
+    Returns a dict mapping speaker ID to the timestamp of their first sentence.
     """
     speakers: dict[str, float] = {}
     for turn in turns:
-        if turn.speaker not in speakers:
-            speakers[turn.speaker] = turn.time
+        if turn.speaker not in speakers and turn.sentences:
+            speakers[turn.speaker] = turn.sentences[0].time
     return speakers
 
 
@@ -249,8 +256,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     remap = {}
     for i, old_id in enumerate(speakers_unordered):
         remap[old_id] = f"Speaker {i + 1}"
-    turns = [Turn(speaker=remap[t.speaker], time=t.time, text=t.text) for t in turns]
-    {remap[k]: v for k, v in speakers_unordered.items()}
+    turns = [Turn(speaker=remap[t.speaker], sentences=t.sentences) for t in turns]
 
     duration = segments[-1].end
     language = "en"

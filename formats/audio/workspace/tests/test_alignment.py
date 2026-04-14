@@ -31,11 +31,12 @@ def test_two_speakers_basic():
 
     assert len(turns) == 2
     assert turns[0].speaker == "SPEAKER_00"
-    assert turns[0].text == "Hello world."
-    assert turns[0].time == 0.0
+    assert len(turns[0].sentences) == 1
+    assert turns[0].sentences[0].text == "Hello world."
+    assert turns[0].sentences[0].time == 0.0
     assert turns[1].speaker == "SPEAKER_01"
-    assert turns[1].text == "How are you?"
-    assert turns[1].time == 2.5
+    assert turns[1].sentences[0].text == "How are you?"
+    assert turns[1].sentences[0].time == 2.5
 
 
 def test_single_speaker_groups_segments():
@@ -51,7 +52,10 @@ def test_single_speaker_groups_segments():
 
     assert len(turns) == 1
     assert turns[0].speaker == "SPEAKER_00"
-    assert turns[0].text == "Hello world.\nMore text."
+    assert len(turns[0].sentences) == 2
+    assert turns[0].sentences[0].text == "Hello world."
+    assert turns[0].sentences[1].text == "More text."
+    assert turns[0].sentences[1].time == 2.5
 
 
 def test_segment_kept_whole_despite_diarisation_boundary():
@@ -76,8 +80,6 @@ def test_segment_kept_whole_despite_diarisation_boundary():
             ],
         ),
     ]
-    # Diarisation says SPEAKER_00 ends at 51.0 and SPEAKER_01 starts at 51.0
-    # but the segment runs 44.0-53.0, so SPEAKER_00 covers the majority (7s vs 2s)
     speaker_segments = [
         SpeakerSegment(speaker="SPEAKER_00", start=40.0, end=51.0),
         SpeakerSegment(speaker="SPEAKER_01", start=51.0, end=60.0),
@@ -87,11 +89,10 @@ def test_segment_kept_whole_despite_diarisation_boundary():
 
     assert len(turns) == 1
     assert turns[0].speaker == "SPEAKER_00"
-    assert "are real." in turns[0].text
+    assert "are real." in turns[0].sentences[0].text
 
 
 def test_preserves_segment_text_with_punctuation():
-    """Segments should preserve their original text including punctuation."""
     segments = [
         _seg(
             "The Advanced Aerospace Threat Identification Program, or AATIP.",
@@ -106,7 +107,7 @@ def test_preserves_segment_text_with_punctuation():
 
     turns = align(segments, speaker_segments)
 
-    assert "or AATIP." in turns[0].text
+    assert "or AATIP." in turns[0].sentences[0].text
 
 
 def test_empty_segments():
@@ -123,7 +124,6 @@ def test_empty_speaker_segments():
 
 
 def test_segment_in_gap_assigned_to_nearest():
-    """Segments falling between speaker segments go to the nearest one."""
     segments = [
         _seg("Gap text.", 2.2, 2.5, [("Gap", 2.2, 2.3), ("text.", 2.3, 2.5)]),
     ]
@@ -150,10 +150,10 @@ def test_empty_text_segments_skipped():
     turns = align(segments, speaker_segments)
 
     assert len(turns) == 1
-    assert turns[0].text == "Hello."
+    assert turns[0].sentences[0].text == "Hello."
 
 
-def test_turn_time_is_first_segment_start():
+def test_sentence_time_is_segment_start():
     segments = [
         _seg("A B.", 1.5, 3.0, [("A", 1.5, 1.8), ("B.", 2.0, 2.5)]),
     ]
@@ -163,12 +163,12 @@ def test_turn_time_is_first_segment_start():
 
     turns = align(segments, speaker_segments)
 
-    assert turns[0].time == 1.5
+    assert turns[0].sentences[0].time == 1.5
 
 
-def test_multiple_segments_per_turn_separated_by_newlines():
-    """Multiple transcription segments from the same speaker should be
-    separated by newlines to preserve natural paragraph breaks."""
+def test_multiple_sentences_per_turn():
+    """Multiple transcription segments from the same speaker become
+    individual timed sentences within a single turn."""
     segments = [
         _seg(
             "First sentence.", 0.0, 2.0, [("First", 0.0, 0.5), ("sentence.", 0.6, 1.0)]
@@ -193,4 +193,10 @@ def test_multiple_segments_per_turn_separated_by_newlines():
     turns = align(segments, speaker_segments)
 
     assert len(turns) == 1
-    assert turns[0].text == "First sentence.\nSecond sentence.\nThird sentence."
+    assert len(turns[0].sentences) == 3
+    assert turns[0].sentences[0].text == "First sentence."
+    assert turns[0].sentences[0].time == 0.0
+    assert turns[0].sentences[1].text == "Second sentence."
+    assert turns[0].sentences[1].time == 2.5
+    assert turns[0].sentences[2].text == "Third sentence."
+    assert turns[0].sentences[2].time == 4.5
