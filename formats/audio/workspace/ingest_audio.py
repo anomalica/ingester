@@ -85,6 +85,7 @@ def _build_frontmatter(
     source_type: str,
     source_url: str | None,
     source_id: str | None,
+    publisher: str | None,
     duration: float,
     hex_hash: str,
     date_accessed: str | None,
@@ -100,6 +101,9 @@ def _build_frontmatter(
         f"date_published: {date_published}",
         f"source_type: {source_type}",
     ]
+    if publisher:
+        escaped_pub = publisher.replace('"', '\\"')
+        lines.append(f'publisher: "{escaped_pub}"')
     if source_url:
         lines.append(f"source_url: {source_url}")
     if source_id:
@@ -264,6 +268,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     is_url = source.startswith("http://") or source.startswith("https://")
     source_url = source if is_url else None
     title = manifest.get("title", Path(asset_name).stem)
+    publisher = manifest.get("publisher")
     date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
     if not date_published:
         date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -275,6 +280,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_type=source_type,
         source_url=source_url,
         source_id=source_id,
+        publisher=publisher,
         duration=duration,
         hex_hash=hex_hash,
         date_accessed=date_accessed,

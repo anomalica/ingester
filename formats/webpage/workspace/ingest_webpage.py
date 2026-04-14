@@ -34,7 +34,7 @@ def _build_frontmatter(
     date_accessed: str | None,
     authors: list[str] | None,
     hex_hash: str,
-    sitename: str | None,
+    publisher: str | None,
     description: str | None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
@@ -47,6 +47,9 @@ def _build_frontmatter(
         "source_type: web",
         f"source_url: {url}",
     ]
+    if publisher:
+        escaped_pub = publisher.replace('"', '\\"')
+        lines.append(f'publisher: "{escaped_pub}"')
     if source_id:
         lines.append(f"source_id: {source_id}")
     if fetched_url and fetched_url != url:
@@ -55,9 +58,6 @@ def _build_frontmatter(
         lines.append("authors:")
         for author in authors:
             lines.append(f"  - {author}")
-    if sitename:
-        escaped_sitename = sitename.replace('"', '\\"')
-        lines.append(f'sitename: "{escaped_sitename}"')
     if description:
         escaped_desc = description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')
