@@ -41,7 +41,7 @@ def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
 
 
 def _clean_annotations(content: str) -> str:
-    """Remove blank lines before --> in anomalica comment blocks."""
+    """Remove blank lines before --> in annotation comment blocks."""
     return re.sub(r"\n\n(-->)", r"\n\1", content)
 
 
@@ -128,12 +128,12 @@ def _renumber_pages(content: str, offset: int) -> str:
         page_num = int(match.group(1))
         return f"file_page: {page_num + offset}"
 
-    return re.sub(r"^file_page: (\d+)", _add_offset, content, flags=re.MULTILINE)
+    return re.sub(r"file_page: (\d+)", _add_offset, content)
 
 
 def _find_missing_pages(content: str, expected_pages: int) -> list[int]:
     """Find page numbers that should be in the output but aren't."""
-    found = set(int(m) for m in re.findall(r"^file_page: (\d+)", content, re.MULTILINE))
+    found = set(int(m) for m in re.findall(r"file_page: (\d+)", content))
     return sorted(set(range(1, expected_pages + 1)) - found)
 
 
@@ -155,9 +155,13 @@ def _repair_missing_pages(
                 page_body = _renumber_pages(page_body, page_num - 1)
 
                 next_page = page_num + 1
-                insertion_point = content.find(f"\nfile_page: {next_page}\n")
+                insertion_point = content.find(f"file_page: {next_page}")
                 if insertion_point >= 0:
-                    block_start = content.rfind("<!-- anomalica\n", 0, insertion_point)
+                    block_start = content.rfind("<!--\n", 0, insertion_point)
+                    if block_start < 0:
+                        block_start = content.rfind(
+                            "<!-- file_page:", 0, insertion_point
+                        )
                     if block_start >= 0:
                         content = (
                             content[:block_start]
@@ -385,9 +389,7 @@ def main():
         print(f"Validation error: {error}", file=sys.stderr)
 
     # PDF-specific: check page completeness
-    found_pages = set(
-        int(m) for m in re.findall(r"^file_page: (\d+)", content, re.MULTILINE)
-    )
+    found_pages = set(int(m) for m in re.findall(r"file_page: (\d+)", content))
     if found_pages:
         max_page = max(found_pages)
         missing_count = page_count - max_page

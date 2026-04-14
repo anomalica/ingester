@@ -148,7 +148,7 @@ def _build_content(turns: list[Turn]) -> str:
     blocks = []
     for turn in turns:
         timestamp = format_time(turn.time)
-        block = f"<!-- anomalica\nspeaker: {turn.speaker}\ntime: {timestamp}\n-->\n{turn.text}"
+        block = f"<!--\nspeaker: {turn.speaker}\ntime: {timestamp}\n-->\n{turn.text}"
         blocks.append(block)
     return "\n\n".join(blocks) + "\n"
 
