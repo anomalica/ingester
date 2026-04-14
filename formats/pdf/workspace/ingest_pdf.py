@@ -61,6 +61,13 @@ def _patch_frontmatter(
 
     frontmatter = parts[1]
 
+    # Ensure title is always quoted
+    title_match = re.search(r'^title: (?!")(.+)$', frontmatter, re.MULTILINE)
+    if title_match:
+        raw_title = title_match.group(1)
+        escaped = raw_title.replace('"', '\\"')
+        frontmatter = frontmatter.replace(f"title: {raw_title}", f'title: "{escaped}"')
+
     if "content_hash:" not in frontmatter:
         frontmatter = (
             frontmatter.rstrip("\n")
