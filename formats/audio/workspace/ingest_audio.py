@@ -11,7 +11,7 @@ from pathlib import Path
 
 from alignment.align import align
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
-from hashing import content_hash_label, hash_file, source_id_to_filename
+from hashing import content_hash_label, hash_file, store_exists
 from models import Turn, detect_source_type, format_time
 from probe import probe
 from record import get_version, write_record
@@ -87,7 +87,6 @@ def _build_frontmatter(
     source_id: str | None,
     duration: float,
     hex_hash: str,
-    speakers: dict[str, float],
     language: str,
     source_audio: list[dict],
 ) -> str:
@@ -109,12 +108,6 @@ def _build_frontmatter(
     lines.append(f"extracted_at: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
     lines.append("  status: publicly_accessible")
-    lines.append("speakers:")
-    for speaker_id, first_time in speakers.items():
-        lines.append(f"  - id: {speaker_id}")
-        lines.append("    name: Unknown")
-        lines.append(f"    first_appearance: {format_time(first_time)}")
-        lines.append("    relevant: true")
     tool_versions = _get_tool_versions()
     lines.append("processing:")
     lines.append("  handler: audio")
@@ -196,10 +189,12 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     hex_hash = hash_file(asset_path)
 
-    # For URL-based sources, use source_id as the store key (stable across
-    # re-encodings). For local files (no source_id from acquire), fall back
-    # to the file content hash.
-    store_key = source_id_to_filename(source_id) if source_id else hex_hash
+    if not force and store_exists(store_dir, hex_hash):
+        print(
+            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
+            file=sys.stderr,
+        )
+        return 0
 
     # Probe the audio file to capture characteristics for the source.audio block
     audio_info = probe(asset_path)
@@ -216,22 +211,9 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         ),
     }
 
-    # Read existing source.audio list (if record exists) and merge.
-    # Skip processing entirely if this exact audio (same sha256) is already
-    # represented in the existing record.
-    existing_record_path = store_dir / f"{store_key}.md"
+    # Read existing source.audio list and merge (append only if sha256 is new)
+    existing_record_path = store_dir / f"{hex_hash}.md"
     existing_audio_list = _read_existing_source_audio(existing_record_path)
-    sha_already_present = any(
-        entry.get("sha256") == hex_hash for entry in existing_audio_list
-    )
-
-    if sha_already_present and not force:
-        print(
-            f"Skipping: this audio version is already in the record ({store_key})",
-            file=sys.stderr,
-        )
-        return 0
-
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
     print(f"Transcribing: {asset_path.name}", file=sys.stderr)
@@ -265,7 +247,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     for i, old_id in enumerate(speakers_unordered):
         remap[old_id] = f"Speaker {i + 1}"
     turns = [Turn(speaker=remap[t.speaker], time=t.time, text=t.text) for t in turns]
-    speakers = {remap[k]: v for k, v in speakers_unordered.items()}
+    {remap[k]: v for k, v in speakers_unordered.items()}
 
     duration = segments[-1].end
     language = "en"
@@ -285,14 +267,13 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_id=source_id,
         duration=duration,
         hex_hash=hex_hash,
-        speakers=speakers,
         language=language,
         source_audio=source_audio_list,
     )
     body = _build_content(turns)
     content = frontmatter + "\n\n" + body
 
-    result = validate(content, extra_required=["duration", "speakers"])
+    result = validate(content, extra_required=["duration"])
     if result.fixed:
         content = result.fixed
     for warning in result.warnings:
@@ -301,7 +282,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, store_key, content, date, source_type, title
+        store_dir, records_dir, hex_hash, content, date, source_type, title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

@@ -186,7 +186,7 @@ def test_run_video_source_type(mock_transcribe, mock_diarise, tmp_path):
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
 @patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
-def test_run_speaker_roster_in_frontmatter(mock_transcribe, mock_diarise, tmp_path):
+def test_run_speakers_in_body_not_frontmatter(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
     staging = _create_staging(tmp_path)
@@ -195,10 +195,12 @@ def test_run_speaker_roster_in_frontmatter(mock_transcribe, mock_diarise, tmp_pa
 
     md_files = list((output / "store").glob("*.md"))
     content = md_files[0].read_text()
-    assert "speakers:" in content
-    assert "id: Speaker 1" in content
-    assert "name: Unknown" in content
-    assert "first_appearance:" in content
+    # Speakers should be in body annotations, not frontmatter
+    frontmatter = content.split("---", 2)[1]
+    assert "speakers:" not in frontmatter
+    # But speaker turns should be in the body
+    assert "speaker: Speaker 1" in content
+    assert "speaker: Speaker 2" in content
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)

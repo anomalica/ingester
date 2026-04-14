@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hashing import content_hash_label, hash_string, source_id_to_filename, store_exists
+from hashing import content_hash_label, hash_string, store_exists
 from record import get_version, write_record
 from validator import validate
 
@@ -110,11 +110,9 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     # Web articles are URL-based: use source_id from acquire as the store key.
     # Falls back to content hash only if source_id is missing for some reason.
-    store_key = source_id_to_filename(source_id) if source_id else hex_hash
-
-    if not force and store_exists(store_dir, store_key):
+    if not force and store_exists(store_dir, hex_hash):
         print(
-            f"Skipping: record already exists ({store_key})",
+            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
             file=sys.stderr,
         )
         return 0
@@ -143,7 +141,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, store_key, content, date, "web", title
+        store_dir, records_dir, hex_hash, content, date, "web", title
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
