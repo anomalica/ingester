@@ -142,6 +142,8 @@ def acquire(url: str, staging_dir: Path) -> int:
                 manifest["source_id"] = fetcher_metadata["source_id"]
             if fetcher_metadata.get("channel"):
                 manifest["publisher"] = fetcher_metadata["channel"]
+            if fetcher_metadata.get("description"):
+                manifest["description"] = fetcher_metadata["description"]
 
         # Fall back to URL-derived source_id if fetcher didn't provide one
         if "source_id" not in manifest:

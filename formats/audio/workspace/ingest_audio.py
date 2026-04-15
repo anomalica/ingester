@@ -79,6 +79,74 @@ def _get_tool_versions() -> dict[str, str]:
     return versions
 
 
+def _extract_known_speakers(
+    title: str, description: str | None, publisher: str | None
+) -> list[str]:
+    """Extract likely speaker names from title and description.
+
+    Returns a list of personal names (first name, optional middle name, last name)
+    for the reviewer to work with. No titles, qualifications, or organisation names.
+    """
+    names = set()
+
+    NOT_NAMES = {
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "on",
+        "for",
+        "and",
+        "or",
+        "with",
+        "at",
+        "to",
+        "from",
+        "by",
+    }
+
+    def _looks_like_name(candidate: str) -> bool:
+        words = candidate.split()
+        if not (2 <= len(words) <= 3):
+            return False
+        if not all(w[0].isupper() for w in words):
+            return False
+        if any(w.lower() in NOT_NAMES for w in words):
+            return False
+        return True
+
+    # Title often has "Guest Name: Topic | Show" or "Guest Name | Topic"
+    for sep in [":", "|"]:
+        if sep in title:
+            candidate = title.split(sep)[0].strip().strip('"')
+            if _looks_like_name(candidate):
+                names.add(candidate)
+            break
+
+    # First line of description often introduces the guest
+    if description:
+        first_line = description.strip().split("\n")[0]
+        for pattern in [
+            " is a ",
+            " is an ",
+            " reports on ",
+            " interviews ",
+            " speaks with ",
+        ]:
+            if pattern in first_line:
+                candidate = first_line.split(pattern)[0].strip()
+                if _looks_like_name(candidate):
+                    names.add(candidate)
+                break
+
+    # Publisher might be a person (e.g. "Lex Fridman") not an organisation
+    if publisher and _looks_like_name(publisher):
+        names.add(publisher)
+
+    return sorted(names)
+
+
 def _build_frontmatter(
     title: str,
     date_published: str,
@@ -86,6 +154,7 @@ def _build_frontmatter(
     source_url: str | None,
     source_id: str | None,
     publisher: str | None,
+    known_speakers: list[str],
     duration: float,
     hex_hash: str,
     date_accessed: str | None,
@@ -104,6 +173,11 @@ def _build_frontmatter(
     if publisher:
         escaped_pub = publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')
+    if known_speakers:
+        lines.append("speakers:")
+        for name in known_speakers:
+            escaped_name = name.replace('"', '\\"')
+            lines.append(f'  - "{escaped_name}"')
     if source_url:
         lines.append(f"source_url: {source_url}")
     if source_id:
@@ -269,6 +343,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     source_url = source if is_url else None
     title = manifest.get("title", Path(asset_name).stem)
     publisher = manifest.get("publisher")
+    description = manifest.get("description")
+    known_speakers = _extract_known_speakers(title, description, publisher)
     date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
     if not date_published:
         date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -281,6 +357,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_url=source_url,
         source_id=source_id,
         publisher=publisher,
+        known_speakers=known_speakers,
         duration=duration,
         hex_hash=hex_hash,
         date_accessed=date_accessed,
