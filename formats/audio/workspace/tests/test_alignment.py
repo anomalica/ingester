@@ -200,3 +200,63 @@ def test_multiple_sentences_per_turn():
     assert turns[0].sentences[1].time == 2.5
     assert turns[0].sentences[2].text == "Third sentence."
     assert turns[0].sentences[2].time == 4.5
+
+
+def test_multi_sentence_segment_split():
+    """A single WhisperX segment containing multiple sentences should be
+    split into individual timed sentences using word timestamps."""
+    segments = [
+        _seg(
+            "First sentence. Second sentence. Third sentence.",
+            0.0,
+            6.0,
+            [
+                ("First", 0.0, 0.3),
+                ("sentence.", 0.4, 0.8),
+                ("Second", 2.0, 2.3),
+                ("sentence.", 2.4, 2.8),
+                ("Third", 4.0, 4.3),
+                ("sentence.", 4.4, 4.8),
+            ],
+        ),
+    ]
+    speaker_segments = [
+        SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=6.0),
+    ]
+
+    turns = align(segments, speaker_segments)
+
+    assert len(turns) == 1
+    assert len(turns[0].sentences) == 3
+    assert turns[0].sentences[0].text == "First sentence."
+    assert turns[0].sentences[0].time == 0.0
+    assert turns[0].sentences[1].text == "Second sentence."
+    assert turns[0].sentences[1].time == 2.0
+    assert turns[0].sentences[2].text == "Third sentence."
+    assert turns[0].sentences[2].time == 4.0
+
+
+def test_single_sentence_segment_not_split():
+    """A segment with one sentence should not be split."""
+    segments = [
+        _seg(
+            "Just one sentence here.",
+            0.0,
+            2.0,
+            [
+                ("Just", 0.0, 0.2),
+                ("one", 0.3, 0.5),
+                ("sentence", 0.6, 1.0),
+                ("here.", 1.1, 1.5),
+            ],
+        ),
+    ]
+    speaker_segments = [
+        SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=2.0),
+    ]
+
+    turns = align(segments, speaker_segments)
+
+    assert len(turns) == 1
+    assert len(turns[0].sentences) == 1
+    assert turns[0].sentences[0].text == "Just one sentence here."
