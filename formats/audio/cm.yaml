@@ -13,31 +13,26 @@ runtime:
 
 stages:
   base:
-    from: pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
+    from: python:3.12-slim
     steps:
       - apt-get:
           install:
             - ffmpeg
             - git
-      - mamba:
+      - pip:
           install:
+            - torch
+            - torchvision
             - whisperx
             - pyannote.audio
-            - torchvision
             - pyyaml
-          channels:
-            - pytorch
-            - nvidia
-            - conda-forge
 
   development:
     from: base
     steps:
-      - mamba:
+      - pip:
           install:
             - pytest
-          channels:
-            - conda-forge
 
   production:
     from: base
