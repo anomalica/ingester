@@ -19,3 +19,7 @@ formats/pdf/run.sh
 formats/audio/Dockerfile
 formats/audio/build.sh
 formats/audio/run.sh
+acquire/.dockerignore
+formats/webpage/.dockerignore
+formats/pdf/.dockerignore
+formats/audio/.dockerignore

@@ -19,19 +19,25 @@ stages:
           install:
             - ffmpeg
             - git
-      - pip:
+      - mamba:
           install:
             - whisperx
             - pyannote.audio
             - torchvision
             - pyyaml
+          channels:
+            - pytorch
+            - nvidia
+            - conda-forge
 
   development:
     from: base
     steps:
-      - pip:
+      - mamba:
           install:
             - pytest
+          channels:
+            - conda-forge
 
   production:
     from: base
