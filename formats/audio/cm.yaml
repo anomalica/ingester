@@ -21,10 +21,9 @@ stages:
             - git
       - pip:
           install:
-            - torch
-            - torchvision
-            - whisperx
-            - pyannote.audio
+            - whisperx==3.8.5
+            - pyannote.audio==4.0.4
+            - soundfile
             - pyyaml
 
   development:
