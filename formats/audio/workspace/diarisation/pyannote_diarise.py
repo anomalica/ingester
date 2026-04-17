@@ -7,17 +7,7 @@ from pathlib import Path
 
 from models import SpeakerSegment
 
-DIARISATION_MODEL = "pyannote/speaker-diarization-3.1"
-
-# Clustering threshold controls speaker merging (cosine similarity).
-# Higher = stricter = more speakers (over-split). Lower = looser = fewer.
-# Model default is 0.7045. We use 0.50 to prefer over-splitting: it's easier
-# for a human to merge duplicate speakers than to untangle conflated ones.
-# Tested 0.50-0.95 on broadcast content (60 Minutes):
-#   0.50 = 12 speakers (separates archival clips, ads, cockpit audio)
-#   0.60-0.92 = 7 speakers (conflates cockpit audio with interview voice)
-#   0.95 = 5 speakers (merges real speakers)
-CLUSTERING_THRESHOLD = 0.50
+DIARISATION_MODEL = "pyannote/speaker-diarization-community-1"
 
 
 def diarise(audio_path: Path) -> list[SpeakerSegment]:
@@ -43,21 +33,12 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
         raise RuntimeError(
             "HF_TOKEN environment variable required for pyannote model download. "
             "Get a token at https://huggingface.co/settings/tokens and accept the "
-            "model licence at https://huggingface.co/pyannote/speaker-diarization-3.1"
+            f"model licence at https://huggingface.co/{DIARISATION_MODEL}"
         )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, token=hf_token)
-    pipeline.instantiate(
-        {
-            "clustering": {
-                "method": "centroid",
-                "min_cluster_size": 12,
-                "threshold": CLUSTERING_THRESHOLD,
-            },
-        }
-    )
     pipeline.to(torch.device(device))
 
     import torchaudio
