@@ -48,6 +48,7 @@ def _build_frontmatter(
     source_url: str | None,
     date_accessed: str | None,
     hex_hash: str,
+    media_summary: dict | None,
 ) -> str:
     escaped_title = book.title.replace('"', '\\"')
     lines = [
@@ -77,6 +78,10 @@ def _build_frontmatter(
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
     lines.append("  status: licensed")
+    if media_summary:
+        lines.append("media:")
+        lines.append(f"  count: {media_summary['count']}")
+        lines.append(f"  total_bytes: {media_summary['total_bytes']}")
     lines.append("processing:")
     lines.append("  handler: ebook")
     lines.append(f"  version: {get_version()}")
@@ -131,7 +136,10 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print("No chapters extracted", file=sys.stderr)
         return 1
 
-    print(f"Extracted: {book.title} ({len(book.chapters)} chapters)", file=sys.stderr)
+    print(
+        f"Extracted: {book.title} ({len(book.chapters)} chapters, {len(book.images)} images)",
+        file=sys.stderr,
+    )
 
     body = _render_body(book)
     hex_hash = hash_string(body)
@@ -143,9 +151,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         )
         return 0
 
+    media_summary = None
+    if book.images:
+        media_summary = {
+            "count": len(book.images),
+            "total_bytes": sum(len(img.bytes) for img in book.images),
+        }
+
     date_published = _normalise_date(book.date_published)
     frontmatter = _build_frontmatter(
-        book, date_published, source_url, date_accessed, hex_hash
+        book, date_published, source_url, date_accessed, hex_hash, media_summary
     )
     content = frontmatter + "\n\n" + body
 
@@ -162,6 +177,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
+
+    if book.images:
+        media_dir = output_dir / "media" / hex_hash
+        media_dir.mkdir(parents=True, exist_ok=True)
+        for img in book.images:
+            (media_dir / f"{img.hash}.{img.ext}").write_bytes(img.bytes)
+        print(
+            f"Media: {len(book.images)} images -> {media_dir}",
+            file=sys.stderr,
+        )
 
     if needs_sidecar(content):
         sidecar = build_sidecar(body, source_path=asset_path)

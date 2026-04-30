@@ -2,13 +2,43 @@
 
 from __future__ import annotations
 
+import hashlib
+import posixpath
+import re
 from dataclasses import dataclass, field
 from typing import Iterable
+from urllib.parse import unquote
 
 import ebooklib
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from markdownify import markdownify
+
+# Markdownify escapes underscores in plain text to prevent emphasis collisions, so
+# token markers must be pure alphanumerics. Round-tripping through markdownify
+# preserves these markers verbatim.
+IMG_TOKEN_PREFIX = "ANOMALICAIMG"
+IMG_TOKEN_SUFFIX = "IMGEND"
+IMG_TOKEN_RE = re.compile(rf"{IMG_TOKEN_PREFIX}([0-9a-f]{{12}}){IMG_TOKEN_SUFFIX}")
+
+MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+    "image/tiff": "tiff",
+}
+
+
+@dataclass
+class ExtractedImage:
+    hash: str
+    ext: str
+    media_type: str
+    bytes: bytes
+    alt: str | None = None
 
 
 @dataclass
@@ -28,6 +58,7 @@ class ExtractedBook:
     description: str | None = None
     identifier: str | None = None
     chapters: list[Chapter] = field(default_factory=list)
+    images: list[ExtractedImage] = field(default_factory=list)
 
 
 def _meta_first(book: epub.EpubBook, namespace: str, name: str) -> str | None:
@@ -56,16 +87,107 @@ def _strip_navigation(soup: BeautifulSoup) -> None:
         nav.decompose()
 
 
-def _xhtml_to_markdown(xhtml: bytes) -> tuple[str | None, str]:
+def _resolve_href(base_file: str, src: str) -> str:
+    src = unquote(src.split("#", 1)[0].split("?", 1)[0])
+    base_dir = posixpath.dirname(base_file)
+    return posixpath.normpath(posixpath.join(base_dir, src)) if base_dir else src
+
+
+def _ext_for(media_type: str, src: str) -> str:
+    if media_type in MIME_TO_EXT:
+        return MIME_TO_EXT[media_type]
+    suffix = posixpath.splitext(src)[1].lstrip(".").lower()
+    return suffix or "bin"
+
+
+def _collect_images(
+    body, chapter_file: str, book: epub.EpubBook, images: list[ExtractedImage]
+) -> None:
+    """Replace each <img> in the chapter body with a token, recording the image bytes.
+
+    Tokens take the form __ANOMALICA_IMG_{12hex}__ and are expanded to image
+    annotations after markdownify runs (markdownify mangles HTML comments
+    inside the body, so we round-trip through a plain text token).
+    """
+    by_hash = {img.hash: img for img in images}
+    for img_tag in body.find_all("img"):
+        src = img_tag.get("src")
+        if not src:
+            img_tag.decompose()
+            continue
+        try:
+            href = _resolve_href(chapter_file, src)
+            item = book.get_item_with_href(href)
+            if item is None:
+                img_tag.decompose()
+                continue
+            img_bytes = item.get_content()
+            img_hash = hashlib.sha256(img_bytes).hexdigest()[:12]
+            alt = (img_tag.get("alt") or "").strip() or None
+
+            existing = by_hash.get(img_hash)
+            if existing is None:
+                ext = _ext_for(item.media_type, src)
+                new_img = ExtractedImage(
+                    hash=img_hash,
+                    ext=ext,
+                    media_type=item.media_type,
+                    bytes=img_bytes,
+                    alt=alt,
+                )
+                images.append(new_img)
+                by_hash[img_hash] = new_img
+            elif existing.alt is None and alt:
+                existing.alt = alt
+
+            img_tag.replace_with(
+                f"\n\n{IMG_TOKEN_PREFIX}{img_hash}{IMG_TOKEN_SUFFIX}\n\n"
+            )
+        except Exception:
+            img_tag.decompose()
+
+
+def _xhtml_to_markdown(
+    xhtml: bytes,
+    chapter_file: str,
+    book: epub.EpubBook,
+    images: list[ExtractedImage],
+) -> tuple[str | None, str]:
     soup = BeautifulSoup(xhtml, "lxml-xml")
     _strip_navigation(soup)
     title = _chapter_title(soup)
     body = soup.find("body") or soup
+    _collect_images(body, chapter_file, book, images)
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
     return title, md.strip()
+
+
+def _yaml_quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _format_image_annotation(img: ExtractedImage) -> str:
+    lines = ["<!--", "image:", f"  file: {img.hash}.{img.ext}"]
+    if img.alt:
+        lines.append(f"  alt: {_yaml_quote(img.alt)}")
+    lines.append("-->")
+    return "\n".join(lines)
+
+
+def _expand_image_tokens(md: str, images: list[ExtractedImage]) -> str:
+    by_hash = {img.hash: img for img in images}
+
+    def replace(match: re.Match) -> str:
+        img = by_hash.get(match.group(1))
+        if img is None:
+            return ""
+        return _format_image_annotation(img)
+
+    return IMG_TOKEN_RE.sub(replace, md)
 
 
 def _spine_documents(book: epub.EpubBook) -> Iterable[epub.EpubItem]:
@@ -100,7 +222,7 @@ _patch_ebooklib_nav()
 
 
 def extract(epub_path: str) -> ExtractedBook:
-    """Parse an EPUB file and return structured chapters + metadata."""
+    """Parse an EPUB file and return structured chapters + metadata + images."""
     book = epub.read_epub(epub_path)
 
     title = _meta_first(book, "DC", "title") or "Untitled"
@@ -110,9 +232,13 @@ def extract(epub_path: str) -> ExtractedBook:
     description = _meta_first(book, "DC", "description")
     identifier = _meta_first(book, "DC", "identifier")
 
+    images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
     for index, item in enumerate(_spine_documents(book), start=1):
-        chapter_title, markdown = _xhtml_to_markdown(item.get_content())
+        chapter_title, markdown = _xhtml_to_markdown(
+            item.get_content(), item.file_name, book, images
+        )
+        markdown = _expand_image_tokens(markdown, images)
         if not markdown:
             continue
         chapters.append(Chapter(index=index, title=chapter_title, markdown=markdown))
@@ -126,4 +252,5 @@ def extract(epub_path: str) -> ExtractedBook:
         description=description,
         identifier=identifier,
         chapters=chapters,
+        images=images,
     )
