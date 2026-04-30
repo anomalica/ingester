@@ -207,6 +207,9 @@ pdf)
 audio)
 	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
 	;;
+ebook)
+	(cd "${SCRIPT_DIR}/formats/ebook" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	;;
 *)
 	echo "Error: handler '${HANDLER}' is not yet implemented" >&2
 	exit 1

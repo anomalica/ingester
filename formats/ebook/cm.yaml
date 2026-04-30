@@ -1,0 +1,43 @@
+names:
+  image: anomalica-ingester-ebook
+  workspace: workspace
+  user: nonroot
+
+runtime:
+  features: []
+  volumes:
+    - ../../staging:/mnt/staging:rw
+    - ../../../anomalica-ingests:/mnt/output:rw
+    - ../../shared:/mnt/shared:ro
+
+stages:
+  base:
+    from: python:3.12-slim
+    steps:
+      - pip:
+          install:
+            - ebooklib
+            - beautifulsoup4
+            - markdownify
+            - lxml
+            - pyyaml
+
+  development:
+    from: base
+    steps:
+      - pip:
+          install:
+            - pytest
+
+  production:
+    from: base
+    steps:
+      - copy: workspace
+
+commands:
+  ingest:
+    command: python workspace/ingest_ebook.py
+    description: Extract structured content from an EPUB into Anomalica record format
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/mnt/shared"
