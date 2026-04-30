@@ -81,6 +81,21 @@ if ! is_url "$INPUT"; then
 	fi
 fi
 
+# For URLs, pre-fetch dedup by exact source_url match
+if is_url "$INPUT" && [[ "$FORCE_FLAG" -eq 0 ]]; then
+	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+from pathlib import Path
+from dedup import find_by_source_url
+match = find_by_source_url(Path('${INGESTS_DIR}/store'), '${INPUT}')
+print(match if match else '')
+")"
+	if [[ -n "$EXISTING" ]]; then
+		echo "Skipping: URL already ingested" >&2
+		echo "Existing record: ${EXISTING}" >&2
+		exit 0
+	fi
+fi
+
 UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 RUN_DIR="${STAGING_DIR}/${UUID}"
 mkdir -p "$RUN_DIR"
@@ -131,11 +146,29 @@ fi
 
 DETECTED_TYPE="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('detected_type') or '')")"
 ASSET="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('asset') or '')")"
+SOURCE_ID="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('source_id') or '')")"
 
 if [[ -z "$DETECTED_TYPE" || -z "$ASSET" ]]; then
 	ERROR="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('error', 'unknown error'))")"
 	echo "Error: acquisition failed - ${ERROR}" >&2
 	exit 1
+fi
+
+# Post-acquire dedup by source_id (e.g. youtube:ZBtMbBPzqHY). Catches the
+# case where the same video re-downloaded with a fresh container has a new
+# byte hash but is logically the same source.
+if [[ -n "$SOURCE_ID" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
+	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+from pathlib import Path
+from dedup import find_by_source_id
+match = find_by_source_id(Path('${INGESTS_DIR}/store'), '${SOURCE_ID}')
+print(match if match else '')
+")"
+	if [[ -n "$EXISTING" ]]; then
+		echo "Skipping: source_id already ingested (${SOURCE_ID})" >&2
+		echo "Existing record: ${EXISTING}" >&2
+		exit 0
+	fi
 fi
 
 echo "Detected type: ${DETECTED_TYPE}" >&2
