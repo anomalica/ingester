@@ -12,6 +12,7 @@ from pathlib import Path
 from hashing import content_hash_label, hash_string, store_exists
 from record import get_version, write_record
 from validator import validate
+from verification import build_sidecar, needs_sidecar, write_sidecar
 
 from extraction.trafilatura_ext import extract_article
 
@@ -150,6 +151,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
+
+    if needs_sidecar(content):
+        sidecar = build_sidecar(content, source_path=asset_path)
+        sidecar_path = write_sidecar(store_dir, hex_hash, sidecar)
+        print(
+            f"Verification: {sidecar_path.name} ({len(sidecar.get('challenges', []))} challenges)",
+            file=sys.stderr,
+        )
     return 0
 
 

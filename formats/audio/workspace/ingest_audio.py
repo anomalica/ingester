@@ -17,6 +17,7 @@ from probe import probe
 from record import get_version, write_record
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
+from verification import build_sidecar, needs_sidecar, write_sidecar
 
 import yaml
 
@@ -380,6 +381,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
+
+    if needs_sidecar(content):
+        sidecar = build_sidecar(
+            content, source_path=asset_path, duration_seconds=duration
+        )
+        sidecar_path = write_sidecar(store_dir, hex_hash, sidecar)
+        print(
+            f"Verification: {sidecar_path.name} ({len(sidecar.get('challenges', []))} challenges)",
+            file=sys.stderr,
+        )
     return 0
 
 

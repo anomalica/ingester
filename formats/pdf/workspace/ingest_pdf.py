@@ -15,6 +15,7 @@ from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.record import get_version, write_record
 from shared.validator import strip_code_fences, validate
+from shared.verification import build_sidecar, needs_sidecar, write_sidecar
 
 # Claude Code limits (multi-turn overhead makes large documents slow)
 CLAUDE_CODE_MAX_PAGES_SINGLE_PASS = 20
@@ -452,6 +453,16 @@ def main():
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {symlink_path}", file=sys.stderr)
+
+    if needs_sidecar(content):
+        sidecar = build_sidecar(
+            content, source_path=args.input_file, page_count=page_count
+        )
+        sidecar_path = write_sidecar(store_dir, input_hash, sidecar)
+        print(
+            f"Verification: {sidecar_path.name} ({len(sidecar.get('challenges', []))} challenges)",
+            file=sys.stderr,
+        )
 
 
 def _extract_chunked(
