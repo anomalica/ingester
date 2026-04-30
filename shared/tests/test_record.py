@@ -1,4 +1,12 @@
-from record import get_version, slugify, symlink_name, write_record
+import pytest
+
+from record import (
+    SymlinkCollisionError,
+    get_version,
+    slugify,
+    symlink_name,
+    write_record,
+)
 
 
 def test_slugify_basic():
@@ -53,12 +61,12 @@ def test_write_record_creates_files(tmp_path):
     assert link_path.name == "2023-06-05-web-test-article.md"
 
 
-def test_write_record_overwrites_existing_symlink(tmp_path):
+def test_write_record_replaces_stale_symlink(tmp_path):
+    """Stale symlinks (broken target) are safe to overwrite."""
     store = tmp_path / "store"
     records = tmp_path / "records"
     records.mkdir(parents=True)
 
-    # Create a stale symlink
     stale = records / "2023-06-05-web-test-article.md"
     stale.symlink_to("/nonexistent")
 
@@ -66,3 +74,34 @@ def test_write_record_overwrites_existing_symlink(tmp_path):
         store, records, "abc123", "content", "2023-06-05", "web", "Test Article"
     )
     assert stale.resolve() == (store / "abc123.md").resolve()
+
+
+def test_write_record_idempotent_when_symlink_already_correct(tmp_path):
+    """Re-running with the same hash and slug is a no-op overwrite."""
+    store = tmp_path / "store"
+    records = tmp_path / "records"
+
+    write_record(store, records, "abc123", "v1", "2023-06-05", "web", "Test Article")
+    write_record(store, records, "abc123", "v2", "2023-06-05", "web", "Test Article")
+
+    assert (store / "abc123.md").read_text() == "v2"
+    link = records / "2023-06-05-web-test-article.md"
+    assert link.resolve() == (store / "abc123.md").resolve()
+
+
+def test_write_record_refuses_to_clobber_unrelated_record(tmp_path):
+    """Symlink pointing to a different real record must not be overwritten."""
+    store = tmp_path / "store"
+    records = tmp_path / "records"
+
+    write_record(store, records, "aaa111", "first", "2023-06-05", "web", "Test Article")
+
+    with pytest.raises(SymlinkCollisionError):
+        write_record(
+            store, records, "bbb222", "second", "2023-06-05", "web", "Test Article"
+        )
+
+    link = records / "2023-06-05-web-test-article.md"
+    assert link.resolve() == (store / "aaa111.md").resolve()
+    assert (store / "aaa111.md").read_text() == "first"
+    assert not (store / "bbb222.md").exists()

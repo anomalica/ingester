@@ -53,6 +53,16 @@ def symlink_name(date: str, source_type: str, title: str) -> str:
     return f"{date}-{source_type}-{slug}.md"
 
 
+class SymlinkCollisionError(Exception):
+    """Raised when a record symlink would clobber an unrelated existing record.
+
+    Indicates that the upstream dedup pipeline (source_id / source_url /
+    content_hash) failed to catch a re-ingest of the same logical source,
+    or that two distinct sources produced the same human-readable slug.
+    Either way, silently overwriting would orphan the existing store entry.
+    """
+
+
 def write_record(
     store_dir: Path,
     records_dir: Path,
@@ -66,18 +76,32 @@ def write_record(
 
     Returns:
         Tuple of (record_path, symlink_path).
+
+    Raises:
+        SymlinkCollisionError: if the target symlink already exists and
+            points to a different real record. Stale symlinks (broken
+            target) and idempotent re-writes (same target) are allowed.
     """
     store_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
 
     record_path = store_dir / f"{hex_hash}.md"
-    record_path.write_text(content)
-
     link_name = symlink_name(date, source_type, title)
     link_path = records_dir / link_name
 
-    if link_path.exists() or link_path.is_symlink():
+    if link_path.is_symlink():
+        existing_target = (records_dir / os.readlink(link_path)).resolve()
+        if existing_target.exists() and existing_target != record_path.resolve():
+            raise SymlinkCollisionError(
+                f"refusing to overwrite {link_path.name}: "
+                f"already points to {existing_target.name} (a different record). "
+                f"Upstream dedup should have caught this re-ingest."
+            )
         link_path.unlink()
+    elif link_path.exists():
+        link_path.unlink()
+
+    record_path.write_text(content)
 
     rel_target = os.path.relpath(record_path, records_dir)
     link_path.symlink_to(rel_target)
