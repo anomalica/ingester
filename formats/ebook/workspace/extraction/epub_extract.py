@@ -87,6 +87,23 @@ def _strip_navigation(soup: BeautifulSoup) -> None:
         nav.decompose()
 
 
+def _strip_internal_anchors(body) -> None:
+    """Unwrap anchors pointing at EPUB-internal references.
+
+    EPUB chapters cross-reference each other via `<a href="chapter2.xhtml">`
+    or `<a href="#section">`. Once the book is flattened to a single markdown
+    file, those hrefs resolve to nothing - every consumer (workbench,
+    digester, assembler) would otherwise have to strip dead links.
+    External links (http, https, mailto) are kept; internal ones are unwrapped,
+    preserving their visible text.
+    """
+    for a in body.find_all("a"):
+        href = (a.get("href") or "").strip()
+        if href.startswith(("http://", "https://", "mailto:")):
+            continue
+        a.unwrap()
+
+
 def _resolve_href(base_file: str, src: str) -> str:
     src = unquote(src.split("#", 1)[0].split("?", 1)[0])
     base_dir = posixpath.dirname(base_file)
@@ -157,6 +174,7 @@ def _xhtml_to_markdown(
     _strip_navigation(soup)
     title = _chapter_title(soup)
     body = soup.find("body") or soup
+    _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = "\n".join(line.rstrip() for line in md.splitlines())
