@@ -4,18 +4,17 @@ from fetch.http import fetch
 
 
 @patch("fetch.http.requests.get")
-def test_fetch_returns_bytes_and_content_type(mock_get):
+def test_fetch_skips_html_so_patchright_handles_it(mock_get):
     mock_response = Mock()
     mock_response.content = b"<html><body>Article</body></html>"
     mock_response.headers = {"Content-Type": "text/html; charset=utf-8"}
     mock_response.raise_for_status = Mock()
     mock_get.return_value = mock_response
 
+    # HTML pages need post-JS render and PDF snapshot - the http fetcher
+    # declines them so the patchright fetcher gets to handle them.
     result = fetch("https://example.com/article")
-    assert result is not None
-    content, content_type = result
-    assert content == b"<html><body>Article</body></html>"
-    assert content_type == "text/html; charset=utf-8"
+    assert result is None
 
 
 @patch("fetch.http.requests.get")
