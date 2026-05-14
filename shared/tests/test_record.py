@@ -105,3 +105,30 @@ def test_write_record_refuses_to_clobber_unrelated_record(tmp_path):
     assert link.resolve() == (store / "aaa111.md").resolve()
     assert (store / "aaa111.md").read_text() == "first"
     assert not (store / "bbb222.md").exists()
+
+
+def test_write_record_force_replaces_stale_record(tmp_path):
+    """With force=True, a colliding symlink AND its target are replaced."""
+    store = tmp_path / "store"
+    records = tmp_path / "records"
+
+    write_record(store, records, "aaa111", "first", "2023-06-05", "web", "Test Article")
+    # Sidecar that should also be cleaned up under --force
+    (store / "aaa111.verification.json").write_text("{}")
+
+    write_record(
+        store,
+        records,
+        "bbb222",
+        "second",
+        "2023-06-05",
+        "web",
+        "Test Article",
+        force=True,
+    )
+
+    link = records / "2023-06-05-web-test-article.md"
+    assert link.resolve() == (store / "bbb222.md").resolve()
+    assert (store / "bbb222.md").read_text() == "second"
+    assert not (store / "aaa111.md").exists()
+    assert not (store / "aaa111.verification.json").exists()

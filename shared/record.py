@@ -71,6 +71,7 @@ def write_record(
     date: str,
     source_type: str,
     title: str,
+    force: bool = False,
 ) -> tuple[Path, Path]:
     """Write a record to the store and create a symlink in records/.
 
@@ -81,6 +82,9 @@ def write_record(
         SymlinkCollisionError: if the target symlink already exists and
             points to a different real record. Stale symlinks (broken
             target) and idempotent re-writes (same target) are allowed.
+            When ``force`` is True, the colliding symlink AND the old
+            record file it points at are deleted before the new record
+            is written, since --force re-ingest is an explicit replace.
     """
     store_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
@@ -92,11 +96,18 @@ def write_record(
     if link_path.is_symlink():
         existing_target = (records_dir / os.readlink(link_path)).resolve()
         if existing_target.exists() and existing_target != record_path.resolve():
-            raise SymlinkCollisionError(
-                f"refusing to overwrite {link_path.name}: "
-                f"already points to {existing_target.name} (a different record). "
-                f"Upstream dedup should have caught this re-ingest."
-            )
+            if not force:
+                raise SymlinkCollisionError(
+                    f"refusing to overwrite {link_path.name}: "
+                    f"already points to {existing_target.name} (a different record). "
+                    f"Upstream dedup should have caught this re-ingest."
+                )
+            # --force replace: drop the stale record file too so it does
+            # not orphan in the store. Sidecar files (verification JSON)
+            # that share the same hash stem are removed alongside.
+            old_stem = existing_target.stem
+            for sibling in existing_target.parent.glob(f"{old_stem}*"):
+                sibling.unlink()
         link_path.unlink()
     elif link_path.exists():
         link_path.unlink()
