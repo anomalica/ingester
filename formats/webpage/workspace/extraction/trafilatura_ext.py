@@ -1,10 +1,12 @@
-"""Article extraction via trafilatura."""
+"""Article extraction via trafilatura, with image augmentation from the source DOM."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from trafilatura import bare_extraction
+
+from extraction.images import augment_markdown, harvest_images
 
 
 @dataclass
@@ -35,17 +37,18 @@ def extract_article(html: str, url: str | None = None) -> Article | None:
         include_links=True,
         include_tables=True,
         include_images=True,
-        favor_precision=True,
     )
     if doc is None or not doc.text or len(doc.text) < 10:
         return None
+
+    augmented_text = augment_markdown(doc.text, harvest_images(html))
 
     authors = None
     if doc.author:
         authors = [a.strip() for a in doc.author.split(";")]
 
     return Article(
-        text=doc.text,
+        text=augmented_text,
         title=doc.title,
         authors=authors,
         date=doc.date,

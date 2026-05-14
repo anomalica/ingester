@@ -18,6 +18,8 @@ stages:
           install:
             - trafilatura
             - pyyaml
+            - beautifulsoup4
+            - lxml
 
   development:
     from: base

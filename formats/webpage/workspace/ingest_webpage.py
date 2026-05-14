@@ -37,6 +37,8 @@ def _build_frontmatter(
     hex_hash: str,
     publisher: str | None,
     description: str | None,
+    source_hash: str | None,
+    snapshots: list[dict] | None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
     escaped_title = title.replace('"', '\\"')
@@ -63,6 +65,14 @@ def _build_frontmatter(
         escaped_desc = description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
+    if source_hash:
+        lines.append(f"source_hash: {content_hash_label(source_hash)}")
+    if snapshots:
+        lines.append("snapshots:")
+        for snap in snapshots:
+            lines.append(f"  - role: {snap['role']}")
+            lines.append(f"    hash: {content_hash_label(snap['hash'])}")
+            lines.append(f"    content_type: {snap['content_type']}")
     if date_accessed:
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
@@ -95,6 +105,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     asset_name = manifest["asset"]
     source_id = manifest.get("source_id")
     fetched_url = manifest.get("fetched_url")
+    source_hash = manifest.get("asset_hash")
+    snapshots = manifest.get("snapshots") or []
 
     asset_path = staging_dir / asset_name
     if not asset_path.exists():
@@ -135,6 +147,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         hex_hash,
         article.sitename,
         article.description,
+        source_hash,
+        snapshots,
     )
     content = frontmatter + "\n\n" + article.text + "\n"
 
@@ -147,7 +161,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date_published, "web", title
+        store_dir,
+        records_dir,
+        hex_hash,
+        content,
+        date_published,
+        "web",
+        title,
+        force=force,
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
