@@ -34,6 +34,8 @@ stages:
             - libasound2
             - libpango-1.0-0
             - libcairo2
+            - nodejs
+            - npm
       - pip:
           install:
             - requests
@@ -45,6 +47,7 @@ stages:
           - mkdir -p /opt/playwright && chmod 777 /opt/playwright
           - playwright install chromium
           - patchright install chromium
+          - npm install -g single-file-cli
 
   development:
     from: base

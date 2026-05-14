@@ -116,14 +116,62 @@ def acquire(url: str, staging_dir: Path) -> int:
         ext = MIME_TO_EXT.get(detected_type, ".bin")
         asset_name = f"asset{ext}"
         (staging_dir / asset_name).write_bytes(content)
+        asset_hash = hashlib.sha256(content).hexdigest()
 
         manifest = {
             "source": url,
             "asset": asset_name,
+            "asset_hash": asset_hash,
             "detected_type": detected_type,
             "fetch_method": method_name,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        # If the winning fetcher delivered HTML but no snapshot artefacts
+        # (e.g. wayback returned just the archived page body), run the
+        # patchright fetcher against the actual snapshot URL purely to
+        # produce the PDF render + frozen-page captures. The HTML from
+        # this second pass is discarded - we keep the original wayback
+        # asset as the source of record.
+        snapshots_from_fetcher = (
+            fetcher_metadata.get("snapshots") if fetcher_metadata else None
+        )
+        if is_html and not snapshots_from_fetcher and method_name != "patchright":
+            snapshot_target = (
+                fetcher_metadata.get("fetched_url") if fetcher_metadata else None
+            ) or url
+            print(
+                f"  generating snapshots via patchright on {snapshot_target}",
+                file=sys.stderr,
+            )
+            from fetch.patchright_fetch import fetch as _patchright_fetch
+
+            pr_result = _patchright_fetch(snapshot_target)
+            if pr_result and len(pr_result) == 3:
+                _, _, pr_metadata = pr_result
+                if pr_metadata and pr_metadata.get("snapshots"):
+                    snapshots_from_fetcher = pr_metadata["snapshots"]
+
+        # Sibling snapshots (e.g. PDF render of an HTML page) - written to
+        # staging alongside the main asset and recorded in the manifest so
+        # the host script can archive them under sources/{hash}.{ext}.
+        if snapshots_from_fetcher:
+            snapshot_entries = []
+            for idx, snap in enumerate(snapshots_from_fetcher):
+                snap_ext = snap["extension"]
+                snap_name = f"snapshot_{idx}.{snap_ext}"
+                snap_bytes = snap["bytes"]
+                (staging_dir / snap_name).write_bytes(snap_bytes)
+                snapshot_entries.append(
+                    {
+                        "path": snap_name,
+                        "extension": snap_ext,
+                        "content_type": snap["content_type"],
+                        "role": snap.get("role", "snapshot"),
+                        "hash": hashlib.sha256(snap_bytes).hexdigest(),
+                    }
+                )
+            manifest["snapshots"] = snapshot_entries
 
         # Include metadata from fetcher if available (e.g. yt-dlp title, date)
         if fetcher_metadata:

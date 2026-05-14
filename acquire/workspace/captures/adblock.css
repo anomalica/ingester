@@ -1,0 +1,101 @@
+/*
+ * Cosmetic adblock + modal-strip stylesheet, applied to the live page before
+ * snapshots are captured. Hide-only - does not block network requests.
+ *
+ * Hand-curated to catch the common patterns on news sites in our corpus.
+ * Not a substitute for a full EasyList parse - if a publisher uses a novel
+ * class name we may miss it. Expand pragmatically as gaps appear.
+ */
+
+/* Generic ad containers by class / id pattern */
+[class*="advert" i],
+[id*="advert" i],
+[class*="sponsor" i]:not([class*="sponsorship-disclosure" i]),
+[id*="sponsor" i],
+[class~="ad"],
+[class~="ads"],
+[class*=" ad-" i],
+[class^="ad-" i],
+[class$="-ad" i],
+[class*="-ad-" i],
+[id~="ad"],
+[id*="-ad-" i],
+[data-ad-slot],
+[data-ad-unit],
+[data-google-query-id] {
+  display: none !important;
+}
+
+/* Known ad network containers */
+.taboola,
+[id*="taboola"],
+.outbrain,
+[id*="outbrain"],
+.nativo,
+.mgid,
+.zergnet,
+[id^="div-gpt-ad"],
+[id*="google_ads_iframe"] {
+  display: none !important;
+}
+
+/* Ad iframes by src */
+iframe[src*="doubleclick.net"],
+iframe[src*="googlesyndication.com"],
+iframe[src*="googletagservices.com"],
+iframe[src*="adnxs.com"],
+iframe[src*="taboola.com"],
+iframe[src*="outbrain.com"],
+iframe[src*="amazon-adsystem.com"] {
+  display: none !important;
+}
+
+/* Cookie / consent banners */
+[class*="cookie-banner" i],
+[class*="cookie-notice" i],
+[class*="cookie-consent" i],
+[class*="cookie-bar" i],
+[id*="cookie-banner" i],
+[id*="cookie-notice" i],
+[id*="cookie-consent" i],
+[id*="onetrust"],
+[class*="onetrust"],
+[class*="gdpr" i],
+[id*="gdpr" i],
+[class*="consent-banner" i],
+[id*="consent-banner" i],
+.qc-cmp2-container,
+#truste-consent-track,
+#cmpwrapper {
+  display: none !important;
+}
+
+/* Paywall / newsletter / subscribe modals */
+[class*="paywall" i],
+[id*="paywall" i],
+[class*="newsletter-modal" i],
+[class*="newsletter-signup" i],
+[class*="newsletter-popup" i],
+[id*="newsletter-modal" i],
+[class*="subscribe-modal" i],
+[class*="subscription-modal" i],
+[class*="meter-modal" i] {
+  display: none !important;
+}
+
+/* Generic modal / overlay patterns. Aggressive but acceptable for review
+ * archives - any modal that hides article content on first load is noise. */
+[role="dialog"]:not([data-modal-keep]),
+[aria-modal="true"]:not([data-modal-keep]),
+.modal-backdrop,
+.modal-overlay,
+[class*="overlay-backdrop" i] {
+  display: none !important;
+}
+
+/* Restore scrolling that modal-bearing pages disable on body */
+html,
+body {
+  overflow: auto !important;
+  position: static !important;
+}

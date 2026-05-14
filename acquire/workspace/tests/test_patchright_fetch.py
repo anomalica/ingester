@@ -10,6 +10,9 @@ def mock_playwright():
     page = AsyncMock()
     page.content.return_value = "<html><body>Browser content</body></html>"
     page.goto = AsyncMock()
+    page.add_style_tag = AsyncMock()
+    page.emulate_media = AsyncMock()
+    page.pdf = AsyncMock(return_value=b"%PDF-1.4 fake pdf bytes")
     context = AsyncMock()
     context.new_page.return_value = page
     browser = AsyncMock()
@@ -22,19 +25,44 @@ def mock_playwright():
     manager = MagicMock()
     manager.__aenter__ = AsyncMock(return_value=pw)
     manager.__aexit__ = AsyncMock(return_value=False)
-    return manager, browser
+    return manager, browser, page
 
 
+@patch("fetch.patchright_fetch.capture_singlefile", return_value=None)
 @patch("fetch.patchright_fetch.async_playwright")
-def test_fetch_returns_bytes_and_html_type(mock_ap, mock_playwright):
-    manager, browser = mock_playwright
+def test_fetch_returns_html_and_pdf_snapshot(
+    mock_ap, _mock_singlefile, mock_playwright
+):
+    manager, browser, page = mock_playwright
     mock_ap.return_value = manager
     result = fetch("https://example.com")
     assert result is not None
-    content, content_type = result
+    content, content_type, metadata = result
     assert content == b"<html><body>Browser content</body></html>"
     assert content_type == "text/html"
+    assert metadata["snapshots"][0]["content_type"] == "application/pdf"
+    assert metadata["snapshots"][0]["role"] == "page_render"
+    assert metadata["snapshots"][0]["extension"] == "pdf"
+    assert metadata["snapshots"][0]["bytes"].startswith(b"%PDF")
+    page.add_style_tag.assert_called_once()
+    page.emulate_media.assert_called_once()
+    page.pdf.assert_called_once()
     browser.close.assert_called_once()
+
+
+@patch(
+    "fetch.patchright_fetch.capture_singlefile",
+    return_value=b"<html>inlined</html>",
+)
+@patch("fetch.patchright_fetch.async_playwright")
+def test_fetch_includes_singlefile_when_available(mock_ap, _mock_sf, mock_playwright):
+    manager, _browser, _page = mock_playwright
+    mock_ap.return_value = manager
+    result = fetch("https://example.com")
+    assert result is not None
+    _, _, metadata = result
+    roles = [s["role"] for s in metadata["snapshots"]]
+    assert "single_file" in roles
 
 
 @patch("fetch.patchright_fetch.async_playwright")

@@ -1,0 +1,101 @@
+"""Capture a self-contained HTML snapshot via single-file-cli.
+
+The single-file-cli tool spawns its own headless Chromium, navigates to the
+URL, and serialises the rendered DOM with all external resources (CSS,
+fonts, images) inlined as data URIs. The result is a single HTML file that
+renders identically to the original under a sandboxed iframe with no
+network access - which is what the workbench review pane needs.
+
+Note: single-file runs its own browser, independent of patchright. Our
+cosmetic adblock CSS is NOT applied to this snapshot. Ads visible on the
+live page will appear in the SingleFile output. Acceptable for v1 - we
+can pass --user-style-path in a later iteration.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+TIMEOUT_SECONDS = 120
+SINGLE_FILE_FALLBACK = "/usr/local/bin/single-file"
+
+
+def _find_chromium() -> str | None:
+    """Locate the patchright-installed Chromium binary inside the container."""
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/opt/playwright"))
+    for pattern in (
+        "chromium-*/chrome-linux64/chrome",
+        "chromium-*/chrome-linux/chrome",
+    ):
+        matches = sorted(root.glob(pattern))
+        if matches:
+            return str(matches[-1])
+    return None
+
+
+def capture_singlefile(url: str) -> bytes | None:
+    """Run single-file-cli against the URL and return inlined HTML bytes.
+
+    Returns None if the tool fails or times out. Reuses the patchright-
+    installed Chromium to avoid pulling down another browser.
+    """
+    chromium = _find_chromium()
+    if not chromium:
+        print(
+            "single-file: no Chromium found under PLAYWRIGHT_BROWSERS_PATH",
+            file=sys.stderr,
+        )
+        return None
+
+    single_file = shutil.which("single-file") or SINGLE_FILE_FALLBACK
+    if not Path(single_file).exists():
+        print(f"single-file: binary not found at {single_file}", file=sys.stderr)
+        return None
+
+    # single-file refuses to write to an existing file, so we generate a
+    # unique path via mkstemp and immediately remove the placeholder file.
+    fd, tmp_name = tempfile.mkstemp(suffix=".html")
+    os.close(fd)
+    output_path = Path(tmp_name)
+    output_path.unlink(missing_ok=True)
+
+    try:
+        result = subprocess.run(
+            [
+                single_file,
+                url,
+                str(output_path),
+                f"--browser-executable-path={chromium}",
+                '--browser-args=["--no-sandbox","--disable-dev-shm-usage"]',
+                # Force lazy-loaded images to materialise before capture.
+                # Without these the captured DOM keeps src=data:URI
+                # placeholders and the real image URLs only in data-src /
+                # data-srcset, which is invisible under sandbox="" because
+                # no script runs to swap them. The dispatch-scroll-event
+                # flag triggers libraries that listen for scroll-into-view.
+                "--load-deferred-images=true",
+                "--load-deferred-images-dispatch-scroll-event=true",
+                "--load-deferred-images-max-idle-time=10000",
+            ],
+            timeout=TIMEOUT_SECONDS,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(
+                f"single-file: exit {result.returncode}: {result.stderr.decode('utf-8', 'replace')[:500]}",
+                file=sys.stderr,
+            )
+            return None
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            return None
+        return output_path.read_bytes()
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        print(f"single-file: {exc}", file=sys.stderr)
+        return None
+    finally:
+        output_path.unlink(missing_ok=True)
