@@ -173,7 +173,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date_published, "ebook", book.title
+        store_dir,
+        records_dir,
+        hex_hash,
+        content,
+        date_published,
+        "ebook",
+        book.title,
+        force=force,
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)

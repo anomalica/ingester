@@ -21,6 +21,22 @@ IMG_TOKEN_PREFIX = "ANOMALICAIMG"
 IMG_TOKEN_SUFFIX = "IMGEND"
 IMG_TOKEN_RE = re.compile(rf"{IMG_TOKEN_PREFIX}([0-9a-f]{{12}}){IMG_TOKEN_SUFFIX}")
 
+REDACTION_TOKEN_PREFIX = "ANOMALICAREDACTED"
+REDACTION_TOKEN_SUFFIX = "REDEND"
+REDACTION_TOKEN_RE = re.compile(
+    rf"{REDACTION_TOKEN_PREFIX}(\d+){REDACTION_TOKEN_SUFFIX}"
+)
+
+# Asterisk-based redaction patterns used in declassified-but-redacted material.
+# Match either:
+#   - five or more consecutive asterisks (a single redacted run), optionally
+#     followed by space-separated continuation groups of one or more asterisks
+#   - three or more consecutive asterisks WITH at least one space-separated
+#     continuation group (multi-word redaction)
+# Section-break "***" or "****" on its own does not match. Bold "**word**"
+# never matches because the asterisks bracket non-asterisk text.
+REDACTION_RE = re.compile(r"\*{5,}(?:\s+\*+)*|\*{3,}(?:\s+\*+)+")
+
 MIME_TO_EXT = {
     "image/png": "png",
     "image/jpeg": "jpg",
@@ -164,6 +180,38 @@ def _collect_images(
             img_tag.decompose()
 
 
+def _replace_redactions_in_soup(body) -> None:
+    """Walk text nodes and replace asterisk-run redactions with placeholder tokens.
+
+    Done before markdownify so that markdownify never sees the raw asterisks
+    and never escapes them. The placeholder token is alphanumeric, so it
+    passes through markdownify verbatim and is expanded to a `{{redacted}}`
+    annotation in a later pass.
+    """
+    from bs4 import NavigableString
+
+    for text_node in list(body.find_all(string=True)):
+        if not isinstance(text_node, NavigableString):
+            continue
+        original = str(text_node)
+        replaced = REDACTION_RE.sub(_redaction_to_token, original)
+        if replaced != original:
+            text_node.replace_with(replaced)
+
+
+def _redaction_to_token(match: re.Match) -> str:
+    run = match.group(0)
+    word_count = len(re.findall(r"\*+", run))
+    return f"{REDACTION_TOKEN_PREFIX}{word_count}{REDACTION_TOKEN_SUFFIX}"
+
+
+def _expand_redaction_tokens(md: str) -> str:
+    return REDACTION_TOKEN_RE.sub(
+        lambda m: f"{{{{redacted: ~{m.group(1)} words}}}}",
+        md,
+    )
+
+
 def _xhtml_to_markdown(
     xhtml: bytes,
     chapter_file: str,
@@ -176,7 +224,9 @@ def _xhtml_to_markdown(
     body = soup.find("body") or soup
     _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
+    _replace_redactions_in_soup(body)
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
+    md = _expand_redaction_tokens(md)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
