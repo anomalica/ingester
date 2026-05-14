@@ -218,7 +218,7 @@ esac
 
 echo "Done. Staging: ${RUN_DIR}" >&2
 
-# Archive original source file for workbench access
+# Archive original source file and any sibling snapshots for workbench access
 SOURCES_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/sources"
 mkdir -p "$SOURCES_DIR"
 ASSET_PATH="${RUN_DIR}/${ASSET}"
@@ -230,6 +230,29 @@ if [[ -f "$ASSET_PATH" ]]; then
 		cp "$ASSET_PATH" "$TARGET"
 		echo "Source archived: ${TARGET}" >&2
 	fi
+fi
+
+# Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
+# in the manifest's snapshots[] list. Each is content-addressed by sha256
+# of its own bytes so workbench can resolve via {source_hash} -> sibling.
+SNAPSHOT_PATHS="$(python3 -c "
+import json
+m = json.load(open('${MANIFEST}'))
+for s in m.get('snapshots', []):
+    print(s['path'], s.get('extension', 'bin'))
+" 2>/dev/null || true)"
+if [[ -n "$SNAPSHOT_PATHS" ]]; then
+	while IFS=' ' read -r SNAP_NAME SNAP_EXT; do
+		[[ -z "$SNAP_NAME" ]] && continue
+		SNAP_PATH="${RUN_DIR}/${SNAP_NAME}"
+		[[ ! -f "$SNAP_PATH" ]] && continue
+		SNAP_HASH="$(sha256sum "$SNAP_PATH" | cut -d' ' -f1)"
+		SNAP_TARGET="${SOURCES_DIR}/${SNAP_HASH}.${SNAP_EXT}"
+		if [[ ! -f "$SNAP_TARGET" ]]; then
+			cp "$SNAP_PATH" "$SNAP_TARGET"
+			echo "Snapshot archived: ${SNAP_TARGET}" >&2
+		fi
+	done <<<"$SNAPSHOT_PATHS"
 fi
 
 # Auto-commit any new records to anomalica-ingests
