@@ -14,7 +14,7 @@ from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists
 from models import Turn, detect_source_type, format_time_precise
 from probe import probe
-from record import get_version, write_record
+from record import body_prelude, get_version, write_record
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -366,7 +366,8 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_audio=source_audio_list,
     )
     body = _build_content(turns)
-    content = frontmatter + "\n\n" + body
+    prelude = body_prelude(title, date_published)
+    content = frontmatter + "\n\n" + prelude + "\n\n" + body
 
     result = validate(content, extra_required=["duration"])
     if result.fixed:

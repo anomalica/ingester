@@ -13,7 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.hashing import content_hash_label, hash_file, store_exists
-from shared.record import get_version, write_record
+from shared.record import get_version, inject_body_prelude, write_record
 from shared.validator import strip_code_fences, validate
 from shared.verification import build_sidecar, needs_sidecar, write_sidecar
 
@@ -440,6 +440,10 @@ def main():
     date = str(fm.get("date_published", fm.get("date", "undated"))) if fm else "undated"
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = fm.get("title", "untitled") if fm else "untitled"
+
+    # Prepend H1 title + publication-date line so the body alone (as
+    # rendered in the workbench) carries its own framing for the reader.
+    content = inject_body_prelude(content, title, None if date == "undated" else date)
 
     # Write to store and create symlink
     record_path, symlink_path = write_record(

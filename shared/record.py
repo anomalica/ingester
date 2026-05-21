@@ -53,6 +53,42 @@ def symlink_name(date: str, source_type: str, title: str) -> str:
     return f"{date}-{source_type}-{slug}.md"
 
 
+def body_prelude(title: str, date_published: str | None) -> str:
+    """Markdown title + publication date prelude inserted at the top of a
+    record body, after the frontmatter and before the extracted content.
+
+    Lets readers of the body alone (no frontmatter parser) know what they
+    are reading and when it was published - the workbench's ingest pane
+    renders the body without the YAML frontmatter, and without this
+    prelude there would be no in-body framing for the document.
+    """
+    lines = [f"# {title}"]
+    if date_published:
+        lines.append("")
+        lines.append(f"*Published {date_published}*")
+    return "\n".join(lines)
+
+
+def inject_body_prelude(
+    record_text: str, title: str, date_published: str | None
+) -> str:
+    """Insert the body prelude into an already-assembled record string.
+
+    Used by handlers (e.g. PDF) that produce the complete record text
+    via a provider extraction and don't assemble frontmatter + body
+    explicitly. Idempotent - skips injection if the prelude H1 is
+    already present immediately after the frontmatter.
+    """
+    parts = record_text.split("---", 2)
+    if len(parts) < 3:
+        return record_text
+    body = parts[2].lstrip("\n")
+    prelude = body_prelude(title, date_published)
+    if body.startswith(f"# {title}"):
+        return record_text
+    return f"---{parts[1]}---\n\n{prelude}\n\n{body}"
+
+
 class SymlinkCollisionError(Exception):
     """Raised when a record symlink would clobber an unrelated existing record.
 
