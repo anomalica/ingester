@@ -366,7 +366,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_audio=source_audio_list,
     )
     body = _build_content(turns)
-    prelude = body_prelude(title, date_published)
+    prelude = body_prelude(title, date_published, existing_body=body)
     content = frontmatter + "\n\n" + prelude + "\n\n" + body
 
     result = validate(content, extra_required=["duration"])

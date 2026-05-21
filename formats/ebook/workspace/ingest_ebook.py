@@ -162,7 +162,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     frontmatter = _build_frontmatter(
         book, date_published, source_url, date_accessed, hex_hash, media_summary
     )
-    prelude = body_prelude(book.title, date_published)
+    prelude = body_prelude(book.title, date_published, existing_body=body)
     content = frontmatter + "\n\n" + prelude + "\n\n" + body
 
     result = validate(content)

@@ -53,7 +53,25 @@ def symlink_name(date: str, source_type: str, title: str) -> str:
     return f"{date}-{source_type}-{slug}.md"
 
 
-def body_prelude(title: str, date_published: str | None) -> str:
+# Matches an in-body byline that already states a publication date, so
+# the prelude doesn't double-stamp it. Catches "By X, ... Published
+# June 14, 2019", "Published 2024-01-01", "By Author - Jan 14 2024",
+# etc. Looked for in the first chunk of the article body only.
+_BODY_DATE_RE = re.compile(
+    r"\b(?:published|posted|updated)\b[^\n]{0,80}(?:19|20)\d{2}"
+    r"|\bby\b\s+[A-Za-z][^\n]{2,80}(?:19|20)\d{2}",
+    re.IGNORECASE,
+)
+
+
+def _body_has_byline_date(body: str) -> bool:
+    """True if the start of the body already names a publication date."""
+    return bool(_BODY_DATE_RE.search(body[:800]))
+
+
+def body_prelude(
+    title: str, date_published: str | None, existing_body: str | None = None
+) -> str:
     """Markdown title + publication date prelude inserted at the top of a
     record body, after the frontmatter and before the extracted content.
 
@@ -61,9 +79,13 @@ def body_prelude(title: str, date_published: str | None) -> str:
     are reading and when it was published - the workbench's ingest pane
     renders the body without the YAML frontmatter, and without this
     prelude there would be no in-body framing for the document.
+
+    When ``existing_body`` is supplied and already contains a byline that
+    names a publication date (e.g. "By Author - Published June 14, 2019"),
+    the prelude omits its own date line to avoid double-stamping.
     """
     lines = [f"# {title}"]
-    if date_published:
+    if date_published and not (existing_body and _body_has_byline_date(existing_body)):
         lines.append("")
         lines.append(f"*Published {date_published}*")
     return "\n".join(lines)
@@ -83,9 +105,9 @@ def inject_body_prelude(
     if len(parts) < 3:
         return record_text
     body = parts[2].lstrip("\n")
-    prelude = body_prelude(title, date_published)
     if body.startswith(f"# {title}"):
         return record_text
+    prelude = body_prelude(title, date_published, existing_body=body)
     return f"---{parts[1]}---\n\n{prelude}\n\n{body}"
 
 
