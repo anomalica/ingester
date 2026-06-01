@@ -44,7 +44,7 @@ done
 ## Directory structure
 
 ```
-anomalica-ingester/
+ingester/
   ingest                          # host script (bash)
   acquire/                        # container-magic project
     cm.yaml

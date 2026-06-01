@@ -212,7 +212,7 @@ def test_detect_returns_none_when_no_signal():
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/test_detect.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/test_detect.py -v`
 
 Expected: FAIL (ModuleNotFoundError: No module named 'detect')
 
@@ -301,7 +301,7 @@ def detect(
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/test_detect.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/test_detect.py -v`
 
 Expected: 18 passed
 
@@ -677,7 +677,7 @@ def test_fetch_returns_none_on_error(mock_ap):
 
 - [ ] **Step 8: Run all fetch tests**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/ -v`
 
 Expected: 29 passed (18 detect + 5 http + 4 wayback + 2 patchright)
 
@@ -836,7 +836,7 @@ def test_acquire_detects_type_from_bytes_when_no_header(tmp_path):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/test_acquire.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/test_acquire.py -v`
 
 Expected: FAIL (ModuleNotFoundError: No module named 'acquire')
 
@@ -951,13 +951,13 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/test_acquire.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/test_acquire.py -v`
 
 Expected: 10 passed
 
 - [ ] **Step 5: Run all acquire tests together**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest acquire/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest acquire/workspace/tests/ -v`
 
 Expected: 39 passed (18 detect + 5 http + 4 wayback + 2 patchright + 10 acquire)
 
@@ -1089,7 +1089,7 @@ Copy `web/workspace/tests/test_trafilatura_ext.py` to `formats/webpage/workspace
 
 - [ ] **Step 4: Run trafilatura tests in new location**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest formats/webpage/workspace/tests/test_trafilatura_ext.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest formats/webpage/workspace/tests/test_trafilatura_ext.py -v`
 
 Expected: 7 passed
 
@@ -1232,7 +1232,7 @@ def test_ingest_exits_when_no_asset(tmp_path):
 
 - [ ] **Step 6: Run tests to verify they fail**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest formats/webpage/workspace/tests/test_ingest_webpage.py -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest formats/webpage/workspace/tests/test_ingest_webpage.py -v`
 
 Expected: FAIL (ModuleNotFoundError: No module named 'ingest_webpage')
 
@@ -1385,7 +1385,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 8: Run tests to verify they pass**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest formats/webpage/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest formats/webpage/workspace/tests/ -v`
 
 Expected: 15 passed (7 trafilatura + 8 ingest_webpage)
 
@@ -1458,7 +1458,7 @@ Move the existing PDF ingester under formats/ and add staging directory support 
 - [ ] **Step 1: Move pdf/ to formats/pdf/**
 
 ```bash
-cd /home/mark/repos/anomalica/anomalica-ingester
+cd /home/mark/repos/anomalica/ingester
 git mv pdf formats/pdf
 ```
 
@@ -1467,7 +1467,7 @@ git mv pdf formats/pdf
 The existing symlink at `pdf/workspace/shared` points to an absolute path that still works, but it should be updated to be relative for portability:
 
 ```bash
-cd /home/mark/repos/anomalica/anomalica-ingester
+cd /home/mark/repos/anomalica/ingester
 rm formats/pdf/workspace/shared
 ln -s ../../../shared formats/pdf/workspace/shared
 ```
@@ -1560,14 +1560,14 @@ Then after `args = parser.parse_args()`, add before the existing mount path dete
 
 - [ ] **Step 5: Run existing PDF tests to verify nothing is broken**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest formats/pdf/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest formats/pdf/workspace/tests/ -v`
 
 Expected: All existing tests pass (the tests don't depend on the directory location since they use relative imports via PYTHONPATH)
 
 - [ ] **Step 6: Regenerate container-magic files**
 
 ```bash
-cd /home/mark/repos/anomalica/anomalica-ingester/formats/pdf
+cd /home/mark/repos/anomalica/ingester/formats/pdf
 cm update
 ```
 
@@ -1738,7 +1738,7 @@ echo "Done. Staging: ${RUN_DIR}" >&2
 - [ ] **Step 2: Make it executable**
 
 ```bash
-chmod +x /home/mark/repos/anomalica/anomalica-ingester/ingest
+chmod +x /home/mark/repos/anomalica/ingester/ingest
 ```
 
 - [ ] **Step 3: Commit**
@@ -1886,7 +1886,7 @@ Note: Check if the existing `web/.gitignore` has these patterns and whether they
 
 - [ ] **Step 3: Run all non-containerised tests**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest shared/tests/ acquire/workspace/tests/ formats/webpage/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest shared/tests/ acquire/workspace/tests/ formats/webpage/workspace/tests/ -v`
 
 Expected: All tests pass (shared: ~17, acquire: ~39, webpage: ~15 = ~71 total)
 
@@ -1895,7 +1895,7 @@ Expected: All tests pass (shared: ~17, acquire: ~39, webpage: ~15 = ~71 total)
 Only after confirming all code has been migrated and all tests pass:
 
 ```bash
-cd /home/mark/repos/anomalica/anomalica-ingester
+cd /home/mark/repos/anomalica/ingester
 git rm -r web/
 ```
 
@@ -1908,7 +1908,7 @@ git commit -m "chore: update justfile for new architecture, remove old web/ dire
 
 - [ ] **Step 6: Run full test suite one final time**
 
-Run: `cd /home/mark/repos/anomalica/anomalica-ingester && python3 -m pytest shared/tests/ acquire/workspace/tests/ formats/webpage/workspace/tests/ -v`
+Run: `cd /home/mark/repos/anomalica/ingester && python3 -m pytest shared/tests/ acquire/workspace/tests/ formats/webpage/workspace/tests/ -v`
 
 Expected: All tests pass
 
