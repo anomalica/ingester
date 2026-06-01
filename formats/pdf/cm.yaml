@@ -9,7 +9,7 @@ runtime:
     - ~/.local/bin/claude:/usr/local/bin/claude:ro
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
-    - ../../../anomalica-ingests:/mnt/output:rw
+    - ../../../ingests:/mnt/output:rw
 
 stages:
   base:

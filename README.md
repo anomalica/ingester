@@ -1,9 +1,9 @@
-# anomalica-ingester
+# ingester
 
 Converts raw source material (PDFs, audio, video, web pages) into the Anomalica record format for downstream knowledge extraction.
 
 ```
-anomalica-ingester/
+ingester/
   ingest              - host script: routes by content type
   acquire/            - stage 1: fetch and cache source material
   formats/

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "shared"))
 
 from verification import build_sidecar, needs_sidecar, write_sidecar  # noqa: E402
 
-INGESTS_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "anomalica-ingests"
+INGESTS_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "ingests"
 SOURCES_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "sources"
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
@@ -128,7 +128,7 @@ def main() -> None:
         "--ingests-dir",
         type=Path,
         default=INGESTS_DIR_DEFAULT,
-        help=f"Path to anomalica-ingests (default: {INGESTS_DIR_DEFAULT})",
+        help=f"Path to ingests (default: {INGESTS_DIR_DEFAULT})",
     )
     parser.add_argument(
         "--sources-dir",

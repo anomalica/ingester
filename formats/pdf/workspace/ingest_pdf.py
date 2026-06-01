@@ -13,7 +13,13 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.hashing import content_hash_label, hash_file, store_exists
-from shared.record import get_version, inject_body_prelude, write_record
+from shared.record import (
+    clean_title,
+    get_version,
+    inject_body_prelude,
+    normalise_classification,
+    write_record,
+)
 from shared.validator import strip_code_fences, validate
 from shared.verification import build_sidecar, needs_sidecar, write_sidecar
 
@@ -26,9 +32,7 @@ API_CHUNK_SIZE = 50
 MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
-OUTPUT_DIR = (
-    Path(__file__).resolve().parent.parent.parent.parent.parent / "anomalica-ingests"
-)
+OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
@@ -62,12 +66,23 @@ def _patch_frontmatter(
 
     frontmatter = parts[1]
 
-    # Ensure title is always quoted
+    # Ensure title is always quoted, and strip leaked placeholder words
+    # ("undefined", "null", "None") the model sometimes emits for a missing
+    # title field - these otherwise propagate into the knowledge graph.
     title_match = re.search(r'^title: (?!")(.+)$', frontmatter, re.MULTILINE)
     if title_match:
         raw_title = title_match.group(1)
-        escaped = raw_title.replace('"', '\\"')
+        escaped = clean_title(raw_title).replace('"', '\\"')
         frontmatter = frontmatter.replace(f"title: {raw_title}", f'title: "{escaped}"')
+    else:
+        quoted_match = re.search(r'^title: "(.*)"$', frontmatter, re.MULTILINE)
+        if quoted_match:
+            raw_title = quoted_match.group(1)
+            cleaned = clean_title(raw_title.replace('\\"', '"')).replace('"', '\\"')
+            if cleaned != raw_title:
+                frontmatter = frontmatter.replace(
+                    f'title: "{raw_title}"', f'title: "{cleaned}"'
+                )
 
     if "content_hash:" not in frontmatter:
         frontmatter = (
@@ -285,6 +300,7 @@ def main():
     args = parser.parse_args()
 
     # If staging dir provided, read the asset path from the manifest
+    manifest_copyright = None
     if args.staging_dir:
         import json
 
@@ -294,6 +310,8 @@ def main():
             sys.exit(1)
         manifest = json.loads(manifest_path.read_text())
         args.input_file = args.staging_dir / manifest["asset"]
+        if manifest.get("copyright_status"):
+            manifest_copyright = {"status": manifest["copyright_status"]}
 
     # Auto-detect mount paths from container-magic
     mnt_input = Path("/mnt/input")
@@ -323,15 +341,31 @@ def main():
         print(f"Skipping: {input_hash}.md already exists in store", file=sys.stderr)
         sys.exit(0)
 
-    # Preserve existing copyright block when re-ingesting with --force
-    existing_copyright = None
+    # Copyright precedence: an existing record's block (preserved on
+    # --force re-ingest) wins, otherwise the status declared in the
+    # manifest (--copyright on the host script), otherwise the
+    # _patch_frontmatter default of restricted.
+    existing_copyright = manifest_copyright
     existing_record = store_dir / f"{input_hash}.md"
     if existing_record.exists():
         existing_fm = _extract_frontmatter(existing_record.read_text())
         if existing_fm and "copyright" in existing_fm:
             existing_copyright = existing_fm["copyright"]
 
-    using_api = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    # Provider selection is opt-in to the metered API: default to the
+    # Claude Code session (flat-rate subscription) and only use the
+    # Anthropic API when INGEST_USE_API=1 is explicitly set (via the
+    # host script's --api flag). Previously mere presence of
+    # ANTHROPIC_API_KEY silently routed everything through the metered
+    # API, which made bulk runs unexpectedly expensive.
+    using_api = os.environ.get("INGEST_USE_API") == "1"
+    if using_api and not os.environ.get("ANTHROPIC_API_KEY"):
+        print(
+            "INGEST_USE_API=1 but ANTHROPIC_API_KEY is unset; "
+            "falling back to Claude Code",
+            file=sys.stderr,
+        )
+        using_api = False
     if using_api:
         from extraction.anthropic_api import AnthropicProvider
 
@@ -345,7 +379,10 @@ def main():
         provider = ClaudeCodeProvider()
         max_single_pass = CLAUDE_CODE_MAX_PAGES_SINGLE_PASS
         chunk_size = CLAUDE_CODE_CHUNK_SIZE
-        print("Using Claude Code (no ANTHROPIC_API_KEY set)", file=sys.stderr)
+        print(
+            "Using Claude Code session (default; pass --api for metered API)",
+            file=sys.stderr,
+        )
 
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
@@ -435,11 +472,19 @@ def main():
             if not validation.errors:
                 print("Repair successful", file=sys.stderr)
 
+    # Reconcile classification markings: lift the document banner to a
+    # frontmatter `classification` field, drop redundant in-body repeats,
+    # and convert differing portion markings to inline {{classification}}.
+    content = normalise_classification(content)
+
     # Extract frontmatter for symlink naming
     fm = _extract_frontmatter(content)
-    date = str(fm.get("date_published", fm.get("date", "undated"))) if fm else "undated"
+    raw_date = fm.get("date_published", fm.get("date")) if fm else None
+    # A genuinely-null date_published (YAML null) must not become the string
+    # "None" in the symlink name - fall back to "undated".
+    date = str(raw_date) if raw_date else "undated"
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
-    title = fm.get("title", "untitled") if fm else "untitled"
+    title = clean_title(fm.get("title", "untitled")) if fm else "untitled"
 
     # Prepend H1 title + publication-date line so the body alone (as
     # rendered in the workbench) carries its own framing for the reader.

@@ -8,7 +8,7 @@ runtime:
     - gpu
   volumes:
     - ../../staging:/mnt/staging:ro
-    - ../../../anomalica-ingests:/mnt/output:rw
+    - ../../../ingests:/mnt/output:rw
     - ../../shared:/mnt/shared:ro
 
 stages:
