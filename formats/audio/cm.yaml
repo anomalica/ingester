@@ -10,6 +10,10 @@ runtime:
     - ../../staging:/mnt/staging:ro
     - ../../../ingests:/mnt/output:rw
     - ../../shared:/mnt/shared:ro
+    # Persistent HuggingFace model cache so Whisper/pyannote/wav2vec2 weights
+    # download once and are reused across runs (the container is --rm). Without
+    # this, every ingestion re-downloads ~2.5GB of models.
+    - /home/mark/.cache/anomalica-ingester-hf:/mnt/hfcache:rw
 
 stages:
   base:
@@ -45,3 +49,22 @@ commands:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/mnt/shared"
+      # Point all HuggingFace downloads (Whisper CT2 weights, pyannote
+      # diarisation) at the mounted persistent cache.
+      HF_HOME: "/mnt/hfcache"
+      # The wav2vec2 alignment model is a torch.hub download, not HF - send it
+      # to the same persistent mount so it isn't re-fetched every run.
+      TORCH_HOME: "/mnt/hfcache/torch"
+      # GPU transcription: used when the `gpu` wrapper has stopped the
+      # speech-to-text / TTS services, freeing the full 6GB (large-v3-turbo
+      # float16 ~2.5GB + pyannote diarisation fit comfortably). Switch back to
+      # "cpu" when those services need to stay up (e.g. dictation in use).
+      WHISPER_DEVICE: "cpu"
+      # Fully hide the GPU so BOTH transcription and pyannote diarisation run on
+      # CPU, leaving the GPU entirely to Mark's dictation/TTS services while he
+      # works. Remove this (and set WHISPER_DEVICE=cuda) for the GPU overnight runs.
+      CUDA_VISIBLE_DEVICES: ""
+      # Conservative batch for float16 on the 6GB card - comfortable headroom.
+      WHISPER_BATCH: "4"
+      # Reduce CUDA fragmentation for transcription + diarisation on the GPU.
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from models import Segment, Word
 
 WHISPER_MODEL = "large-v3-turbo"
-BATCH_SIZE = 4
+BATCH_SIZE = int(os.environ.get("WHISPER_BATCH", "8"))
 
 
 def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
@@ -27,8 +28,16 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
     import torch
     import whisperx
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
+    # Device is overridable via WHISPER_DEVICE. On this machine the 6GB GPU is
+    # shared with other always-on services (~2.3GB committed), leaving too
+    # little for the full large-v3 encoder (turbo only shrinks the decoder), so
+    # transcription is pinned to CPU here and the GPU is left for diarisation.
+    device = os.environ.get("WHISPER_DEVICE") or (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+    compute_type = os.environ.get("WHISPER_COMPUTE") or (
+        "float16" if device == "cuda" else "int8"
+    )
 
     model = whisperx.load_model(
         WHISPER_MODEL, device, compute_type=compute_type, language=language
