@@ -69,6 +69,124 @@ def _body_has_byline_date(body: str) -> bool:
     return bool(_BODY_DATE_RE.search(body[:800]))
 
 
+# Frontmatter values that mean "no real date" - the prelude must not stamp
+# these literally (a null date_published rendered "Published None").
+_NO_DATE_SENTINELS = {"", "none", "null", "undated", "unknown", "n/a", "na"}
+
+
+def _normalise_pub_date(date_published: str | None) -> str | None:
+    """Return a clean YYYY-MM-DD (or coarser) date for the prelude, or None
+    when the value is missing or a no-date sentinel. Trims an ISO timestamp
+    to its date portion so the prelude shows a date, not a full timestamp."""
+    if not date_published:
+        return None
+    text = str(date_published).strip()
+    if text.lower() in _NO_DATE_SENTINELS:
+        return None
+    iso = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+    if iso:
+        return iso.group(1)
+    return text
+
+
+# A classification marking: a level, optionally followed by // or / and
+# control/dissemination markings (NOFORN, REL TO ..., FOUO, SI, RELIDO...).
+_CLASS_MARKING = (
+    r"(?:TOP SECRET|SECRET|CONFIDENTIAL|UNCLASSIFIED|TS|S|C|U)"
+    r"(?:(?://|/)[A-Z0-9][A-Z0-9 ,/]*)?"
+)
+# Struck-through marking - strikethrough + a classification token is an
+# unambiguous banner (~~(SECRET//REL TO USA, FVEY)~~, ~~SECRET~~).
+_STRUCK_CLASS_RE = re.compile(rf"~~\(?({_CLASS_MARKING})\)?~~")
+# Parenthetical marking, unambiguous because it carries control markings
+# (the //) or spells out a full level word.
+_FULL_PAREN_CLASS_RE = re.compile(
+    r"\(((?:TOP SECRET|SECRET|CONFIDENTIAL|UNCLASSIFIED)(?:(?://|/)[A-Z0-9][A-Z0-9 ,/]*)?"
+    r"|(?:TS|S|C|U)(?://|/)[A-Z0-9][A-Z0-9 ,/]*)\)"
+)
+# Bare single-letter portion marking - only matched at line/heading start
+# (portion-marking position) so we don't touch "(c)" subsections mid-prose.
+_LINESTART_BARE_CLASS_RE = re.compile(r"(?m)^([ \t]*(?:#+[ \t]+)?)\((TS|S|C|U)\)[ \t]*")
+
+
+def _quote_class_value(value: str) -> str:
+    """Quote a classification value for inline annotation if it carries
+    YAML-significant characters."""
+    if any(ch in value for ch in (":", ",")):
+        escaped = value.replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def normalise_classification(record_text: str) -> str:
+    """Reconcile classification markings to the record-format conventions:
+    lift the document banner to frontmatter `classification`, drop redundant
+    in-body repeats of that banner, and convert portion markings that differ
+    from the banner to inline `{{classification: VALUE}}` annotations. Strips
+    any strikethrough wrapping (classification is never struck text).
+
+    Belt-and-braces over the extraction prompt: produces uniform output
+    regardless of model variance, and lets existing records be fixed
+    without re-running extraction.
+    """
+    parts = record_text.split("---", 2)
+    if len(parts) < 3:
+        return record_text
+    frontmatter, body = parts[1], parts[2]
+
+    candidates: list[str] = []
+    candidates += [m.group(1) for m in _STRUCK_CLASS_RE.finditer(body)]
+    candidates += [m.group(1) for m in _FULL_PAREN_CLASS_RE.finditer(body)]
+
+    # Existing frontmatter banner wins; else derive from the body (prefer a
+    # marking carrying control markings, else the first full marking).
+    fm_match = re.search(r"(?m)^classification:\s*\"?([^\"\n]+)\"?\s*$", frontmatter)
+    banner = fm_match.group(1).strip() if fm_match else None
+    if banner is None:
+        banner = next((c for c in candidates if "//" in c), None)
+        if banner is None and candidates:
+            banner = candidates[0]
+        if banner:
+            frontmatter = (
+                frontmatter.rstrip("\n")
+                + f'\nclassification: "{banner.replace(chr(34), chr(92) + chr(34))}"\n'
+            )
+
+    def _replace(value: str) -> str:
+        # Redundant repeat of the document banner -> drop entirely.
+        if banner and value == banner:
+            return ""
+        # Portion marking that differs -> inline annotation.
+        return f"{{{{classification: {_quote_class_value(value)}}}}}"
+
+    body = _STRUCK_CLASS_RE.sub(lambda m: _replace(m.group(1)), body)
+    body = _FULL_PAREN_CLASS_RE.sub(lambda m: _replace(m.group(1)), body)
+    body = _LINESTART_BARE_CLASS_RE.sub(
+        lambda m: m.group(1) + _replace(m.group(2)) + " ", body
+    )
+    # Tidy whitespace the removed/replaced markings leave behind.
+    body = re.sub(r"[ \t]{2,}", " ", body)
+    body = re.sub(r"[ \t]+\n", "\n", body)
+
+    return f"---{frontmatter}---{body}"
+
+
+_TITLE_PLACEHOLDER_RE = re.compile(r"\b(?:undefined|null|none)\b[-\s]*", re.IGNORECASE)
+
+
+def clean_title(title: str) -> str:
+    """Remove leaked placeholder words ("undefined", "null", "None") that an
+    extraction model sometimes substitutes for a missing title field, e.g.
+    "Misrep undefined-7816710" -> "Misrep 7816710". These are not cosmetic:
+    a malformed title propagates into the digester's knowledge graph as a
+    node name. Returns the original title unchanged if cleaning would empty
+    it.
+    """
+    cleaned = _TITLE_PLACEHOLDER_RE.sub("", title)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -–—")
+    return cleaned or title
+
+
 def body_prelude(
     title: str, date_published: str | None, existing_body: str | None = None
 ) -> str:
@@ -85,9 +203,10 @@ def body_prelude(
     the prelude omits its own date line to avoid double-stamping.
     """
     lines = [f"# {title}"]
-    if date_published and not (existing_body and _body_has_byline_date(existing_body)):
+    clean_date = _normalise_pub_date(date_published)
+    if clean_date and not (existing_body and _body_has_byline_date(existing_body)):
         lines.append("")
-        lines.append(f"*Published {date_published}*")
+        lines.append(f"*Published {clean_date}*")
     return "\n".join(lines)
 
 
