@@ -8,6 +8,7 @@ authors:
   - Author Name
 source_type: pdf
 pages: 3
+classification: "SECRET//REL TO USA, FVEY"
 ---
 
 <!-- file_page: 1 -->
@@ -72,7 +73,14 @@ Rules:
 - Block-level redactions: multi-line HTML comment with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.
 - Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for small mid-sentence redactions
 - Illegible text: {{{{illegible: best guess}}}} or {{{{illegible}}}}
+- Classification markings (for declassified government documents):
+  - The document's overall banner goes in frontmatter as `classification:` with the verbatim marking minus the surrounding parentheses, e.g. classification: "SECRET//REL TO USA, FVEY". Omit the field entirely if the document is unmarked or unclassified.
+  - Repeated in-body copies of that same overall banner (page headers/footers) are redundant - drop them, don't reproduce them in the prose.
+  - Per-portion markings that DIFFER from the overall banner (paragraph/section prefixes like "(U)", "(S//REL)", "(S/RELIDO)") become an inline annotation at the start of the portion they govern: {{{{classification: U}}}}, {{{{classification: S//REL}}}}, {{{{classification: "S/RELIDO"}}}}. Quote the value if it contains a colon or comma. The marking applies from its position until the next classification marking.
+  - Reproduce marking values verbatim (minus parens). Do not normalise or expand them.
+  - NEVER render classification markings as strikethrough. Strikethrough (~~text~~) is reserved for text genuinely struck out in the source.
 - Em-dashes written as --- must be converted to a single hyphen
+- Title: use the document's actual title or subject. Never put the literal words "undefined", "null", or "None" in the title - if part of a title is missing or unreadable, omit that part rather than writing a placeholder word.
 - schema must be: anomalica/record/1
 - source_type must be: pdf{page_context}
 
