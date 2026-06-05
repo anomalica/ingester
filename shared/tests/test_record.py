@@ -2,11 +2,53 @@ import pytest
 
 from record import (
     SymlinkCollisionError,
+    body_prelude,
+    clean_title,
     get_version,
+    normalise_classification,
     slugify,
     symlink_name,
     write_record,
 )
+
+
+def test_clean_title_strips_undefined():
+    assert clean_title("Misrep undefined-7816710") == "Misrep 7816710"
+    assert clean_title("None-Report") == "Report"
+    assert clean_title("Normal Title") == "Normal Title"
+    # cleaning that would empty the title returns the original
+    assert clean_title("undefined") == "undefined"
+
+
+def test_body_prelude_omits_null_date():
+    assert body_prelude("Doc", None) == "# Doc"
+    assert body_prelude("Doc", "null") == "# Doc"
+    assert body_prelude("Doc", "undated") == "# Doc"
+    assert body_prelude("Doc", "2020-08-09") == "# Doc\n\n*Published 2020-08-09*"
+    # ISO timestamp trimmed to date
+    assert (
+        body_prelude("Doc", "2021-05-17T00:00:00Z") == "# Doc\n\n*Published 2021-05-17*"
+    )
+
+
+def test_normalise_classification_lifts_banner_and_strips():
+    rec = (
+        '---\nschema: anomalica/record/1\ntitle: "Misrep"\nsource_type: pdf\n---\n\n'
+        "~~(SECRET//REL TO USA, FVEY)~~ The mission began. (U) This paragraph is "
+        "unclassified.\n"
+    )
+    out = normalise_classification(rec)
+    assert 'classification: "SECRET//REL TO USA, FVEY"' in out
+    assert "~~" not in out  # strikethrough banner removed
+    assert "(SECRET//REL TO USA, FVEY)" not in out.split("---", 2)[2]
+
+
+def test_normalise_classification_noop_without_markings():
+    rec = (
+        '---\nschema: anomalica/record/1\ntitle: "Doc"\nsource_type: pdf\n---\n\n'
+        "The (c) here is a subsection reference, not a marking.\n"
+    )
+    assert normalise_classification(rec) == rec
 
 
 def test_slugify_basic():
