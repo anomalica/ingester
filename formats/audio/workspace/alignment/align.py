@@ -6,6 +6,90 @@ import re
 
 from models import Segment, SpeakerSegment, TimedSentence, Turn
 
+# Tokens that end in a period but do not end a sentence. Lower-cased, period
+# stripped. Extend this set as transcripts surface new ones. Dotted acronyms
+# (U.S., e.g., a.m.) and single-letter initials (George W.) are matched by
+# pattern in _ends_with_abbreviation, so they don't need listing here.
+_ABBREVIATIONS = {
+    # honorifics / titles
+    "dr",
+    "mr",
+    "mrs",
+    "ms",
+    "mx",
+    "prof",
+    "sr",
+    "jr",
+    "rev",
+    "fr",
+    "hon",
+    "st",
+    # ranks / roles
+    "sen",
+    "rep",
+    "gov",
+    "gen",
+    "col",
+    "lt",
+    "sgt",
+    "capt",
+    "cmdr",
+    "adm",
+    "maj",
+    "cpl",
+    "det",
+    "supt",
+    "pres",
+    # common / business
+    "etc",
+    "vs",
+    "al",
+    "inc",
+    "ltd",
+    "co",
+    "corp",
+    "vol",
+    "fig",
+    "dept",
+    "est",
+}
+
+# A dotted acronym or Latin abbreviation: letters joined by periods, e.g.
+# "U.S", "F.B.I", "e.g", "a.m" (trailing period already stripped by caller).
+_DOTTED_ACRONYM_RE = re.compile(r"[A-Za-z](?:\.[A-Za-z])+$")
+
+
+def _ends_with_abbreviation(fragment: str) -> bool:
+    """True if a split fragment ends in an abbreviation/initial rather than a
+    real sentence boundary, so it should be merged with the next fragment."""
+    tokens = fragment.split()
+    if not tokens:
+        return False
+    core = tokens[-1].rstrip(".")
+    if not core:
+        return False
+    if core.lower() in _ABBREVIATIONS:
+        return True
+    if len(core) == 1 and core.isalpha():  # single-letter initial, e.g. "W."
+        return True
+    return bool(_DOTTED_ACRONYM_RE.fullmatch(core))
+
+
+def _merge_abbreviation_splits(fragments: list[str]) -> list[str]:
+    """Re-join fragments that the punctuation split wrongly broke at an
+    abbreviation (e.g. "Dr." + "Smith was here." -> "Dr. Smith was here.")."""
+    merged: list[str] = []
+    buffer = ""
+    for fragment in fragments:
+        buffer = f"{buffer} {fragment}" if buffer else fragment
+        if _ends_with_abbreviation(fragment):
+            continue
+        merged.append(buffer)
+        buffer = ""
+    if buffer:
+        merged.append(buffer)
+    return merged
+
 
 def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
     """Split a transcription segment into individual sentences using word timestamps.
@@ -24,6 +108,9 @@ def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
     # Keep the punctuation with the sentence
     sentence_texts = re.split(r"(?<=[.?!])\s+", text)
     sentence_texts = [s.strip() for s in sentence_texts if s.strip()]
+    # Re-join fragments split at an abbreviation/initial that isn't a real
+    # sentence end ("Dr." | "Smith spoke." -> "Dr. Smith spoke.").
+    sentence_texts = _merge_abbreviation_splits(sentence_texts)
 
     if len(sentence_texts) <= 1:
         return [TimedSentence(time=segment.start, text=text)]
