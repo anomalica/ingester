@@ -236,6 +236,106 @@ def test_multi_sentence_segment_split():
     assert turns[0].sentences[2].time == 4.0
 
 
+def test_abbreviation_does_not_break_line():
+    """An honorific like 'Dr.' must not strand the abbreviation on its own
+    line - the sentence continues past it."""
+    segments = [
+        _seg(
+            "Dr. Smith was there. He left.",
+            0.0,
+            4.0,
+            [
+                ("Dr.", 0.0, 0.3),
+                ("Smith", 0.4, 0.7),
+                ("was", 0.8, 1.0),
+                ("there.", 1.1, 1.5),
+                ("He", 2.0, 2.2),
+                ("left.", 2.3, 2.6),
+            ],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=4.0)]
+
+    turns = align(segments, speaker_segments)
+
+    sentences = turns[0].sentences
+    assert [s.text for s in sentences] == ["Dr. Smith was there.", "He left."]
+
+
+def test_single_letter_initials_not_split():
+    segments = [
+        _seg(
+            "George W. Bush spoke today.",
+            0.0,
+            3.0,
+            [
+                ("George", 0.0, 0.3),
+                ("W.", 0.4, 0.6),
+                ("Bush", 0.7, 1.0),
+                ("spoke", 1.1, 1.4),
+                ("today.", 1.5, 1.8),
+            ],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=3.0)]
+
+    turns = align(segments, speaker_segments)
+
+    assert len(turns[0].sentences) == 1
+    assert turns[0].sentences[0].text == "George W. Bush spoke today."
+
+
+def test_dotted_acronym_not_split():
+    segments = [
+        _seg(
+            "The U.S. government denied it.",
+            0.0,
+            3.0,
+            [
+                ("The", 0.0, 0.2),
+                ("U.S.", 0.3, 0.6),
+                ("government", 0.7, 1.2),
+                ("denied", 1.3, 1.6),
+                ("it.", 1.7, 1.9),
+            ],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=3.0)]
+
+    turns = align(segments, speaker_segments)
+
+    assert len(turns[0].sentences) == 1
+    assert turns[0].sentences[0].text == "The U.S. government denied it."
+
+
+def test_real_sentences_still_split_after_abbreviation_handling():
+    """Regression: genuine sentence boundaries must still split."""
+    segments = [
+        _seg(
+            "He arrived. She waved. They left.",
+            0.0,
+            6.0,
+            [
+                ("He", 0.0, 0.3),
+                ("arrived.", 0.4, 0.8),
+                ("She", 2.0, 2.3),
+                ("waved.", 2.4, 2.8),
+                ("They", 4.0, 4.3),
+                ("left.", 4.4, 4.8),
+            ],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=6.0)]
+
+    turns = align(segments, speaker_segments)
+
+    assert [s.text for s in turns[0].sentences] == [
+        "He arrived.",
+        "She waved.",
+        "They left.",
+    ]
+
+
 def test_single_sentence_segment_not_split():
     """A segment with one sentence should not be split."""
     segments = [
