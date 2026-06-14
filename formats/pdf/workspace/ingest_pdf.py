@@ -352,37 +352,21 @@ def main():
         if existing_fm and "copyright" in existing_fm:
             existing_copyright = existing_fm["copyright"]
 
-    # Provider selection is opt-in to the metered API: default to the
-    # Claude Code session (flat-rate subscription) and only use the
-    # Anthropic API when INGEST_USE_API=1 is explicitly set (via the
-    # host script's --api flag). Previously mere presence of
-    # ANTHROPIC_API_KEY silently routed everything through the metered
-    # API, which made bulk runs unexpectedly expensive.
-    using_api = os.environ.get("INGEST_USE_API") == "1"
-    if using_api and not os.environ.get("ANTHROPIC_API_KEY"):
+    # Always use the metered Anthropic API, billed to Anomalica's own key.
+    # The Claude Code session is never used: it bills a separate subscription
+    # and breaks billing isolation. Require the key; never route spend elsewhere.
+    if not os.environ.get("ANTHROPIC_API_KEY"):
         print(
-            "INGEST_USE_API=1 but ANTHROPIC_API_KEY is unset; "
-            "falling back to Claude Code",
+            "ANTHROPIC_API_KEY is unset; cannot extract. Set it and retry.",
             file=sys.stderr,
         )
-        using_api = False
-    if using_api:
-        from extraction.anthropic_api import AnthropicProvider
+        sys.exit(1)
+    from extraction.anthropic_api import AnthropicProvider
 
-        provider = AnthropicProvider()
-        max_single_pass = API_MAX_PAGES_SINGLE_PASS
-        chunk_size = API_CHUNK_SIZE
-        print("Using Anthropic API", file=sys.stderr)
-    else:
-        from extraction.claude_code import ClaudeCodeProvider
-
-        provider = ClaudeCodeProvider()
-        max_single_pass = CLAUDE_CODE_MAX_PAGES_SINGLE_PASS
-        chunk_size = CLAUDE_CODE_CHUNK_SIZE
-        print(
-            "Using Claude Code session (default; pass --api for metered API)",
-            file=sys.stderr,
-        )
+    provider = AnthropicProvider()
+    max_single_pass = API_MAX_PAGES_SINGLE_PASS
+    chunk_size = API_CHUNK_SIZE
+    print("Using Anthropic API", file=sys.stderr)
 
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
@@ -408,7 +392,7 @@ def main():
 
     content = _clean_annotations(content)
     model_name = getattr(provider, "model", "unknown")
-    provider_name = "anthropic-api" if using_api else "claude-code"
+    provider_name = "anthropic-api"
     content = _patch_frontmatter(
         content,
         input_hash,
@@ -546,26 +530,13 @@ def _extract_chunked(
             )
             chunk_results.append((content, real_offset))
             metas.append(meta)
-        except RuntimeError:
+        except RuntimeError as e:
             if chunk_size <= MIN_CHUNK_SIZE:
                 print(
-                    f"API failed for page {real_offset}, trying Claude Code",
+                    f"Extraction failed for page {real_offset}: {e}. "
+                    "Recording as failed and skipping (no Claude Code fallback).",
                     file=sys.stderr,
                 )
-                try:
-                    from extraction.claude_code import ClaudeCodeProvider
-
-                    cc = ClaudeCodeProvider()
-                    content, meta = cc.extract_chunk(
-                        chunk["pdf_data"], real_offset, chunk["page_count"]
-                    )
-                    chunk_results.append((content, real_offset))
-                    metas.append(meta)
-                except RuntimeError as e:
-                    print(
-                        f"Claude Code also failed for page {real_offset}: {e}. Skipping.",
-                        file=sys.stderr,
-                    )
                 continue
             smaller = chunk_size // 2
             print(
