@@ -25,8 +25,19 @@ stages:
             - git
       - pip:
           install:
-            - whisperx==3.8.5
+            # Pinned, validated-compatible set (2026-06-13). Functional bumps:
+            # whisperx 3.8.5->3.8.6 (additive only), ctranslate2 4.7.2->4.8.0
+            # (CUDA float16 path unchanged). Rest pinned at known-good versions.
+            - whisperx==3.8.6
             - pyannote.audio==4.0.4
+            - torch==2.8.0
+            - torchaudio==2.8.0
+            - torchvision==0.23.0
+            - torchcodec==0.7.0
+            - ctranslate2==4.8.0
+            - faster-whisper==1.2.1
+            - transformers==4.57.6
+            - huggingface-hub<1.0.0
             - soundfile
             - pyyaml
 
@@ -59,11 +70,11 @@ commands:
       # speech-to-text / TTS services, freeing the full 6GB (large-v3-turbo
       # float16 ~2.5GB + pyannote diarisation fit comfortably). Switch back to
       # "cpu" when those services need to stay up (e.g. dictation in use).
-      WHISPER_DEVICE: "cpu"
+      WHISPER_DEVICE: "cuda"
       # Fully hide the GPU so BOTH transcription and pyannote diarisation run on
       # CPU, leaving the GPU entirely to Mark's dictation/TTS services while he
       # works. Remove this (and set WHISPER_DEVICE=cuda) for the GPU overnight runs.
-      CUDA_VISIBLE_DEVICES: ""
+      CUDA_VISIBLE_DEVICES: "0"
       # Conservative batch for float16 on the 6GB card - comfortable headroom.
       WHISPER_BATCH: "4"
       # Reduce CUDA fragmentation for transcription + diarisation on the GPU.
