@@ -91,12 +91,16 @@ def _merge_abbreviation_splits(fragments: list[str]) -> list[str]:
     return merged
 
 
-def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
+def _split_segment_into_sentences(
+    segment: Segment, keep_words: bool = False
+) -> list[TimedSentence]:
     """Split a transcription segment into individual sentences using word timestamps.
 
     If the segment contains multiple sentences (detected by sentence-ending
     punctuation), splits them and assigns each sentence the timestamp of its
-    first word. If the segment is a single sentence, returns it as-is.
+    first word. If the segment is a single sentence, returns it as-is. When
+    ``keep_words`` is set, each returned sentence also carries the slice of
+    per-word timings it was built from (for word-level/v2 output).
     """
     text = segment.text.strip()
     words = segment.words
@@ -113,7 +117,13 @@ def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
     sentence_texts = _merge_abbreviation_splits(sentence_texts)
 
     if len(sentence_texts) <= 1:
-        return [TimedSentence(time=segment.start, text=text)]
+        return [
+            TimedSentence(
+                time=segment.start,
+                text=text,
+                words=list(words) if keep_words else None,
+            )
+        ]
 
     # Map each sentence to the timestamp of its first word
     sentences = []
@@ -123,6 +133,7 @@ def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
         # Find the first word of this sentence in the word list
         sentence_time = segment.start
         sentence_words_lower = sentence_text.lower().split()
+        sentence_words = None
 
         if sentence_words_lower and word_idx < len(words):
             # Walk through words to find where this sentence starts
@@ -131,22 +142,30 @@ def _split_segment_into_sentences(segment: Segment) -> list[TimedSentence]:
                 if words[i].text.lower().strip(".,!?;:'\"") == first_word:
                     sentence_time = words[i].start
                     # Advance word_idx past this sentence's words
-                    word_idx = i + len(sentence_words_lower)
+                    end_idx = i + len(sentence_words_lower)
+                    if keep_words:
+                        sentence_words = words[i:end_idx]
+                    word_idx = end_idx
                     break
 
-        sentences.append(TimedSentence(time=sentence_time, text=sentence_text))
+        sentences.append(
+            TimedSentence(time=sentence_time, text=sentence_text, words=sentence_words)
+        )
 
     return sentences
 
 
 def align(
-    segments: list[Segment], speaker_segments: list[SpeakerSegment]
+    segments: list[Segment],
+    speaker_segments: list[SpeakerSegment],
+    keep_words: bool = False,
 ) -> list[Turn]:
     """Align transcription segments to speakers and group into turns.
 
     Each transcription segment is split into individual sentences and assigned
     to the speaker who covers the majority of its duration. Consecutive
-    sentences from the same speaker are grouped into turns.
+    sentences from the same speaker are grouped into turns. ``keep_words``
+    retains per-word timings on each sentence for word-level/v2 output.
     """
     if not segments or not speaker_segments:
         return []
@@ -160,7 +179,7 @@ def align(
             continue
 
         speaker = _majority_speaker(segment, speaker_segments)
-        sentences = _split_segment_into_sentences(segment)
+        sentences = _split_segment_into_sentences(segment, keep_words=keep_words)
 
         if speaker != current_speaker:
             if current_speaker is not None and current_sentences:

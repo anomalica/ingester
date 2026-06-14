@@ -52,13 +52,20 @@ def _fix_yaml_quoting(frontmatter: str) -> str:
     return "\n".join(fixed)
 
 
-def validate(content: str, extra_required: list[str] | None = None) -> ValidationResult:
+def validate(
+    content: str,
+    extra_required: list[str] | None = None,
+    expected_schema: str = CURRENT_SCHEMA,
+) -> ValidationResult:
     """Validate a record against the Anomalica record format.
 
     Args:
         content: The full record file content.
         extra_required: Additional frontmatter fields required beyond the
             base set (schema, title, date, source_type).
+        expected_schema: The schema version this record should declare
+            (defaults to the current v1 schema; word-level records pass
+            anomalica/record/2).
 
     Returns:
         ValidationResult with errors, warnings, and optionally fixed content.
@@ -111,9 +118,9 @@ def validate(content: str, extra_required: list[str] | None = None) -> Validatio
             result.errors.append(f"Missing required frontmatter field: {field_name}")
 
     # Check schema version
-    if frontmatter.get("schema") and frontmatter["schema"] != CURRENT_SCHEMA:
+    if frontmatter.get("schema") and frontmatter["schema"] != expected_schema:
         result.errors.append(
-            f"Wrong schema version: {frontmatter['schema']} (expected {CURRENT_SCHEMA})"
+            f"Wrong schema version: {frontmatter['schema']} (expected {expected_schema})"
         )
 
     # Check body content

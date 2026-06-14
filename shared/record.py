@@ -47,10 +47,11 @@ def slugify(text: str, max_length: int = 60) -> str:
     return text
 
 
-def symlink_name(date: str, source_type: str, title: str) -> str:
-    """Generate the human-readable symlink filename."""
+def symlink_name(date: str, source_type: str, title: str, variant: str = "") -> str:
+    """Generate the human-readable symlink filename. ``variant`` (e.g. ".v2")
+    is inserted before the extension to keep parallel records distinct."""
     slug = slugify(title)
-    return f"{date}-{source_type}-{slug}.md"
+    return f"{date}-{source_type}-{slug}{variant}.md"
 
 
 # Matches an in-body byline that already states a publication date, so
@@ -249,8 +250,13 @@ def write_record(
     source_type: str,
     title: str,
     force: bool = False,
+    variant: str = "",
 ) -> tuple[Path, Path]:
     """Write a record to the store and create a symlink in records/.
+
+    ``variant`` (e.g. ".v2") is inserted before the ``.md`` extension on both
+    the store file and the symlink, so a parallel record (such as the
+    word-level v2 output) lives alongside the original without overwriting it.
 
     Returns:
         Tuple of (record_path, symlink_path).
@@ -266,8 +272,8 @@ def write_record(
     store_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
 
-    record_path = store_dir / f"{hex_hash}.md"
-    link_name = symlink_name(date, source_type, title)
+    record_path = store_dir / f"{hex_hash}{variant}.md"
+    link_name = symlink_name(date, source_type, title, variant=variant)
     link_path = records_dir / link_name
 
     if link_path.is_symlink():

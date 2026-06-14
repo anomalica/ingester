@@ -6,17 +6,21 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--words] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
 	echo "Options:" >&2
 	echo "  --force    Re-process even if output already exists" >&2
+	echo "  --words    Audio/video: retain per-word timestamps and write a" >&2
+	echo "             parallel .v2 record (schema 2); never overwrites v1" >&2
 	exit 1
 }
 
 FORCE=""
 FORCE_FLAG=0
+WORDS=""
+WORDS_FLAG=0
 INPUT=""
 COPYRIGHT_STATUS=""
 NO_COMMIT=0
@@ -26,6 +30,13 @@ while [[ $# -gt 0 ]]; do
 	--force)
 		FORCE="--force"
 		FORCE_FLAG=1
+		shift
+		;;
+	--words)
+		# Per-word/v2 output: retain word-level timestamps and write a
+		# parallel .v2 record (audio/video only). Never overwrites v1.
+		WORDS="--words"
+		WORDS_FLAG=1
 		shift
 		;;
 	--copyright)
@@ -103,7 +114,7 @@ if ! is_url "$INPUT"; then
 		exit 1
 	fi
 	FILE_HASH="$(sha256sum "$INPUT" | cut -d' ' -f1)"
-	if [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
+	if [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] && [[ "$FORCE_FLAG" -eq 0 ]] && [[ "$WORDS_FLAG" -eq 0 ]]; then
 		echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
 		echo "Existing record: ${INGESTS_DIR}/store/${FILE_HASH}.md" >&2
 		exit 0
@@ -111,7 +122,7 @@ if ! is_url "$INPUT"; then
 fi
 
 # For URLs, pre-fetch dedup by exact source_url match
-if is_url "$INPUT" && [[ "$FORCE_FLAG" -eq 0 ]]; then
+if is_url "$INPUT" && [[ "$FORCE_FLAG" -eq 0 ]] && [[ "$WORDS_FLAG" -eq 0 ]]; then
 	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
 from dedup import find_by_source_url
@@ -191,7 +202,7 @@ fi
 # Post-acquire dedup by source_id (e.g. youtube:ZBtMbBPzqHY). Catches the
 # case where the same video re-downloaded with a fresh container has a new
 # byte hash but is logically the same source.
-if [[ -n "$SOURCE_ID" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
+if [[ -n "$SOURCE_ID" ]] && [[ "$FORCE_FLAG" -eq 0 ]] && [[ "$WORDS_FLAG" -eq 0 ]]; then
 	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
 from dedup import find_by_source_id
@@ -239,7 +250,7 @@ pdf)
 	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE)
 	;;
 audio)
-	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE $WORDS)
 	;;
 ebook)
 	(cd "${SCRIPT_DIR}/formats/ebook" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)

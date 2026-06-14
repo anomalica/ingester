@@ -11,8 +11,8 @@ from pathlib import Path
 
 from alignment.align import align
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
-from hashing import content_hash_label, hash_file, store_exists
-from models import Turn, detect_source_type, format_time_precise
+from hashing import content_hash_label, hash_file, store_exists, store_path
+from models import TimedSentence, Turn, detect_source_type, format_time_precise
 from probe import probe
 from record import body_prelude, get_version, write_record
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
@@ -161,16 +161,20 @@ def _build_frontmatter(
     date_accessed: str | None,
     language: str,
     source_audio: list[dict],
+    word_timestamps: bool = False,
 ) -> str:
     """Assemble YAML frontmatter for an audio/video record."""
     escaped_title = title.replace('"', '\\"')
+    schema = "anomalica/record/2" if word_timestamps else "anomalica/record/1"
     lines = [
         "---",
-        "schema: anomalica/record/1",
+        f"schema: {schema}",
         f'title: "{escaped_title}"',
         f"date_published: {date_published}",
         f"source_type: {source_type}",
     ]
+    if word_timestamps:
+        lines.append("word_timestamps: true")
     if publisher:
         escaped_pub = publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')
@@ -225,19 +229,36 @@ def _build_frontmatter(
     return "\n".join(lines)
 
 
-def _build_content(turns: list[Turn]) -> str:
+def _sentence_text_with_word_markers(sentence: TimedSentence) -> str:
+    """Render a sentence with an inline ``{{t:SECONDS}}`` marker before each
+    word (word-level/v2 output). Falls back to plain text when no per-word
+    timings are present."""
+    if not sentence.words:
+        return sentence.text
+    return " ".join(f"{{{{t:{w.start:.2f}}}}}{w.text}" for w in sentence.words)
+
+
+def _build_content(turns: list[Turn], word_timestamps: bool = False) -> str:
     """Build the record body with speaker turn annotations and sentence-level timestamps.
 
     Each speaker change is marked with an HTML comment. Each sentence
     starts on its own line prefixed with HH:MM:SS.D timestamp. An empty
-    line indicates a paragraph break.
+    line indicates a paragraph break. When ``word_timestamps`` is set, each
+    word is additionally prefixed with an inline ``{{t:SECONDS}}`` marker so
+    the workbench can resolve any text selection to a time range; consumers
+    that only want prose strip the markers like any other annotation.
     """
     blocks = []
     for turn in turns:
         lines = [f"<!-- speaker: {turn.speaker} -->"]
         for sentence in turn.sentences:
             ts = format_time_precise(sentence.time)
-            lines.append(f"{ts} {sentence.text}")
+            text = (
+                _sentence_text_with_word_markers(sentence)
+                if word_timestamps
+                else sentence.text
+            )
+            lines.append(f"{ts} {text}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
 
@@ -254,10 +275,19 @@ def _unique_speakers(turns: list[Turn]) -> dict[str, float]:
     return speakers
 
 
-def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
-    """Run the audio ingestion pipeline. Returns 0 on success, 1 on failure."""
+def run(
+    staging_dir: Path, output_dir: Path, force: bool, word_timestamps: bool = False
+) -> int:
+    """Run the audio ingestion pipeline. Returns 0 on success, 1 on failure.
+
+    When ``word_timestamps`` is set, per-word timings are retained and emitted
+    as inline markers, and the record is written to the parallel ``.v2`` store
+    path (schema anomalica/record/2) so it never overwrites an existing v1
+    record. This is the opt-in word-level/v2 output.
+    """
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
+    variant = ".v2" if word_timestamps else ""
 
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
@@ -278,9 +308,17 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     hex_hash = hash_file(asset_path)
 
-    if not force and store_exists(store_dir, hex_hash):
+    # In word/v2 mode, dedup against the parallel .v2 record only, so a source
+    # already ingested as v1 is still (re)processed into v2 without touching v1.
+    already = (
+        store_path(store_dir, hex_hash, f"{variant}.md").exists()
+        if word_timestamps
+        else store_exists(store_dir, hex_hash)
+    )
+    if not force and already:
+        kind = "v2 record" if word_timestamps else "record"
         print(
-            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
+            f"Skipping: {kind} already exists (hash: {hex_hash[:12]}...)",
             file=sys.stderr,
         )
         return 0
@@ -301,7 +339,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     }
 
     # Read existing source.audio list and merge (append only if sha256 is new)
-    existing_record_path = store_dir / f"{hex_hash}.md"
+    existing_record_path = store_dir / f"{hex_hash}{variant}.md"
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
@@ -316,7 +354,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     speaker_segments = diarise(asset_path)
 
     print("Aligning transcription to speakers", file=sys.stderr)
-    turns = align(segments, speaker_segments)
+    turns = align(segments, speaker_segments, keep_words=word_timestamps)
 
     if not turns:
         print("Error: alignment produced no speaker turns", file=sys.stderr)
@@ -364,12 +402,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         date_accessed=date_accessed,
         language=language,
         source_audio=source_audio_list,
+        word_timestamps=word_timestamps,
     )
-    body = _build_content(turns)
+    body = _build_content(turns, word_timestamps=word_timestamps)
     prelude = body_prelude(title, date_published, existing_body=body)
     content = frontmatter + "\n\n" + prelude + "\n\n" + body
 
-    result = validate(content, extra_required=["duration"])
+    expected_schema = "anomalica/record/2" if word_timestamps else "anomalica/record/1"
+    result = validate(
+        content, extra_required=["duration"], expected_schema=expected_schema
+    )
     if result.fixed:
         content = result.fixed
     for warning in result.warnings:
@@ -378,12 +420,22 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation error: {error}", file=sys.stderr)
 
     record_path, link_path = write_record(
-        store_dir, records_dir, hex_hash, content, date_published, source_type, title
+        store_dir,
+        records_dir,
+        hex_hash,
+        content,
+        date_published,
+        source_type,
+        title,
+        variant=variant,
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
 
-    if needs_sidecar(content):
+    # The verification sidecar gates copyright access on the v1 record. The
+    # word/v2 record is an experimental parallel artefact, so it does not get
+    # its own sidecar (which would otherwise clobber the v1 one).
+    if not word_timestamps and needs_sidecar(content):
         sidecar = build_sidecar(
             content, source_path=asset_path, duration_seconds=duration
         )
@@ -403,6 +455,12 @@ def main():
     parser.add_argument(
         "--force", action="store_true", help="Re-process even if output exists"
     )
+    parser.add_argument(
+        "--words",
+        action="store_true",
+        help="Retain per-word timestamps and write the parallel .v2 record "
+        "(schema anomalica/record/2); never overwrites the v1 record",
+    )
     args = parser.parse_args()
 
     output_dir = Path("/mnt/output")
@@ -411,7 +469,7 @@ def main():
             Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
         )
 
-    sys.exit(run(args.staging_dir, output_dir, args.force))
+    sys.exit(run(args.staging_dir, output_dir, args.force, word_timestamps=args.words))
 
 
 if __name__ == "__main__":

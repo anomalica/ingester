@@ -35,10 +35,16 @@ class SpeakerSegment:
 
 @dataclass
 class TimedSentence:
-    """A single sentence with its start timestamp."""
+    """A single sentence with its start timestamp.
+
+    ``words`` holds per-word timings when the pipeline runs with word-level
+    timestamps retained (the v2/word path); it is None in the default
+    sentence-only path.
+    """
 
     time: float  # seconds
     text: str
+    words: list[Word] | None = None
 
 
 @dataclass
