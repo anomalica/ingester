@@ -12,6 +12,58 @@ def _seg(text, start, end, words):
     )
 
 
+def test_align_default_drops_per_word_timings():
+    """Default (sentence-only) path leaves sentence.words as None."""
+    segments = [
+        _seg("Just one here.", 0.0, 2.0, [("Just", 0.0, 0.2), ("here.", 0.6, 1.0)]),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=2.0)]
+    turns = align(segments, speaker_segments)
+    assert turns[0].sentences[0].words is None
+
+
+def test_align_keep_words_single_sentence():
+    """keep_words attaches all of a single-sentence segment's words."""
+    segments = [
+        _seg(
+            "Just one here.",
+            0.0,
+            2.0,
+            [("Just", 0.0, 0.2), ("one", 0.3, 0.5), ("here.", 0.6, 1.0)],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=2.0)]
+    turns = align(segments, speaker_segments, keep_words=True)
+    words = turns[0].sentences[0].words
+    assert [w.text for w in words] == ["Just", "one", "here."]
+    assert words[0].start == 0.0
+
+
+def test_align_keep_words_partitions_multi_sentence_segment():
+    """keep_words slices a multi-sentence segment's words per sentence."""
+    segments = [
+        _seg(
+            "First sentence. Second one.",
+            0.0,
+            4.0,
+            [
+                ("First", 0.0, 0.3),
+                ("sentence.", 0.4, 0.8),
+                ("Second", 2.0, 2.3),
+                ("one.", 2.4, 2.8),
+            ],
+        ),
+    ]
+    speaker_segments = [SpeakerSegment(speaker="SPEAKER_00", start=0.0, end=4.0)]
+    turns = align(segments, speaker_segments, keep_words=True)
+    sents = turns[0].sentences
+    assert len(sents) == 2
+    assert [w.text for w in sents[0].words] == ["First", "sentence."]
+    assert sents[0].words[0].start == 0.0
+    assert [w.text for w in sents[1].words] == ["Second", "one."]
+    assert sents[1].words[0].start == 2.0
+
+
 def test_two_speakers_basic():
     segments = [
         _seg("Hello world.", 0.0, 2.0, [("Hello", 0.0, 0.5), ("world.", 0.6, 1.0)]),

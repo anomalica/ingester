@@ -241,3 +241,61 @@ def test_run_fails_on_empty_transcription(mock_transcribe, mock_diarise, tmp_pat
     output = tmp_path / "output"
 
     assert ingest_audio.run(staging, output, force=False) != 0
+
+
+def test_build_content_emits_word_markers():
+    import ingest_audio
+    from models import TimedSentence, Turn, Word
+
+    turn = Turn(
+        speaker="Speaker 1",
+        sentences=[
+            TimedSentence(
+                time=1.2,
+                text="Hi there.",
+                words=[Word("Hi", 1.2, 1.4), Word("there.", 1.5, 1.9)],
+            )
+        ],
+    )
+    body = ingest_audio._build_content([turn], word_timestamps=True)
+    assert "{{t:1.20}}Hi {{t:1.50}}there." in body
+    # default path stays plain prose
+    assert "{{t:" not in ingest_audio._build_content([turn])
+
+
+@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
+@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+def test_run_word_mode_writes_v2_with_markers(mock_transcribe, mock_diarise, tmp_path):
+    import ingest_audio
+
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    result = ingest_audio.run(staging, output, force=False, word_timestamps=True)
+
+    assert result == 0
+    all_md = list((output / "store").glob("*.md"))
+    assert len(all_md) == 1 and all_md[0].name.endswith(".v2.md")
+    content = all_md[0].read_text()
+    assert "schema: anomalica/record/2" in content
+    assert "word_timestamps: true" in content
+    assert "{{t:0.00}}Hello" in content
+
+
+@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
+@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+def test_word_mode_does_not_overwrite_v1(mock_transcribe, mock_diarise, tmp_path):
+    import ingest_audio
+
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+
+    ingest_audio.run(staging, output, force=False)  # v1
+    v1 = [p for p in (output / "store").glob("*.md") if not p.name.endswith(".v2.md")]
+    assert len(v1) == 1
+    v1_before = v1[0].read_text()
+
+    ingest_audio.run(staging, output, force=False, word_timestamps=True)  # v2 beside
+
+    assert v1[0].read_text() == v1_before  # v1 untouched
+    assert (v1[0].parent / f"{v1[0].stem}.v2.md").exists()
+    assert "schema: anomalica/record/1" in v1_before
