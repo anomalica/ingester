@@ -278,6 +278,7 @@ def test_run_word_mode_writes_v2_with_markers(mock_transcribe, mock_diarise, tmp
     content = all_md[0].read_text()
     assert "schema: anomalica/record/2" in content
     assert "word_timestamps: true" in content
+    assert '"PWTS ' in content  # title carries the PWTS prefix
     assert "{{t:0.00}}Hello" in content
 
 
