@@ -31,6 +31,45 @@ MOCK_SPEAKER_SEGMENTS = [
     SpeakerSegment(speaker="SPEAKER_01", start=2.5, end=5.0),
 ]
 
+# Raw whisperx/pyannote output the (segments, raw)/(speakers, raw) tuples carry.
+# Mirrors MOCK_SEGMENTS / MOCK_SPEAKER_SEGMENTS so load_raw_archive reconstructs
+# the same processed forms on a cache-reuse run.
+MOCK_WHISPERX_RAW = {
+    "language": "en",
+    "transcribe": {"language": "en", "segments": []},
+    "aligned": {
+        "segments": [
+            {
+                "text": "Hello there",
+                "start": 0.0,
+                "end": 2.0,
+                "words": [
+                    {"word": "Hello", "start": 0.0, "end": 0.5, "score": 0.9},
+                    {"word": "there", "start": 0.6, "end": 1.0, "score": 0.9},
+                ],
+            },
+            {
+                "text": "I am fine thanks",
+                "start": 2.5,
+                "end": 5.0,
+                "words": [
+                    {"word": "I", "start": 2.5, "end": 2.6},
+                    {"word": "am", "start": 2.7, "end": 2.9},
+                    {"word": "fine", "start": 3.0, "end": 3.3},
+                    {"word": "thanks", "start": 3.4, "end": 3.8},
+                ],
+            },
+        ]
+    },
+}
+MOCK_PYANNOTE_RAW = {
+    "model": "test",
+    "tracks": [
+        {"start": 0.0, "end": 2.0, "speaker": "SPEAKER_00", "track": "A"},
+        {"start": 2.5, "end": 5.0, "speaker": "SPEAKER_01", "track": "B"},
+    ],
+}
+
 
 def _create_staging(
     tmp_path, mime_type="audio/mpeg", source="https://example.com/ep.mp3"
@@ -50,8 +89,8 @@ def _create_staging(
     return staging
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -71,8 +110,8 @@ def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
     assert "I am fine thanks" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_includes_processing_in_frontmatter(
     mock_transcribe, mock_diarise, tmp_path
 ):
@@ -94,8 +133,8 @@ def test_run_includes_processing_in_frontmatter(
     assert "date_extracted:" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_creates_symlink(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -109,8 +148,8 @@ def test_run_creates_symlink(mock_transcribe, mock_diarise, tmp_path):
     assert "audio" in links[0].name
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_skips_existing(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -124,8 +163,8 @@ def test_run_skips_existing(mock_transcribe, mock_diarise, tmp_path):
     assert mock_transcribe.call_count == 1
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_force_reprocesses(mock_transcribe, mock_diarise, tmp_path):
     """--force re-renders the record but reuses the cached transcription
     (cheap); only --no-cache forces fresh re-transcription."""
@@ -167,8 +206,8 @@ def test_run_fails_missing_asset(tmp_path):
     assert ingest_audio.run(staging, output, force=False) != 0
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_video_source_type(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -188,8 +227,8 @@ def test_run_video_source_type(mock_transcribe, mock_diarise, tmp_path):
     assert "source_type: video" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_speakers_in_body_not_frontmatter(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -207,8 +246,8 @@ def test_run_speakers_in_body_not_frontmatter(mock_transcribe, mock_diarise, tmp
     assert "<!-- speaker: Speaker 2 -->" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_duration_in_frontmatter(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -221,8 +260,8 @@ def test_run_duration_in_frontmatter(mock_transcribe, mock_diarise, tmp_path):
     assert "duration:" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_time_annotations_formatted(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -236,8 +275,8 @@ def test_run_time_annotations_formatted(mock_transcribe, mock_diarise, tmp_path)
     assert "00:00:02.5 I am fine thanks" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=[])
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=([], {}))
 def test_run_fails_on_empty_transcription(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -267,41 +306,42 @@ def test_build_content_emits_word_markers():
     assert "{{t:" not in ingest_audio._build_content([turn])
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
-def test_transcript_cache_written_then_reused(mock_transcribe, mock_diarise, tmp_path):
-    """First run transcribes and caches; a forced re-run reuses the cache and
-    does NOT call the GPU transcription/diarisation again."""
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_raw_archive_written_then_reused(mock_transcribe, mock_diarise, tmp_path):
+    """First run transcribes and writes the raw archive to sources/; a forced
+    re-run reuses the archive and does NOT call the GPU again."""
     import ingest_audio
 
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
+    sources = tmp_path / "sources"  # output.parent / "sources"
 
-    ingest_audio.run(staging, output, force=False)  # fresh: transcribes + caches
-    caches = list((output / "store").glob("*.transcript.json"))
-    assert len(caches) == 1
+    ingest_audio.run(staging, output, force=False)  # fresh: transcribes + archives
+    archives = list(sources.glob("*.transcript.json"))
+    assert len(archives) == 1
     assert mock_transcribe.call_count == 1
     assert mock_diarise.call_count == 1
 
-    # force past the record-exists skip; cache should serve, GPU untouched
+    # force past the record-exists skip; archive should serve, GPU untouched
     ingest_audio.run(staging, output, force=True)
     assert mock_transcribe.call_count == 1  # not called again
     assert mock_diarise.call_count == 1
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
-def test_no_cache_skips_caching(mock_transcribe, mock_diarise, tmp_path):
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_no_cache_skips_archive(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
     ingest_audio.run(staging, output, force=False, use_cache=False)
-    assert list((output / "store").glob("*.transcript.json")) == []
+    assert list((tmp_path / "sources").glob("*.transcript.json")) == []
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_word_mode_writes_v2_with_markers(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
@@ -319,8 +359,8 @@ def test_run_word_mode_writes_v2_with_markers(mock_transcribe, mock_diarise, tmp
     assert "{{t:0.00}}Hello" in content
 
 
-@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
-@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_word_mode_does_not_overwrite_v1(mock_transcribe, mock_diarise, tmp_path):
     import ingest_audio
 
