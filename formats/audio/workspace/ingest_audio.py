@@ -15,6 +15,7 @@ from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
 from probe import probe
 from record import body_prelude, get_version, write_record
+from transcript_cache import cache_path, load_transcript_cache, save_transcript_cache
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -276,7 +277,11 @@ def _unique_speakers(turns: list[Turn]) -> dict[str, float]:
 
 
 def run(
-    staging_dir: Path, output_dir: Path, force: bool, word_timestamps: bool = False
+    staging_dir: Path,
+    output_dir: Path,
+    force: bool,
+    word_timestamps: bool = False,
+    use_cache: bool = True,
 ) -> int:
     """Run the audio ingestion pipeline. Returns 0 on success, 1 on failure.
 
@@ -284,6 +289,10 @@ def run(
     as inline markers, and the record is written to the parallel ``.v2`` store
     path (schema anomalica/record/2) so it never overwrites an existing v1
     record. This is the opt-in word-level/v2 output.
+
+    When ``use_cache`` is set (default), the transcription + diarisation output
+    is cached beside the record (``{hash}.transcript.json``) and reused on a
+    later run, so re-rendering into a different format skips the GPU entirely.
     """
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
@@ -343,15 +352,36 @@ def run(
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
-    print(f"Transcribing: {asset_path.name}", file=sys.stderr)
-    segments = transcribe(asset_path)
+    cpath = cache_path(store_dir, hex_hash)
+    if use_cache and cpath.exists():
+        print(
+            f"Using cached transcript ({cpath.name}); skipping transcription/diarisation",
+            file=sys.stderr,
+        )
+        segments, speaker_segments = load_transcript_cache(cpath)
+    else:
+        print(f"Transcribing: {asset_path.name}", file=sys.stderr)
+        segments = transcribe(asset_path)
+        if not segments:
+            print("Error: transcription produced no segments", file=sys.stderr)
+            return 1
+        print(f"Diarising: {asset_path.name}", file=sys.stderr)
+        speaker_segments = diarise(asset_path)
+        if use_cache:
+            save_transcript_cache(
+                cpath,
+                segments,
+                speaker_segments,
+                meta={
+                    "whisper_model": WHISPER_MODEL,
+                    "diarisation_model": DIARISATION_MODEL,
+                },
+            )
+            print(f"Cached transcript: {cpath.name}", file=sys.stderr)
 
     if not segments:
         print("Error: transcription produced no segments", file=sys.stderr)
         return 1
-
-    print(f"Diarising: {asset_path.name}", file=sys.stderr)
-    speaker_segments = diarise(asset_path)
 
     print("Aligning transcription to speakers", file=sys.stderr)
     turns = align(segments, speaker_segments, keep_words=word_timestamps)
@@ -467,6 +497,12 @@ def main():
         help="Retain per-word timestamps and write the parallel .v2 record "
         "(schema anomalica/record/2); never overwrites the v1 record",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Force fresh transcription/diarisation instead of reusing the "
+        "cached {hash}.transcript.json (and do not write the cache)",
+    )
     args = parser.parse_args()
 
     output_dir = Path("/mnt/output")
@@ -475,7 +511,15 @@ def main():
             Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
         )
 
-    sys.exit(run(args.staging_dir, output_dir, args.force, word_timestamps=args.words))
+    sys.exit(
+        run(
+            args.staging_dir,
+            output_dir,
+            args.force,
+            word_timestamps=args.words,
+            use_cache=not args.no_cache,
+        )
+    )
 
 
 if __name__ == "__main__":
