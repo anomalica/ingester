@@ -127,13 +127,17 @@ def test_run_skips_existing(mock_transcribe, mock_diarise, tmp_path):
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
 @patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
 def test_run_force_reprocesses(mock_transcribe, mock_diarise, tmp_path):
+    """--force re-renders the record but reuses the cached transcription
+    (cheap); only --no-cache forces fresh re-transcription."""
     import ingest_audio
 
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
-    ingest_audio.run(staging, output, force=False)
-    ingest_audio.run(staging, output, force=True)
+    ingest_audio.run(staging, output, force=False)  # transcribe #1, caches
+    ingest_audio.run(staging, output, force=True)  # re-render from cache
+    assert mock_transcribe.call_count == 1
 
+    ingest_audio.run(staging, output, force=True, use_cache=False)  # fresh GPU
     assert mock_transcribe.call_count == 2
 
 
@@ -261,6 +265,39 @@ def test_build_content_emits_word_markers():
     assert "{{t:1.20}}Hi {{t:1.50}}there." in body
     # default path stays plain prose
     assert "{{t:" not in ingest_audio._build_content([turn])
+
+
+@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
+@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+def test_transcript_cache_written_then_reused(mock_transcribe, mock_diarise, tmp_path):
+    """First run transcribes and caches; a forced re-run reuses the cache and
+    does NOT call the GPU transcription/diarisation again."""
+    import ingest_audio
+
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+
+    ingest_audio.run(staging, output, force=False)  # fresh: transcribes + caches
+    caches = list((output / "store").glob("*.transcript.json"))
+    assert len(caches) == 1
+    assert mock_transcribe.call_count == 1
+    assert mock_diarise.call_count == 1
+
+    # force past the record-exists skip; cache should serve, GPU untouched
+    ingest_audio.run(staging, output, force=True)
+    assert mock_transcribe.call_count == 1  # not called again
+    assert mock_diarise.call_count == 1
+
+
+@patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
+@patch("ingest_audio.transcribe", return_value=MOCK_SEGMENTS)
+def test_no_cache_skips_caching(mock_transcribe, mock_diarise, tmp_path):
+    import ingest_audio
+
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    ingest_audio.run(staging, output, force=False, use_cache=False)
+    assert list((output / "store").glob("*.transcript.json")) == []
 
 
 @patch("ingest_audio.diarise", return_value=MOCK_SPEAKER_SEGMENTS)
