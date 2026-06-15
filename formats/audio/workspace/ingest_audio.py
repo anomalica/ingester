@@ -15,7 +15,7 @@ from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
 from probe import probe
 from record import body_prelude, get_version, write_record
-from transcript_cache import cache_path, load_transcript_cache, save_transcript_cache
+from transcript_cache import archive_path, load_raw_archive, save_raw_archive
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -298,6 +298,13 @@ def run(
     records_dir = output_dir / "records"
     variant = ".v2" if word_timestamps else ""
 
+    # The raw transcript archive lives beside the source audio (durable, off
+    # git), not in the ingests store. /mnt/sources when containerised; falls
+    # back to the sibling sources/ dir for non-container runs and tests.
+    sources_dir = Path("/mnt/sources")
+    if not sources_dir.exists():
+        sources_dir = output_dir.parent / "sources"
+
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
         print(f"Error: no manifest.json in {staging_dir}", file=sys.stderr)
@@ -352,32 +359,33 @@ def run(
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
-    cpath = cache_path(store_dir, hex_hash)
-    if use_cache and cpath.exists():
+    apath = archive_path(sources_dir, hex_hash)
+    if use_cache and apath.exists():
         print(
-            f"Using cached transcript ({cpath.name}); skipping transcription/diarisation",
+            f"Using raw archive ({apath.name}); skipping transcription/diarisation",
             file=sys.stderr,
         )
-        segments, speaker_segments = load_transcript_cache(cpath)
+        segments, speaker_segments = load_raw_archive(apath)
     else:
         print(f"Transcribing: {asset_path.name}", file=sys.stderr)
-        segments = transcribe(asset_path)
+        segments, whisperx_raw = transcribe(asset_path)
         if not segments:
             print("Error: transcription produced no segments", file=sys.stderr)
             return 1
         print(f"Diarising: {asset_path.name}", file=sys.stderr)
-        speaker_segments = diarise(asset_path)
+        speaker_segments, pyannote_raw = diarise(asset_path)
         if use_cache:
-            save_transcript_cache(
-                cpath,
-                segments,
-                speaker_segments,
+            save_raw_archive(
+                apath,
+                whisperx_raw,
+                pyannote_raw,
                 meta={
                     "whisper_model": WHISPER_MODEL,
                     "diarisation_model": DIARISATION_MODEL,
+                    "hex_hash": hex_hash,
                 },
             )
-            print(f"Cached transcript: {cpath.name}", file=sys.stderr)
+            print(f"Archived raw transcript: {apath}", file=sys.stderr)
 
     if not segments:
         print("Error: transcription produced no segments", file=sys.stderr)

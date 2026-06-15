@@ -10,7 +10,7 @@ from models import SpeakerSegment
 DIARISATION_MODEL = "pyannote/speaker-diarization-community-1"
 
 
-def diarise(audio_path: Path) -> list[SpeakerSegment]:
+def diarise(audio_path: Path) -> tuple[list[SpeakerSegment], dict]:
     """Identify speaker segments using pyannote.audio.
 
     Requires HF_TOKEN environment variable for downloading the gated model.
@@ -20,7 +20,9 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
         audio_path: Path to the audio or video file.
 
     Returns:
-        List of SpeakerSegments with speaker labels and timestamps.
+        (speaker_segments, raw) - the processed SpeakerSegments, and the
+        complete diarisation output kept verbatim for durable archival
+        (every track: start, end, speaker, track label).
 
     Raises:
         RuntimeError: If HF_TOKEN is not set.
@@ -51,7 +53,17 @@ def diarise(audio_path: Path) -> list[SpeakerSegment]:
     annotation = getattr(result, "speaker_diarization", result)
 
     segments = []
-    for turn, _, speaker in annotation.itertracks(yield_label=True):
+    tracks = []
+    for turn, track, speaker in annotation.itertracks(yield_label=True):
         segments.append(SpeakerSegment(speaker=speaker, start=turn.start, end=turn.end))
+        tracks.append(
+            {
+                "start": turn.start,
+                "end": turn.end,
+                "speaker": speaker,
+                "track": str(track),
+            }
+        )
 
-    return segments
+    raw = {"model": DIARISATION_MODEL, "tracks": tracks}
+    return segments, raw

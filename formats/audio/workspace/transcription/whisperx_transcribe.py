@@ -11,7 +11,9 @@ WHISPER_MODEL = "large-v3-turbo"
 BATCH_SIZE = int(os.environ.get("WHISPER_BATCH", "8"))
 
 
-def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
+def transcribe(
+    audio_path: Path, language: str | None = None
+) -> tuple[list[Segment], dict]:
     """Transcribe audio using WhisperX with word-level alignment.
 
     Loads the Whisper model, transcribes, then runs wav2vec2 alignment
@@ -23,7 +25,12 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
             language: ISO 639-1 language code. If None, WhisperX auto-detects.
 
     Returns:
-            List of Segments, each containing word-level timestamps.
+            (segments, raw) - the processed Segments (text + per-word
+            start/end), and the COMPLETE raw whisperx output kept verbatim for
+            durable archival: detected language, the pre-align transcribe
+            result (segment-level confidences: avg_logprob, no_speech_prob,
+            compression_ratio) and the post-align result (per-word timings +
+            alignment scores). Nothing is discarded.
     """
     import torch
     import whisperx
@@ -42,9 +49,9 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
     model = whisperx.load_model(
         WHISPER_MODEL, device, compute_type=compute_type, language=language
     )
-    result = model.transcribe(str(audio_path), batch_size=BATCH_SIZE)
+    transcribe_result = model.transcribe(str(audio_path), batch_size=BATCH_SIZE)
 
-    detected_language = result.get("language", language or "en")
+    detected_language = transcribe_result.get("language", language or "en")
 
     del model
     torch.cuda.empty_cache()
@@ -52,8 +59,8 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
     model_a, metadata = whisperx.load_align_model(
         language_code=detected_language, device=device
     )
-    result = whisperx.align(
-        result["segments"],
+    aligned_result = whisperx.align(
+        transcribe_result["segments"],
         model_a,
         metadata,
         str(audio_path),
@@ -62,7 +69,7 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
     )
 
     segments = []
-    for seg in result["segments"]:
+    for seg in aligned_result["segments"]:
         words = [
             Word(text=w["word"].strip(), start=w["start"], end=w["end"])
             for w in seg.get("words", [])
@@ -77,4 +84,9 @@ def transcribe(audio_path: Path, language: str | None = None) -> list[Segment]:
             )
         )
 
-    return segments
+    raw = {
+        "language": detected_language,
+        "transcribe": transcribe_result,
+        "aligned": aligned_result,
+    }
+    return segments, raw
