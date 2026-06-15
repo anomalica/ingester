@@ -422,12 +422,6 @@ def run(
     publisher = manifest.get("publisher")
     description = manifest.get("description")
     known_speakers = _extract_known_speakers(title, description, publisher)
-    # Word/v2 records carry a "PWTS " (per-word-timestamp) title prefix so they
-    # are visibly distinct from the original v1 record in the workbench. The
-    # prefix is purely cosmetic and strippable; speaker extraction above uses
-    # the unprefixed title.
-    if word_timestamps:
-        title = f"PWTS {title}"
     date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
     if not date_published:
         date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")

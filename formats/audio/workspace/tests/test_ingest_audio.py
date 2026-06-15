@@ -355,7 +355,8 @@ def test_run_word_mode_writes_v2_with_markers(mock_transcribe, mock_diarise, tmp
     content = all_md[0].read_text()
     assert "schema: anomalica/record/2" in content
     assert "word_timestamps: true" in content
-    assert '"PWTS ' in content  # title carries the PWTS prefix
+    # title stays the proper title (no capability prefix) - v2 is signalled by
+    # schema/word_timestamps, and v1 is moved to v1/ so they don't co-list
     assert "{{t:0.00}}Hello" in content
 
 
