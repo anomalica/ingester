@@ -4,7 +4,7 @@ EXAMPLE = """---
 schema: anomalica/record/1
 title: "Example Document"
 date_published: 2023-07-26
-authors:
+creators:
   - Author Name
 source_type: pdf
 pages: 3
@@ -57,7 +57,7 @@ def build_extraction_prompt(
 The format is markdown with YAML frontmatter and HTML comment annotations.
 
 Rules:
-- Start with YAML frontmatter: schema, title, date_published, authors, source_type, pages
+- Start with YAML frontmatter: schema, title, date_published, creators, source_type, pages
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
 - Mark page boundaries with single-line HTML comments: <!-- file_page: 1 -->
