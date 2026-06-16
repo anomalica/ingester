@@ -90,3 +90,38 @@ def test_extract_article_returns_none_when_bare_extraction_returns_none(mock_ext
 
     result = extract_article("<html></html>", "https://example.com")
     assert result is None
+
+
+@patch("extraction.trafilatura_ext.bare_extraction")
+def test_extract_article_strips_leading_title_heading(mock_extract):
+    # trafilatura leads the body with the page title as a heading; since the
+    # title lives in frontmatter only, that duplicate heading is dropped.
+    doc = Mock()
+    doc.text = "# Rep. Burlison Welcomes David Grusch\n\nWashington, D.C. - the body."
+    doc.title = "Rep. Burlison Welcomes David Grusch"
+    doc.author = None
+    doc.date = None
+    doc.sitename = None
+    doc.description = None
+    mock_extract.return_value = doc
+
+    result = extract_article("<html></html>", "https://example.com")
+    assert not result.text.lstrip().startswith("#")
+    assert "Washington, D.C. - the body." in result.text
+    assert result.title == "Rep. Burlison Welcomes David Grusch"
+
+
+@patch("extraction.trafilatura_ext.bare_extraction")
+def test_extract_article_keeps_non_title_leading_heading(mock_extract):
+    # a genuine first heading that is NOT the title is left untouched.
+    doc = Mock()
+    doc.text = "# Section One\n\nSome content here for the body."
+    doc.title = "A Completely Different Title"
+    doc.author = None
+    doc.date = None
+    doc.sitename = None
+    doc.description = None
+    mock_extract.return_value = doc
+
+    result = extract_article("<html></html>", "https://example.com")
+    assert result.text.lstrip().startswith("# Section One")

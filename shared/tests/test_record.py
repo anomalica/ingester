@@ -20,14 +20,18 @@ def test_clean_title_strips_undefined():
     assert clean_title("undefined") == "undefined"
 
 
-def test_body_prelude_omits_null_date():
-    assert body_prelude("Doc", None) == "# Doc"
-    assert body_prelude("Doc", "null") == "# Doc"
-    assert body_prelude("Doc", "undated") == "# Doc"
-    assert body_prelude("Doc", "2020-08-09") == "# Doc\n\n*Published 2020-08-09*"
+def test_body_prelude_date_stamp_only_no_title():
+    # the title is never emitted in-body (it lives in frontmatter); the prelude
+    # is just an optional publication-date stamp, or empty.
+    assert body_prelude(None) == ""
+    assert body_prelude("null") == ""
+    assert body_prelude("undated") == ""
+    assert body_prelude("2020-08-09") == "*Published 2020-08-09*"
     # ISO timestamp trimmed to date
+    assert body_prelude("2021-05-17T00:00:00Z") == "*Published 2021-05-17*"
+    # date omitted when the body already carries a byline date (no double-stamp)
     assert (
-        body_prelude("Doc", "2021-05-17T00:00:00Z") == "# Doc\n\n*Published 2021-05-17*"
+        body_prelude("2020-08-09", existing_body="Published 2020 by A. Writer.") == ""
     )
 
 
