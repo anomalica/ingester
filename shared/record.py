@@ -187,47 +187,42 @@ def clean_title(title: str) -> str:
     return cleaned or title
 
 
-def body_prelude(
-    title: str, date_published: str | None, existing_body: str | None = None
-) -> str:
-    """Markdown title + publication date prelude inserted at the top of a
-    record body, after the frontmatter and before the extracted content.
+def body_prelude(date_published: str | None, existing_body: str | None = None) -> str:
+    """Optional publication-date stamp for the top of a record body.
 
-    Lets readers of the body alone (no frontmatter parser) know what they
-    are reading and when it was published - the workbench's ingest pane
-    renders the body without the YAML frontmatter, and without this
-    prelude there would be no in-body framing for the document.
+    Returns ``*Published <date>*`` or "" - the title is deliberately NOT
+    included. The title lives in frontmatter ``title:`` only, which the
+    workbench and every consumer read from there (the digester parses the
+    frontmatter title, never the body heading); a former in-body ``# {title}``
+    heading merely duplicated it, and for web records trafilatura's own leading
+    heading made it a visible double.
 
-    When ``existing_body`` is supplied and already contains a byline that
-    names a publication date (e.g. "By Author - Published June 14, 2019"),
-    the prelude omits its own date line to avoid double-stamping.
+    When ``existing_body`` already contains a byline that names a publication
+    date (e.g. "By Author - Published June 14, 2019"), returns "" so the date
+    isn't double-stamped.
     """
-    lines = [f"# {title}"]
     clean_date = _normalise_pub_date(date_published)
     if clean_date and not (existing_body and _body_has_byline_date(existing_body)):
-        lines.append("")
-        lines.append(f"*Published {clean_date}*")
-    return "\n".join(lines)
+        return f"*Published {clean_date}*"
+    return ""
 
 
-def inject_body_prelude(
-    record_text: str, title: str, date_published: str | None
-) -> str:
-    """Insert the body prelude into an already-assembled record string.
+def inject_body_prelude(record_text: str, date_published: str | None) -> str:
+    """Insert the body prelude (publication-date stamp) into an already-assembled
+    record string.
 
-    Used by handlers (e.g. PDF) that produce the complete record text
-    via a provider extraction and don't assemble frontmatter + body
-    explicitly. Idempotent - skips injection if the prelude H1 is
-    already present immediately after the frontmatter.
+    Used by handlers (e.g. PDF) that produce the complete record text via a
+    provider extraction and don't assemble frontmatter + body explicitly.
+    Idempotent, and a no-op when there is no date stamp to add.
     """
     parts = record_text.split("---", 2)
     if len(parts) < 3:
         return record_text
     body = parts[2].lstrip("\n")
-    if body.startswith(f"# {title}"):
-        return record_text
-    prelude = body_prelude(title, date_published, existing_body=body)
-    return f"---{parts[1]}---\n\n{prelude}\n\n{body}"
+    prelude = body_prelude(date_published, existing_body=body)
+    if prelude and not body.startswith(prelude):
+        body = f"{prelude}\n\n{body}"
+    return f"---{parts[1]}---\n\n{body}"
 
 
 class SymlinkCollisionError(Exception):

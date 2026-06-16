@@ -150,8 +150,9 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_hash,
         snapshots,
     )
-    prelude = body_prelude(title, date_published, existing_body=article.text)
-    content = frontmatter + "\n\n" + prelude + "\n\n" + article.text + "\n"
+    prelude = body_prelude(date_published, existing_body=article.text)
+    body_block = f"{prelude}\n\n{article.text}" if prelude else article.text
+    content = frontmatter + "\n\n" + body_block + "\n"
 
     result = validate(content, extra_required=["source_url"])
     if result.fixed:

@@ -470,9 +470,9 @@ def main():
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = clean_title(fm.get("title", "untitled")) if fm else "untitled"
 
-    # Prepend H1 title + publication-date line so the body alone (as
-    # rendered in the workbench) carries its own framing for the reader.
-    content = inject_body_prelude(content, title, None if date == "undated" else date)
+    # Prepend a publication-date stamp so the body alone (as rendered in the
+    # workbench) is dated; the title lives in frontmatter only.
+    content = inject_body_prelude(content, None if date == "undated" else date)
 
     # Write to store and create symlink
     record_path, symlink_path = write_record(
