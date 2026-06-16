@@ -58,6 +58,7 @@ The format is markdown with YAML frontmatter and HTML comment annotations.
 
 Rules:
 - Start with YAML frontmatter: schema, title, date_published, creators, source_type, pages
+- creators: the document's human author(s), one named person per list item. Omit creators entirely when the author is an organisation, agency, military unit, or office rather than a named person (e.g. "89 ATKS", "Department of Defense") - never put a non-person there.
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
 - Mark page boundaries with single-line HTML comments: <!-- file_page: 1 -->
