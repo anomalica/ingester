@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hashing import content_hash_label, hash_string, store_exists
+from hashing import content_hash_label, hash_file, hash_string, store_exists
 from record import body_prelude, get_version, write_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -48,6 +48,7 @@ def _build_frontmatter(
     source_url: str | None,
     date_accessed: str | None,
     hex_hash: str,
+    source_hash: str | None,
     media_summary: dict | None,
 ) -> str:
     escaped_title = book.title.replace('"', '\\"')
@@ -73,6 +74,8 @@ def _build_frontmatter(
         escaped_desc = book.description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
+    if source_hash:
+        lines.append(f"source_hash: {content_hash_label(source_hash)}")
     if date_accessed:
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
@@ -159,8 +162,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         }
 
     date_published = _normalise_date(book.date_published)
+    source_hash = hash_file(asset_path)
     frontmatter = _build_frontmatter(
-        book, date_published, source_url, date_accessed, hex_hash, media_summary
+        book,
+        date_published,
+        source_url,
+        date_accessed,
+        hex_hash,
+        source_hash,
+        media_summary,
     )
     prelude = body_prelude(book.title, date_published, existing_body=body)
     content = frontmatter + "\n\n" + prelude + "\n\n" + body
