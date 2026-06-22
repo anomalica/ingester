@@ -21,23 +21,12 @@ SOPS="$(command -v sops || echo "${HOME}/.nix-profile/bin/sops")"
 	exit 1
 }
 
-# Read a key from the Safe: try the flat top-level first, then an optional
-# fallback extract path (used while a legacy section key is being migrated).
+# Read a flat top-level key from the Safe (empty/missing -> non-zero exit).
 safe_get() {
 	local v
 	v="$("$SOPS" -d --extract "[\"$1\"]" "$SAFE" 2>/dev/null)"
-	if [[ -n "$v" ]]; then
-		printf '%s' "$v"
-		return 0
-	fi
-	if [[ $# -ge 2 ]]; then
-		v="$("$SOPS" -d --extract "$2" "$SAFE" 2>/dev/null)"
-		[[ -n "$v" ]] && {
-			printf '%s' "$v"
-			return 0
-		}
-	fi
-	return 1
+	[[ -n "$v" ]] || return 1
+	printf '%s' "$v"
 }
 
 # Replace (or add) KEY=value in .env without disturbing other lines.
@@ -57,13 +46,12 @@ anthropic="$(safe_get ANTHROPIC_API_KEY)" || {
 upsert ANTHROPIC_API_KEY "$anthropic"
 echo "gen-env: ANTHROPIC_API_KEY <- Safe top-level (isolated org)" >&2
 
-# HF_TOKEN (pyannote diarisation): prefer top-level; fall back to the legacy
-# [ingester] section during the migration to flat top-level.
-if hf="$(safe_get HF_TOKEN '["ingester"]["HF_TOKEN"]')"; then
-	upsert HF_TOKEN "$hf"
-	echo "gen-env: HF_TOKEN <- Safe" >&2
-else
-	echo "gen-env: WARNING - HF_TOKEN absent from the Safe; left .env unchanged" >&2
-fi
+# HF_TOKEN (pyannote diarisation), flat top-level.
+hf="$(safe_get HF_TOKEN)" || {
+	echo "gen-env: top-level HF_TOKEN missing in the Safe" >&2
+	exit 1
+}
+upsert HF_TOKEN "$hf"
+echo "gen-env: HF_TOKEN <- Safe top-level" >&2
 
 echo "gen-env: done - .env secrets refreshed from the Safe." >&2
