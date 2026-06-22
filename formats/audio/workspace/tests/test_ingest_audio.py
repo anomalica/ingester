@@ -1,4 +1,5 @@
 import json
+import re
 from unittest.mock import patch
 
 from models import Segment, SpeakerSegment, Word
@@ -302,8 +303,29 @@ def test_build_content_emits_word_markers():
     )
     body = ingest_audio._build_content([turn], word_timestamps=True)
     assert "{{t:1.20}}Hi {{t:1.50}}there." in body
-    # default path stays plain prose
-    assert "{{t:" not in ingest_audio._build_content([turn])
+    # word-level lines drop the redundant HH:MM:SS.D line-start prefix - the
+    # first {{t:}} marker is the line start.
+    assert not re.search(r"(?m)^\d{2}:\d{2}:\d{2}\.\d \{\{t:", body)
+    # default (record/1) path stays plain prose with a sentence line-start prefix
+    default_body = ingest_audio._build_content([turn])
+    assert "{{t:" not in default_body
+    assert re.search(r"(?m)^\d{2}:\d{2}:\d{2}\.\d Hi there\.$", default_body)
+
+
+def test_build_content_wordless_segment_keeps_prefix():
+    import ingest_audio
+    from models import TimedSentence, Turn
+
+    # A segment the aligner left without word-level timing (words=None) keeps
+    # its HH:MM:SS.D line-start stamp even in word_timestamps mode - it is the
+    # line's only timing, so stripping it would lose it.
+    turn = Turn(
+        speaker="Speaker 1",
+        sentences=[TimedSentence(time=5735.6, text="Thank you.", words=None)],
+    )
+    body = ingest_audio._build_content([turn], word_timestamps=True)
+    assert "01:35:35.6 Thank you." in body
+    assert "{{t:" not in body
 
 
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
