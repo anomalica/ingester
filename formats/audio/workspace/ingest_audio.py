@@ -242,24 +242,31 @@ def _sentence_text_with_word_markers(sentence: TimedSentence) -> str:
 def _build_content(turns: list[Turn], word_timestamps: bool = False) -> str:
     """Build the record body with speaker turn annotations and sentence-level timestamps.
 
-    Each speaker change is marked with an HTML comment. Each sentence
-    starts on its own line prefixed with HH:MM:SS.D timestamp. An empty
-    line indicates a paragraph break. When ``word_timestamps`` is set, each
-    word is additionally prefixed with an inline ``{{t:SECONDS}}`` marker so
-    the workbench can resolve any text selection to a time range; consumers
-    that only want prose strip the markers like any other annotation.
+    Each speaker change is marked with an HTML comment. An empty line
+    indicates a paragraph break. For sentence-level (record/1) output each
+    sentence starts on its own line prefixed with an HH:MM:SS.D timestamp.
+    When ``word_timestamps`` is set, each word is instead prefixed with an
+    inline ``{{t:SECONDS}}`` marker (the first of which is the line start),
+    and the redundant HH:MM:SS.D line-start prefix is dropped - except for a
+    segment the aligner left without word-level timing, which keeps the
+    line-start stamp as its only timing. Consumers that only want prose strip
+    the markers like any other annotation.
     """
     blocks = []
     for turn in turns:
         lines = [f"<!-- speaker: {turn.speaker} -->"]
         for sentence in turn.sentences:
-            ts = format_time_precise(sentence.time)
-            text = (
-                _sentence_text_with_word_markers(sentence)
-                if word_timestamps
-                else sentence.text
-            )
-            lines.append(f"{ts} {text}")
+            if word_timestamps and sentence.words:
+                # Per-word {{t:}} markers carry the timing and the first marker
+                # is the line start, so the redundant HH:MM:SS.D line-start
+                # prefix is omitted for word-level records.
+                lines.append(_sentence_text_with_word_markers(sentence))
+            else:
+                # record/1 sentences - and record/2 segments the aligner left
+                # without word-level timing - keep the HH:MM:SS.D line-start
+                # stamp as their only timing.
+                ts = format_time_precise(sentence.time)
+                lines.append(f"{ts} {sentence.text}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + "\n"
 
