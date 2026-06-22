@@ -1,3 +1,10 @@
+# Refresh .env API secrets (ANTHROPIC_API_KEY, HF_TOKEN) from the Safe so they
+# can't silently drift to a wrong account. Run on setup / after Safe changes.
+env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./scripts/gen-env.sh
+
 test-acquire:
     #!/usr/bin/env bash
     set -euo pipefail
