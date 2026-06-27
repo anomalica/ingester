@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from hashing import content_hash_label, hash_file, hash_string, store_exists
+from pipeline_version import current_version
 from record import body_prelude, get_version, write_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -88,6 +89,7 @@ def _build_frontmatter(
     lines.append("processing:")
     lines.append("  handler: ebook")
     lines.append(f"  version: {get_version()}")
+    lines.append(f"  pipeline_version: {current_version('ebook')}")
     lines.append("  tools:")
     lines.append("    - name: ebooklib")
     lines.append(f'      version: "{_ebooklib_version()}"')

@@ -300,4 +300,15 @@ def write_record(
     rel_target = os.path.relpath(record_path, records_dir)
     link_path.symlink_to(rel_target)
 
+    # Refresh the store's pipeline-version manifest on every write so consumers
+    # always see the current generation per media type (idempotent). Imported
+    # locally to tolerate both shared-module import conventions in this repo:
+    # flat `pipeline_version` (audio/web/ebook, shared/ on PYTHONPATH) and
+    # `shared.pipeline_version` (the pdf handler, via a shared/ symlink).
+    try:
+        from pipeline_version import write_manifest
+    except ModuleNotFoundError:
+        from shared.pipeline_version import write_manifest
+    write_manifest(store_dir)
+
     return record_path, link_path

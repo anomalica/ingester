@@ -13,6 +13,7 @@ from alignment.align import align
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
+from pipeline_version import current_version
 from probe import probe
 from record import body_prelude, get_version, write_record
 from transcript_cache import archive_path, load_raw_archive, save_raw_archive
@@ -199,6 +200,7 @@ def _build_frontmatter(
     lines.append("processing:")
     lines.append("  handler: audio")
     lines.append(f"  version: {get_version()}")
+    lines.append(f"  pipeline_version: {current_version(source_type)}")
     lines.append("  tools:")
     lines.append("    - name: whisperx")
     lines.append(f'      version: "{tool_versions["whisperx"]}"')

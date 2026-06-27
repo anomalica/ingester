@@ -13,6 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.hashing import content_hash_label, hash_file, store_exists
+from shared.pipeline_version import current_version
 from shared.record import (
     clean_title,
     get_version,
@@ -126,6 +127,7 @@ def _patch_frontmatter(
         processing = "\nprocessing:"
         processing += "\n  handler: pdf"
         processing += f"\n  version: {get_version()}"
+        processing += f"\n  pipeline_version: {current_version('pdf')}"
         processing += "\n  tools:"
         processing += "\n    - name: claude"
         processing += f'\n      version: "{model or "unknown"}"'
