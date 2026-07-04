@@ -22,7 +22,8 @@ import yaml
 CURRENT_VERSIONS: dict[str, int] = {
     "pdf": 1,
     "web": 1,
-    "ebook": 1,
+    # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
+    "ebook": 2,
     "audio": 1,
     "video": 1,
 }

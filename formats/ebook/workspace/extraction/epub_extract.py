@@ -27,6 +27,15 @@ REDACTION_TOKEN_RE = re.compile(
     rf"{REDACTION_TOKEN_PREFIX}(\d+){REDACTION_TOKEN_SUFFIX}"
 )
 
+# Print-edition page markers from EPUB3 pagebreaks. The page label (title
+# attribute) is alphanumeric in practice - Arabic digits or roman numerals for
+# front matter - so it survives markdownify verbatim between the token affixes.
+PAGE_TOKEN_PREFIX = "ANOMALICAPAGE"
+PAGE_TOKEN_SUFFIX = "PGEND"
+PAGE_TOKEN_RE = re.compile(rf"{PAGE_TOKEN_PREFIX}([0-9A-Za-z]+){PAGE_TOKEN_SUFFIX}")
+# A page label worth emitting: Arabic digits or a roman numeral (front matter).
+PAGE_LABEL_RE = re.compile(r"^[0-9A-Za-z]+$")
+
 # Asterisk-based redaction patterns used in declassified-but-redacted material.
 # Match either:
 #   - five or more consecutive asterisks (a single redacted run), optionally
@@ -212,6 +221,51 @@ def _expand_redaction_tokens(md: str) -> str:
     )
 
 
+def _is_pagebreak(tag) -> bool:
+    """True for an EPUB3 pagebreak marker - `epub:type="pagebreak"` or
+    `role="doc-pagebreak"` - however BeautifulSoup exposes the (possibly
+    namespaced) attribute name."""
+    for key, value in tag.attrs.items():
+        local = key.rsplit(":", 1)[-1].rsplit("}", 1)[-1]
+        text = str(value)
+        if local == "type" and "pagebreak" in text:
+            return True
+        if local == "role" and "doc-pagebreak" in text:
+            return True
+    return False
+
+
+def _pagebreak_label(tag) -> str | None:
+    """The print-edition page label for a pagebreak - its `title` (e.g.
+    title="308"), else a number in its id (id="page_308"), else its text."""
+    title = (tag.get("title") or "").strip()
+    if title:
+        return title
+    tag_id = (tag.get("id") or "").strip()
+    match = re.search(r"([0-9]+|[ivxlcdmIVXLCDM]+)$", tag_id)
+    if match:
+        return match.group(1)
+    text = tag.get_text(strip=True)
+    return text or None
+
+
+def _collect_pagebreaks(body) -> None:
+    """Replace each EPUB pagebreak element with a page token carrying its
+    print-edition label, so the marker survives markdownify (which mangles HTML
+    comments) and expands to `<!-- printed_page: N -->` afterward. Pagebreaks
+    with no usable alphanumeric label are dropped."""
+    for tag in body.find_all(_is_pagebreak):
+        label = _pagebreak_label(tag)
+        if label and PAGE_LABEL_RE.match(label):
+            tag.replace_with(f"\n\n{PAGE_TOKEN_PREFIX}{label}{PAGE_TOKEN_SUFFIX}\n\n")
+        else:
+            tag.decompose()
+
+
+def _expand_page_tokens(md: str) -> str:
+    return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
+
+
 def _xhtml_to_markdown(
     xhtml: bytes,
     chapter_file: str,
@@ -224,9 +278,11 @@ def _xhtml_to_markdown(
     body = soup.find("body") or soup
     _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
+    _collect_pagebreaks(body)
     _replace_redactions_in_soup(body)
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = _expand_redaction_tokens(md)
+    md = _expand_page_tokens(md)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
