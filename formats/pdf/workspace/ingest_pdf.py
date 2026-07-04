@@ -59,8 +59,12 @@ def _patch_frontmatter(
     provider: str | None = None,
     chunks: int | None = None,
     existing_copyright: dict | None = None,
+    source_url: str | None = None,
+    source_id: str | None = None,
+    fetched_url: str | None = None,
+    source_file: str | None = None,
 ) -> str:
-    """Inject content_hash, processing block, and fix page count in the YAML frontmatter."""
+    """Inject content_hash, provenance, processing block, and fix page count in the YAML frontmatter."""
     parts = content.split("---", 2)
     if len(parts) < 3:
         return content
@@ -84,6 +88,18 @@ def _patch_frontmatter(
                 frontmatter = frontmatter.replace(
                     f'title: "{raw_title}"', f'title: "{cleaned}"'
                 )
+
+    # Provenance the extraction model cannot know (it never sees the URL). The
+    # acquire manifest carries these; without them ./ingest's URL dedup cannot
+    # recognise an already-ingested PDF and would re-acquire and re-extract.
+    for key, value in (
+        ("source_url", source_url),
+        ("source_id", source_id),
+        ("fetched_url", fetched_url),
+        ("source_file", source_file),
+    ):
+        if value and f"\n{key}:" not in f"\n{frontmatter}":
+            frontmatter = frontmatter.rstrip("\n") + f"\n{key}: {value}\n"
 
     if "content_hash:" not in frontmatter:
         frontmatter = (
@@ -303,6 +319,9 @@ def main():
 
     # If staging dir provided, read the asset path from the manifest
     manifest_copyright = None
+    source_url = None
+    source_id = None
+    fetched_url = None
     if args.staging_dir:
         import json
 
@@ -312,6 +331,13 @@ def main():
             sys.exit(1)
         manifest = json.loads(manifest_path.read_text())
         args.input_file = args.staging_dir / manifest["asset"]
+        source_url = manifest.get("source")
+        source_id = manifest.get("source_id")
+        # Only distinct fetch URLs are worth recording (acquire sets it equal
+        # to source for a plain fetch).
+        manifest_fetched = manifest.get("fetched_url")
+        if manifest_fetched and manifest_fetched != source_url:
+            fetched_url = manifest_fetched
         if manifest.get("copyright_status"):
             manifest_copyright = {"status": manifest["copyright_status"]}
 
@@ -331,6 +357,10 @@ def main():
     if not args.input_file.exists():
         print(f"Error: file not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
+
+    # A PDF ingested from a local file has no URL; record its original filename
+    # as provenance so the record is not left with no acquisition origin.
+    source_file = args.input_file.name if not source_url else None
 
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
@@ -419,6 +449,10 @@ def main():
         provider=provider_name,
         chunks=len(all_meta),
         existing_copyright=existing_copyright,
+        source_url=source_url,
+        source_id=source_id,
+        fetched_url=fetched_url,
+        source_file=source_file,
     )
 
     # Validate, auto-fix, and repair missing pages
@@ -462,6 +496,10 @@ def main():
                 provider=provider_name,
                 chunks=len(all_meta),
                 existing_copyright=existing_copyright,
+                source_url=source_url,
+                source_id=source_id,
+                fetched_url=fetched_url,
+                source_file=source_file,
             )
 
             validation = validate(content)

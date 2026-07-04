@@ -38,6 +38,45 @@ def test_does_not_duplicate_content_hash():
     content = "---\nschema: anomalica/record/1\ncontent_hash: sha256:existing\npages: 3\n---\n\nBody."
     result = _patch_frontmatter(content, "newhash", 3)
     assert "content_hash: sha256:existing" in result
+
+
+def test_injects_source_url_and_id():
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 3\n---\n\nBody."
+    )
+    result = _patch_frontmatter(
+        content,
+        "abc123",
+        3,
+        source_url="https://example.com/doc.pdf",
+        source_id="url:example.com/doc.pdf",
+    )
+    assert "source_url: https://example.com/doc.pdf" in result
+    assert "source_id: url:example.com/doc.pdf" in result
+
+
+def test_injects_source_file_for_local_pdf():
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 3\n---\n\nBody."
+    )
+    result = _patch_frontmatter(content, "abc123", 3, source_file="report.pdf")
+    assert "source_file: report.pdf" in result
+
+
+def test_does_not_duplicate_source_url():
+    content = "---\nschema: anomalica/record/1\nsource_url: https://a.test/x.pdf\npages: 3\n---\n\nBody."
+    result = _patch_frontmatter(content, "abc123", 3, source_url="https://a.test/x.pdf")
+    assert result.count("source_url:") == 1
+
+
+def test_omits_absent_source_fields():
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 3\n---\n\nBody."
+    )
+    result = _patch_frontmatter(content, "abc123", 3)
+    assert "source_url:" not in result
+    assert "source_id:" not in result
+    assert "source_file:" not in result
     assert "newhash" not in result
 
 
