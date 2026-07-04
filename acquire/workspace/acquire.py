@@ -136,30 +136,45 @@ def acquire(url: str, staging_dir: Path) -> int:
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        # If the winning fetcher delivered HTML but no snapshot artefacts
-        # (e.g. wayback returned just the archived page body), run the
-        # patchright fetcher against the actual snapshot URL purely to
-        # produce the PDF render + frozen-page captures. The HTML from
-        # this second pass is discarded - we keep the original wayback
-        # asset as the source of record.
+        # Wayback delivers the archived page body but no snapshot artefacts, and
+        # its copy of a live site is often paywalled or thin. Fetch the LIVE
+        # ORIGINAL with patchright - both to produce the snapshots and to serve
+        # as the source of record when it succeeds, the way a real browser gets
+        # the full article. Wayback stays the fallback for sites that block
+        # headless browsers (the live fetch returns nothing and the archived
+        # asset is kept). Only wayback reaches here for HTML: http returns None
+        # for text/html so patchright wins live pages directly (with snapshots).
         snapshots_from_fetcher = (
             fetcher_metadata.get("snapshots") if fetcher_metadata else None
         )
-        if is_html and not snapshots_from_fetcher and method_name != "patchright":
-            snapshot_target = (
-                fetcher_metadata.get("fetched_url") if fetcher_metadata else None
-            ) or url
-            print(
-                f"  generating snapshots via patchright on {snapshot_target}",
-                file=sys.stderr,
-            )
+        if is_html and not snapshots_from_fetcher and method_name == "wayback":
+            print(f"  fetching live original via patchright: {url}", file=sys.stderr)
             from fetch.patchright_fetch import fetch as _patchright_fetch
 
-            pr_result = _patchright_fetch(snapshot_target)
+            pr_result = _patchright_fetch(url)
             if pr_result and len(pr_result) == 3:
-                _, _, pr_metadata = pr_result
+                pr_content, pr_ctype, pr_metadata = pr_result
                 if pr_metadata and pr_metadata.get("snapshots"):
                     snapshots_from_fetcher = pr_metadata["snapshots"]
+                # Prefer the live capture as the asset when it returned usable
+                # HTML - it carries the full page, not the archived paywalled
+                # copy. Falls back to the archived asset when the live fetch is
+                # blocked or empty.
+                pr_is_html = (pr_ctype or "").startswith("text/html")
+                if pr_content and pr_is_html and len(pr_content) >= MIN_HTML_SIZE:
+                    content = pr_content
+                    detected_type = pr_ctype or detected_type
+                    asset_hash = hashlib.sha256(content).hexdigest()
+                    (staging_dir / asset_name).write_bytes(content)
+                    manifest["asset_hash"] = asset_hash
+                    manifest["detected_type"] = detected_type
+                    manifest["fetch_method"] = f"{method_name}+live"
+                    if fetcher_metadata is not None:
+                        fetcher_metadata["fetched_url"] = url
+                    print(
+                        f"  using live original as asset ({len(content)} bytes)",
+                        file=sys.stderr,
+                    )
 
         # Sibling snapshots (e.g. PDF render of an HTML page) - written to
         # staging alongside the main asset and recorded in the manifest so
