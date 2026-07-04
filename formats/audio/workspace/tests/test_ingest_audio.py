@@ -400,3 +400,29 @@ def test_word_mode_does_not_overwrite_v1(mock_transcribe, mock_diarise, tmp_path
     assert v1[0].read_text() == v1_before  # v1 untouched
     assert (v1[0].parent / f"{v1[0].stem}.v2.md").exists()
     assert "schema: anomalica/record/1" in v1_before
+
+
+def test_resolve_title_prefers_manifest_title():
+    import ingest_audio
+
+    title = ingest_audio._resolve_title(
+        {"title": "Real Title"}, "https://youtu.be/x", "youtube:x", "audio"
+    )
+    assert title == "Real Title"
+
+
+def test_resolve_title_never_uses_asset_name():
+    import ingest_audio
+
+    # yt-dlp metadata lost (no manifest title): fall back to the source URL,
+    # never the asset filename (which is always the literal "asset").
+    title = ingest_audio._resolve_title({}, "https://youtu.be/x", "youtube:x", "audio")
+    assert title == "https://youtu.be/x"
+    assert title != "asset"
+
+
+def test_resolve_title_falls_back_to_source_id_then_generic():
+    import ingest_audio
+
+    assert ingest_audio._resolve_title({}, None, "youtube:x", "audio") == "youtube:x"
+    assert ingest_audio._resolve_title({}, None, None, "video") == "Untitled video"
