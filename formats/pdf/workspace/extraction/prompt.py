@@ -56,7 +56,10 @@ def build_extraction_prompt(
 
 The format is markdown with YAML frontmatter and HTML comment annotations.
 
+Transcribe the document faithfully. Reproduce only the content and structure that is actually present in the source - your job is to represent the document as it is, not to organise or improve it. Do not invent, add, group, summarise, or relabel anything.
+
 Rules:
+- FAITHFULNESS (most important): never add structure the source does not contain. No section headings, no category or grouping labels (e.g. "Majority Members:", "Attendees:", "Summary:", "Background:"), no tables, and no bold/italic emphasis unless that exact heading, label, table, or emphasis is printed in the document. Do not reorganise or re-lay-out the content; keep the source's own order and wording. When the source uses a visual layout you cannot reproduce (multi-column lists, side-by-side rosters), transcribe the text in natural reading order WITHOUT adding labels to explain the layout.
 - Start with YAML frontmatter: schema, title, date_published, authors, source_type, pages
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
@@ -64,7 +67,7 @@ Rules:
 - file_page is always the PDF page number (1-indexed from the start of the file)
 - If the page has a printed page number that differs from file_page, add <!-- printed_page: 8 --> on the next line
 - If there is no printed page number, or it matches file_page, omit printed_page
-- Write text as natural markdown (headings, paragraphs, lists, tables, bold, italic)
+- Use markdown only to MIRROR structure the source actually has: a heading printed in the document becomes a markdown heading, a table in the document becomes a markdown table, text emphasised in the document becomes bold/italic. Plain prose stays plain prose. Do not add structure the source lacks (see FAITHFULNESS above)
 - Footnotes/endnotes: use markdown footnote syntax [^N] for references and [^N]: text for definitions
 - No HTML tags. Use only markdown syntax. No <sup>, <sub>, <br>, or any other HTML.
 - Do not write HTML comments except for annotations (page boundaries, images, redactions)
