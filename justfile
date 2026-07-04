@@ -26,6 +26,12 @@ test-pdf:
     cd formats/pdf
     cm run pytest workspace/tests/ -v
 
+test-ebook:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd formats/ebook
+    cm run pytest workspace/tests/ -v
+
 test-shared:
     #!/usr/bin/env bash
     set -euo pipefail
