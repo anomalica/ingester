@@ -7,6 +7,7 @@ from extraction.epub_extract import (
     PAGE_TOKEN_SUFFIX,
     _collect_pagebreaks,
     _expand_page_tokens,
+    _hoist_heading_page_markers,
     _is_pagebreak,
     _pagebreak_label,
 )
@@ -79,3 +80,30 @@ def test_expand_page_tokens_roman_and_index_labels():
         _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}I15{PAGE_TOKEN_SUFFIX}")
         == "<!-- printed_page: I15 -->"
     )
+
+
+def test_hoist_single_marker_from_heading():
+    assert (
+        _hoist_heading_page_markers("## <!-- printed_page: 13 --> Chapter 2")
+        == "<!-- printed_page: 13 -->\n## Chapter 2"
+    )
+
+
+def test_hoist_multiple_markers_from_heading():
+    assert (
+        _hoist_heading_page_markers(
+            "## <!-- printed_page: vi --> <!-- printed_page: vii --> Dedication"
+        )
+        == "<!-- printed_page: vi -->\n<!-- printed_page: vii -->\n## Dedication"
+    )
+
+
+def test_hoist_heading_only_marker_drops_empty_heading():
+    assert (
+        _hoist_heading_page_markers("## <!-- printed_page: 5 -->")
+        == "<!-- printed_page: 5 -->"
+    )
+
+
+def test_hoist_leaves_ordinary_heading_untouched():
+    assert _hoist_heading_page_markers("## Chapter 2\n\ntext") == "## Chapter 2\n\ntext"
