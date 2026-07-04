@@ -17,7 +17,6 @@ from shared.pipeline_version import current_version
 from shared.record import (
     clean_title,
     get_version,
-    inject_body_prelude,
     normalise_classification,
     write_record,
 )
@@ -525,10 +524,6 @@ def main():
     date = str(raw_date) if raw_date else "undated"
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = clean_title(fm.get("title", "untitled")) if fm else "untitled"
-
-    # Prepend H1 title + publication-date line so the body alone (as
-    # rendered in the workbench) carries its own framing for the reader.
-    content = inject_body_prelude(content, title, None if date == "undated" else date)
 
     # Write to store and create symlink
     record_path, symlink_path = write_record(

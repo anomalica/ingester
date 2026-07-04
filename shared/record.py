@@ -54,42 +54,6 @@ def symlink_name(date: str, source_type: str, title: str, variant: str = "") -> 
     return f"{date}-{source_type}-{slug}{variant}.md"
 
 
-# Matches an in-body byline that already states a publication date, so
-# the prelude doesn't double-stamp it. Catches "By X, ... Published
-# June 14, 2019", "Published 2024-01-01", "By Author - Jan 14 2024",
-# etc. Looked for in the first chunk of the article body only.
-_BODY_DATE_RE = re.compile(
-    r"\b(?:published|posted|updated)\b[^\n]{0,80}(?:19|20)\d{2}"
-    r"|\bby\b\s+[A-Za-z][^\n]{2,80}(?:19|20)\d{2}",
-    re.IGNORECASE,
-)
-
-
-def _body_has_byline_date(body: str) -> bool:
-    """True if the start of the body already names a publication date."""
-    return bool(_BODY_DATE_RE.search(body[:800]))
-
-
-# Frontmatter values that mean "no real date" - the prelude must not stamp
-# these literally (a null date_published rendered "Published None").
-_NO_DATE_SENTINELS = {"", "none", "null", "undated", "unknown", "n/a", "na"}
-
-
-def _normalise_pub_date(date_published: str | None) -> str | None:
-    """Return a clean YYYY-MM-DD (or coarser) date for the prelude, or None
-    when the value is missing or a no-date sentinel. Trims an ISO timestamp
-    to its date portion so the prelude shows a date, not a full timestamp."""
-    if not date_published:
-        return None
-    text = str(date_published).strip()
-    if text.lower() in _NO_DATE_SENTINELS:
-        return None
-    iso = re.match(r"(\d{4}-\d{2}-\d{2})", text)
-    if iso:
-        return iso.group(1)
-    return text
-
-
 # A classification marking: a level, optionally followed by // or / and
 # control/dissemination markings (NOFORN, REL TO ..., FOUO, SI, RELIDO...).
 _CLASS_MARKING = (
@@ -186,49 +150,6 @@ def clean_title(title: str) -> str:
     cleaned = _TITLE_PLACEHOLDER_RE.sub("", title)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -–—")
     return cleaned or title
-
-
-def body_prelude(
-    title: str, date_published: str | None, existing_body: str | None = None
-) -> str:
-    """Markdown title + publication date prelude inserted at the top of a
-    record body, after the frontmatter and before the extracted content.
-
-    Lets readers of the body alone (no frontmatter parser) know what they
-    are reading and when it was published - the workbench's ingest pane
-    renders the body without the YAML frontmatter, and without this
-    prelude there would be no in-body framing for the document.
-
-    When ``existing_body`` is supplied and already contains a byline that
-    names a publication date (e.g. "By Author - Published June 14, 2019"),
-    the prelude omits its own date line to avoid double-stamping.
-    """
-    lines = [f"# {title}"]
-    clean_date = _normalise_pub_date(date_published)
-    if clean_date and not (existing_body and _body_has_byline_date(existing_body)):
-        lines.append("")
-        lines.append(f"*Published {clean_date}*")
-    return "\n".join(lines)
-
-
-def inject_body_prelude(
-    record_text: str, title: str, date_published: str | None
-) -> str:
-    """Insert the body prelude into an already-assembled record string.
-
-    Used by handlers (e.g. PDF) that produce the complete record text
-    via a provider extraction and don't assemble frontmatter + body
-    explicitly. Idempotent - skips injection if the prelude H1 is
-    already present immediately after the frontmatter.
-    """
-    parts = record_text.split("---", 2)
-    if len(parts) < 3:
-        return record_text
-    body = parts[2].lstrip("\n")
-    if body.startswith(f"# {title}"):
-        return record_text
-    prelude = body_prelude(title, date_published, existing_body=body)
-    return f"---{parts[1]}---\n\n{prelude}\n\n{body}"
 
 
 class SymlinkCollisionError(Exception):

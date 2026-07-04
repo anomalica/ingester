@@ -11,7 +11,7 @@ from pathlib import Path
 
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
-from record import body_prelude, get_version, write_record
+from record import get_version, write_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
@@ -152,8 +152,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_hash,
         snapshots,
     )
-    prelude = body_prelude(title, date_published, existing_body=article.text)
-    content = frontmatter + "\n\n" + prelude + "\n\n" + article.text + "\n"
+    content = frontmatter + "\n\n" + article.text + "\n"
 
     result = validate(content, extra_required=["source_url"])
     if result.fixed:

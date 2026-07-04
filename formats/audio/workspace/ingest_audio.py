@@ -15,7 +15,7 @@ from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
 from pipeline_version import current_version
 from probe import probe
-from record import body_prelude, get_version, write_record
+from record import get_version, write_record
 from transcript_cache import archive_path, load_raw_archive, save_raw_archive
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
@@ -465,8 +465,7 @@ def run(
         word_timestamps=word_timestamps,
     )
     body = _build_content(turns, word_timestamps=word_timestamps)
-    prelude = body_prelude(title, date_published, existing_body=body)
-    content = frontmatter + "\n\n" + prelude + "\n\n" + body
+    content = frontmatter + "\n\n" + body
 
     expected_schema = "anomalica/record/2" if word_timestamps else "anomalica/record/1"
     result = validate(
