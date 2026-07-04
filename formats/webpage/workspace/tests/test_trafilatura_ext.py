@@ -1,6 +1,6 @@
 from unittest.mock import patch, Mock
 
-from extraction.trafilatura_ext import extract_article, Article
+from extraction.trafilatura_ext import extract_article, strip_chrome, Article
 
 
 SAMPLE_HTML = """
@@ -90,3 +90,44 @@ def test_extract_article_returns_none_when_bare_extraction_returns_none(mock_ext
 
     result = extract_article("<html></html>", "https://example.com")
     assert result is None
+
+
+def test_strip_chrome_removes_furniture_keeps_article():
+    html = (
+        "<html><body><article>"
+        "<p>Real article prose that must survive the strip intact.</p>"
+        '<div class="latest-stories"><h2>Latest Stories</h2>'
+        '<a href="/x">Some other article teaser</a></div>'
+        '<aside class="newsletter-signup">Sign up for our newsletter</aside>'
+        "</article></body></html>"
+    )
+    out = strip_chrome(html)
+    assert "Real article prose" in out
+    assert "Latest Stories" not in out
+    assert "newsletter-signup" not in out
+
+
+def test_strip_chrome_noop_on_clean_html():
+    html = "<html><body><article><p>Clean article, no furniture.</p></article></body></html>"
+    assert strip_chrome(html) == html
+
+
+def test_strip_chrome_returns_string_on_empty_input():
+    assert isinstance(strip_chrome(""), str)
+
+
+def test_extract_article_excludes_furniture_from_body():
+    html = (
+        '<html><head><meta property="og:title" content="Headline"></head>'
+        "<body><article><h1>Headline</h1>"
+        "<p>This is the substantive article body with plenty of words to extract here.</p>"
+        "<p>A second real paragraph continuing the article with additional detail and more.</p>"
+        '<div class="latest-stories"><h2>Latest Stories</h2>'
+        "<p>Unrelated recirculation teaser that must not land in the body.</p></div>"
+        "</article></body></html>"
+    )
+    art = extract_article(html, "https://example.com")
+    assert art is not None
+    assert "substantive article body" in art.text
+    assert "Latest Stories" not in art.text
+    assert "recirculation teaser" not in art.text
