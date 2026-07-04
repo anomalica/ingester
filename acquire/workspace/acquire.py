@@ -12,6 +12,7 @@ from pathlib import Path
 
 from detect import detect
 from fetch import FETCHERS
+from fetch.ytdlp import is_video_platform
 
 
 WAYBACK_PREFIX = "https://web.archive.org/web/"
@@ -82,7 +83,15 @@ def acquire(url: str, staging_dir: Path) -> int:
     else:
         forced_fetched_url = None
 
-    for method_name, fetcher in FETCHERS:
+    # A video-platform URL (youtube etc.) is fetched by yt-dlp ONLY. If yt-dlp
+    # fails, the ingest errors rather than falling through to a fetcher that
+    # would scrape the page shell (an HTML record with no real content). A
+    # missing record is recoverable; a garbage one silently pollutes the corpus.
+    fetchers = FETCHERS
+    if is_video_platform(url):
+        fetchers = [(name, fn) for name, fn in FETCHERS if name == "ytdlp"]
+
+    for method_name, fetcher in fetchers:
         print(f"Trying {method_name}...", file=sys.stderr)
         result = fetcher(url)
         if result is None:
@@ -210,16 +219,22 @@ def acquire(url: str, staging_dir: Path) -> int:
         print(f"  {method_name}: success ({detected_type})", file=sys.stderr)
         return 0
 
+    error = (
+        "yt-dlp could not fetch this video-platform URL (not falling back to a "
+        "page-shell scrape)"
+        if is_video_platform(url)
+        else "All fetch methods exhausted"
+    )
     manifest = {
         "source": url,
         "asset": None,
         "detected_type": None,
         "fetch_method": None,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "error": "All fetch methods exhausted",
+        "error": error,
     }
     (staging_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print("All fetch methods exhausted", file=sys.stderr)
+    print(error, file=sys.stderr)
     return 1
 
 
