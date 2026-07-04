@@ -266,6 +266,28 @@ def _expand_page_tokens(md: str) -> str:
     return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
 
 
+# A pagebreak at the very start of a heading (the common per-chapter case)
+# markdownifies inline: `## <!-- printed_page: 13 --> Chapter 2`.
+_HEADING_PAGE_RE = re.compile(
+    r"^(#{1,6})[ \t]+((?:<!-- printed_page: \S+ -->[ \t]*)+)(.*)$", re.MULTILINE
+)
+
+
+def _hoist_heading_page_markers(md: str) -> str:
+    """Lift page markers that landed inside a heading onto their own lines
+    before it, keeping the own-line convention (`<!-- printed_page: 13 -->` then
+    `## Chapter 2`). A heading that was only a pagebreak yields just the marker."""
+
+    def repl(match: re.Match) -> str:
+        markers = re.findall(r"<!-- printed_page: \S+ -->", match.group(2))
+        title = match.group(3).strip()
+        if title:
+            markers.append(f"{match.group(1)} {title}")
+        return "\n".join(markers)
+
+    return _HEADING_PAGE_RE.sub(repl, md)
+
+
 def _xhtml_to_markdown(
     xhtml: bytes,
     chapter_file: str,
@@ -283,6 +305,7 @@ def _xhtml_to_markdown(
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = _expand_redaction_tokens(md)
     md = _expand_page_tokens(md)
+    md = _hoist_heading_page_markers(md)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
