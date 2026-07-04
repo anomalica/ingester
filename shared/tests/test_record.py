@@ -1,8 +1,8 @@
 import pytest
 
+import record
 from record import (
     SymlinkCollisionError,
-    body_prelude,
     clean_title,
     get_version,
     normalise_classification,
@@ -20,15 +20,14 @@ def test_clean_title_strips_undefined():
     assert clean_title("undefined") == "undefined"
 
 
-def test_body_prelude_omits_null_date():
-    assert body_prelude("Doc", None) == "# Doc"
-    assert body_prelude("Doc", "null") == "# Doc"
-    assert body_prelude("Doc", "undated") == "# Doc"
-    assert body_prelude("Doc", "2020-08-09") == "# Doc\n\n*Published 2020-08-09*"
-    # ISO timestamp trimmed to date
-    assert (
-        body_prelude("Doc", "2021-05-17T00:00:00Z") == "# Doc\n\n*Published 2021-05-17*"
-    )
+def test_no_title_published_prelude_injection():
+    """Regression guard. The ingester must NOT inject a `# {title}` + `*Published
+    {date}*` prelude into the record body - it duplicates the title (frontmatter
+    already carries it) and re-appears on every re-ingest. The prelude helpers
+    were removed; re-adding them reintroduces the double-title bug (they were
+    stripped from the data by 8780ddd but the code was left injecting it)."""
+    assert not hasattr(record, "body_prelude")
+    assert not hasattr(record, "inject_body_prelude")
 
 
 def test_normalise_classification_lifts_banner_and_strips():
