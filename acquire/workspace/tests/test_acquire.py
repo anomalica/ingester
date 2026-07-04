@@ -65,7 +65,10 @@ def test_acquire_falls_back_to_wayback(tmp_path):
     wayback_bytes = (
         b"<html><body>Archived article with plenty of content</body></html>" * 20
     )
-    with _patch_fetchers(http_result=None, wayback_result=(wayback_bytes, "text/html")):
+    with (
+        _patch_fetchers(http_result=None, wayback_result=(wayback_bytes, "text/html")),
+        patch("fetch.patchright_fetch.fetch", lambda url: None),
+    ):
         exit_code = acquire("https://example.com/article", tmp_path)
     assert exit_code == 0
     manifest = json.loads((tmp_path / "manifest.json").read_text())
@@ -75,9 +78,12 @@ def test_acquire_falls_back_to_wayback(tmp_path):
 def test_acquire_skips_small_html_response(tmp_path):
     tiny_html = b"<html>403</html>"
     big_html = b"<html><body>Real archived article content</body></html>" * 50
-    with _patch_fetchers(
-        http_result=(tiny_html, "text/html"),
-        wayback_result=(big_html, "text/html"),
+    with (
+        _patch_fetchers(
+            http_result=(tiny_html, "text/html"),
+            wayback_result=(big_html, "text/html"),
+        ),
+        patch("fetch.patchright_fetch.fetch", lambda url: None),
     ):
         exit_code = acquire("https://example.com/article", tmp_path)
     assert exit_code == 0
@@ -150,3 +156,57 @@ def test_acquire_non_video_url_still_falls_back(tmp_path):
     with patch("acquire.FETCHERS", fetchers):
         exit_code = acquire("https://example.com/article", tmp_path)
     assert exit_code == 0
+
+
+def test_acquire_prefers_live_original_over_archived_html(tmp_path):
+    """When a page arrives via wayback, acquire fetches the live original and
+    uses that capture (body + snapshots) as the source of record - an archived
+    copy of a live site is often paywalled/thin."""
+    archived = b"<html><body>Archived paywalled teaser</body></html>" * 30
+    live = b"<html><body>The full live article, much longer</body></html>" * 200
+    live_meta = {
+        "snapshots": [
+            {
+                "extension": "html",
+                "bytes": b"<html>frozen full page</html>" * 100,
+                "content_type": "text/html",
+                "role": "single_file",
+            }
+        ]
+    }
+    fetchers = [
+        ("ytdlp", lambda url: None),
+        ("wayback", lambda url: (archived, "text/html")),
+    ]
+    with (
+        patch("acquire.FETCHERS", fetchers),
+        patch(
+            "fetch.patchright_fetch.fetch", lambda url: (live, "text/html", live_meta)
+        ),
+    ):
+        exit_code = acquire("https://example.com/article", tmp_path)
+    assert exit_code == 0
+    assert (tmp_path / "asset.html").read_bytes() == live
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["fetch_method"] == "wayback+live"
+    assert manifest["snapshots"][0]["role"] == "single_file"
+
+
+def test_acquire_keeps_archived_when_live_fetch_blocked(tmp_path):
+    """If the live fetch is blocked (returns nothing), the archived copy is kept
+    as the fallback - the behaviour that lets headless-blocked sites still
+    ingest via wayback."""
+    archived = b"<html><body>Archived article content</body></html>" * 40
+    fetchers = [
+        ("ytdlp", lambda url: None),
+        ("wayback", lambda url: (archived, "text/html")),
+    ]
+    with (
+        patch("acquire.FETCHERS", fetchers),
+        patch("fetch.patchright_fetch.fetch", lambda url: None),
+    ):
+        exit_code = acquire("https://example.com/article", tmp_path)
+    assert exit_code == 0
+    assert (tmp_path / "asset.html").read_bytes() == archived
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["fetch_method"] == "wayback"
