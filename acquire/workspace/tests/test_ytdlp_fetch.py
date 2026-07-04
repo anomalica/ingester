@@ -1,6 +1,7 @@
-from unittest.mock import patch, MagicMock
+import json
+from unittest.mock import MagicMock, patch
 
-from fetch.ytdlp import fetch, _is_supported, _download
+from fetch.ytdlp import _download, _is_supported, fetch, is_video_platform
 
 
 def test_is_supported_youtube_watch():
@@ -35,17 +36,31 @@ def test_is_supported_rejects_generic_url():
     assert not _is_supported("https://thedebrief.org/some-article")
 
 
+def test_is_video_platform_youtube():
+    assert is_video_platform("https://www.youtube.com/watch?v=abc123")
+    assert is_video_platform("https://youtu.be/abc123")
+
+
+def test_is_video_platform_excludes_archive_org():
+    # archive.org is yt-dlp-supported but not a strict video platform, so an
+    # HTML fallback stays allowed for it.
+    assert not is_video_platform("https://archive.org/details/some-item")
+
+
+def test_is_video_platform_rejects_generic_url():
+    assert not is_video_platform("https://www.nytimes.com/article")
+
+
 def test_fetch_returns_none_for_unsupported_url():
     result = fetch("https://www.nytimes.com/article")
     assert result is None
 
 
-@patch("fetch.ytdlp._extract_metadata", return_value=None)
 @patch("fetch.ytdlp._download")
-def test_fetch_returns_audio_bytes_mp3(mock_download, mock_metadata, tmp_path):
+def test_fetch_returns_audio_bytes_mp3(mock_download, tmp_path):
     audio_file = tmp_path / "audio.mp3"
     audio_file.write_bytes(b"fake mp3 content")
-    mock_download.return_value = audio_file
+    mock_download.return_value = (audio_file, None)
 
     result = fetch("https://www.youtube.com/watch?v=abc123")
     assert result is not None
@@ -55,15 +70,14 @@ def test_fetch_returns_audio_bytes_mp3(mock_download, mock_metadata, tmp_path):
     assert metadata is None
 
 
-@patch(
-    "fetch.ytdlp._extract_metadata",
-    return_value={"title": "Test Video", "upload_date": "20210516"},
-)
 @patch("fetch.ytdlp._download")
-def test_fetch_returns_audio_bytes_opus(mock_download, mock_metadata, tmp_path):
+def test_fetch_returns_audio_bytes_and_metadata_opus(mock_download, tmp_path):
     audio_file = tmp_path / "audio.opus"
     audio_file.write_bytes(b"fake opus content")
-    mock_download.return_value = audio_file
+    mock_download.return_value = (
+        audio_file,
+        {"title": "Test Video", "source_id": "youtube:abc123"},
+    )
 
     result = fetch("https://youtu.be/abc123")
     assert result is not None
@@ -71,17 +85,18 @@ def test_fetch_returns_audio_bytes_opus(mock_download, mock_metadata, tmp_path):
     assert content == b"fake opus content"
     assert content_type == "audio/opus"
     assert metadata["title"] == "Test Video"
+    assert metadata["source_id"] == "youtube:abc123"
 
 
 @patch("fetch.ytdlp._download")
 def test_fetch_returns_none_when_download_fails(mock_download):
-    mock_download.return_value = None
+    mock_download.return_value = (None, None)
     result = fetch("https://www.youtube.com/watch?v=abc123")
     assert result is None
 
 
 @patch("fetch.ytdlp.subprocess.run")
-def test_download_calls_ytdlp_with_correct_args(mock_run, tmp_path):
+def test_download_calls_ytdlp_with_info_json(mock_run, tmp_path):
     mock_run.return_value = MagicMock(returncode=1)
     _download("https://www.youtube.com/watch?v=abc123", tmp_path)
 
@@ -89,24 +104,46 @@ def test_download_calls_ytdlp_with_correct_args(mock_run, tmp_path):
     assert cmd[0] == "yt-dlp"
     assert "--extract-audio" in cmd
     assert "--no-playlist" in cmd
+    # The metadata is captured in the SAME call as the download so they cannot
+    # diverge.
+    assert "--write-info-json" in cmd
     assert "https://www.youtube.com/watch?v=abc123" in cmd
 
 
 @patch("fetch.ytdlp.subprocess.run")
 def test_download_returns_none_on_nonzero_exit(mock_run, tmp_path):
     mock_run.return_value = MagicMock(returncode=1)
-    result = _download("https://www.youtube.com/watch?v=abc123", tmp_path)
-    assert result is None
+    audio, metadata = _download("https://www.youtube.com/watch?v=abc123", tmp_path)
+    assert audio is None
+    assert metadata is None
 
 
 @patch("fetch.ytdlp.subprocess.run")
-def test_download_returns_file_path(mock_run, tmp_path):
+def test_download_returns_file_and_metadata(mock_run, tmp_path):
+    def side_effect(*args, **kwargs):
+        (tmp_path / "audio.opus").write_bytes(b"audio data")
+        (tmp_path / "audio.info.json").write_text(
+            json.dumps({"title": "Ep 58", "extractor": "youtube", "id": "wX3whEVHr3g"})
+        )
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = side_effect
+    audio, metadata = _download("https://www.youtube.com/watch?v=wX3whEVHr3g", tmp_path)
+    assert audio is not None
+    assert audio.name == "audio.opus"
+    assert audio.read_bytes() == b"audio data"
+    assert metadata["title"] == "Ep 58"
+    # source_id derived from extractor:id in the same call as the download.
+    assert metadata["source_id"] == "youtube:wX3whEVHr3g"
+
+
+@patch("fetch.ytdlp.subprocess.run")
+def test_download_metadata_none_when_no_info_json(mock_run, tmp_path):
     def side_effect(*args, **kwargs):
         (tmp_path / "audio.opus").write_bytes(b"audio data")
         return MagicMock(returncode=0)
 
     mock_run.side_effect = side_effect
-    result = _download("https://www.youtube.com/watch?v=abc123", tmp_path)
-    assert result is not None
-    assert result.name == "audio.opus"
-    assert result.read_bytes() == b"audio data"
+    audio, metadata = _download("https://www.youtube.com/watch?v=abc123", tmp_path)
+    assert audio is not None
+    assert metadata is None

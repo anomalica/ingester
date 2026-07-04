@@ -120,3 +120,33 @@ def test_acquire_detects_type_from_bytes_when_no_header(tmp_path):
         acquire("https://example.com/mysterious-url", tmp_path)
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["detected_type"] == "application/pdf"
+
+
+def test_acquire_video_url_does_not_fall_back_to_page_shell(tmp_path):
+    """A youtube URL where yt-dlp fails must NOT fall through to wayback/http
+    scraping the page shell - acquire fails cleanly instead."""
+    html_shell = b"<html><title>- YouTube</title>" + b"x" * 500 + b"</html>"
+    fetchers = [
+        ("ytdlp", lambda url: None),
+        ("wayback", lambda url: (html_shell, "text/html")),
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire("https://www.youtube.com/watch?v=YBLabIhW00c", tmp_path)
+    assert exit_code == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["asset"] is None
+    assert "video-platform" in manifest["error"]
+    assert not list(tmp_path.glob("asset.*"))
+
+
+def test_acquire_non_video_url_still_falls_back(tmp_path):
+    """The guard must not affect ordinary URLs: a generic URL whose primary
+    fetcher fails still falls back to the next fetcher."""
+    html = b"<html>" + b"x" * 2000 + b"</html>"
+    fetchers = [
+        ("ytdlp", lambda url: None),
+        ("wayback", lambda url: (html, "text/html")),
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire("https://example.com/article", tmp_path)
+    assert exit_code == 0
