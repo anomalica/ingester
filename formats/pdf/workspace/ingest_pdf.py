@@ -301,6 +301,35 @@ def _extract_chunk_with_retry(
     raise last_error
 
 
+# Metered pricing, USD per 1M tokens (input, output). Used only to report an
+# estimated cost for API runs; the subscription path spends no dollars and its
+# meta carries no token counts.
+_MODEL_PRICING = {
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
+
+def _report_usage(all_meta: list[dict], model: str) -> None:
+    """Print token usage and an estimated cost for a metered extraction run.
+    No-op when the meta carries no token counts (the subscription path)."""
+    total_in = sum((m or {}).get("input_tokens", 0) for m in all_meta)
+    total_out = sum((m or {}).get("output_tokens", 0) for m in all_meta)
+    cache_read = sum((m or {}).get("cache_read_input_tokens", 0) for m in all_meta)
+    if not total_in and not total_out:
+        return
+    in_price, out_price = _MODEL_PRICING.get(model, (0.0, 0.0))
+    cost = (total_in * in_price + total_out * out_price) / 1_000_000
+    cache_note = f", {cache_read:,} cache-read" if cache_read else ""
+    est = f" = ~${cost:.2f}" if (in_price or out_price) else ""
+    print(
+        f"Usage ({model}): {total_in:,} input + {total_out:,} output tokens"
+        f"{cache_note}{est}",
+        file=sys.stderr,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract content from a PDF into Anomalica record format."
@@ -439,6 +468,7 @@ def main():
 
     content = _clean_annotations(content)
     model_name = getattr(provider, "model", "unknown")
+    _report_usage(all_meta, model_name)
     provider_name = "anthropic-api" if using_api else "claude-code"
     content = _patch_frontmatter(
         content,
