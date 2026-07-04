@@ -150,6 +150,19 @@ def _extract_known_speakers(
     return sorted(names)
 
 
+def _resolve_title(
+    manifest: dict, source_url: str | None, source_id: str | None, source_type: str
+) -> str:
+    """Resolve a record title, never falling back to the asset filename.
+
+    acquire always names the staged asset ``asset.{ext}``, so the old fallback
+    to the asset stem produced the literal "asset" whenever yt-dlp metadata was
+    missing. Prefer the real title; otherwise use an identifying value (source
+    URL, then source id) rather than a meaningless filename.
+    """
+    return manifest.get("title") or source_url or source_id or f"Untitled {source_type}"
+
+
 def _build_frontmatter(
     title: str,
     date_published: str,
@@ -427,7 +440,7 @@ def run(
 
     is_url = source.startswith("http://") or source.startswith("https://")
     source_url = source if is_url else None
-    title = manifest.get("title", Path(asset_name).stem)
+    title = _resolve_title(manifest, source_url, source_id, source_type)
     publisher = manifest.get("publisher")
     description = manifest.get("description")
     known_speakers = _extract_known_speakers(title, description, publisher)
