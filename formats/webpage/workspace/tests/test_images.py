@@ -3,8 +3,28 @@ import re
 from extraction.images import (
     HarvestedImage,
     _ext_for,
+    _likely_chrome_url,
+    harvest_images,
     render_images,
 )
+
+
+def test_social_media_icons_filtered_from_harvest():
+    # social-share plugin icons must not be captured as article images
+    assert _likely_chrome_url(
+        "https://x/plugins/social-media-buttons-toolbar/img/social-media-icons/discord.png"
+    )
+    assert not _likely_chrome_url("https://x/wp-content/uploads/2023/06/photo.jpg")
+    html = (
+        "<html><body><article>"
+        "<p>Article prose with enough words to be a real content region here.</p>"
+        '<img src="https://x/social-media-icons/tiktok.png" alt="tiktok">'
+        '<figure><img src="https://x/uploads/real-photo.jpg" alt="a real photo">'
+        "</figure></article></body></html>"
+    )
+    urls = [img.url for img in harvest_images(html)]
+    assert "https://x/uploads/real-photo.jpg" in urls
+    assert not any("tiktok" in u for u in urls)
 
 
 def _ok_fetch(data=b"imagebytes", content_type="image/png"):
