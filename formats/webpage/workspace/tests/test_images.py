@@ -1,3 +1,5 @@
+import re
+
 from extraction.images import (
     HarvestedImage,
     _ext_for,
@@ -38,6 +40,27 @@ def test_caption_from_trailing_italic_line_and_removed_from_body():
     # the italic caption line must not remain as loose body prose
     assert "*Jane Doe" not in text
     assert "Real prose after." in text
+
+
+def test_plain_caption_duplicating_figcaption_is_consumed():
+    # trafilatura emits a figcaption as a plain prose line too; it must not
+    # remain in the body when it is already the annotation's caption.
+    cap = "Karl E. Nell (Credit: Department of the Army)"
+    md = f"![]({IMG})\n\n{cap}\n\nReal article prose continues here."
+    harvested = [HarvestedImage(url=IMG, alt=None, caption=cap)]
+    text, _ = render_images(md, harvested, fetch=_ok_fetch())
+    body_no_annot = re.sub(r"<!--\nimage:.*?-->", "", text, flags=re.DOTALL)
+    assert "Karl E. Nell" not in body_no_annot  # not loose in prose
+    assert f'  caption: "{cap}"' in text  # in the annotation
+    assert "Real article prose continues here." in text
+
+
+def test_plain_line_not_matching_caption_is_kept_as_prose():
+    # a plain line after the image that is NOT the caption stays as prose.
+    md = f"![]({IMG})\n\nThis is a real paragraph, not the caption.\n"
+    harvested = [HarvestedImage(url=IMG, alt=None, caption="A different caption")]
+    text, _ = render_images(md, harvested, fetch=_ok_fetch())
+    assert "This is a real paragraph, not the caption." in text
 
 
 def test_figcaption_caption_wins_over_trailing_italic():
