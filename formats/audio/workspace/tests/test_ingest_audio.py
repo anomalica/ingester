@@ -113,6 +113,37 @@ def test_run_writes_record(mock_transcribe, mock_diarise, tmp_path):
 
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
 @patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_run_stamps_source_url_from_manifest_for_local_source(
+    mock_transcribe, mock_diarise, tmp_path
+):
+    """Re-processing an archived local source: `source` is a path (no origin),
+    but the manifest supplies the known source_url/source_id, which must be
+    stamped onto the record rather than dropped."""
+    import ingest_audio
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "asset.opus").write_bytes(b"fake audio data")
+    manifest = {
+        "source": "/archive/sources/abc.opus",  # local path, not a URL
+        "asset": "asset.opus",
+        "detected_type": "audio/opus",
+        "fetch_method": "local",
+        "fetched_at": "2026-07-05T00:00:00Z",
+        "source_url": "https://www.youtube.com/watch?v=wX3whEVHr3g",
+        "source_id": "youtube:wX3whEVHr3g",
+    }
+    (staging / "manifest.json").write_text(json.dumps(manifest))
+    output = tmp_path / "output"
+    ingest_audio.run(staging, output, force=False)
+
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert "source_url: https://www.youtube.com/watch?v=wX3whEVHr3g" in content
+    assert "source_id: youtube:wX3whEVHr3g" in content
+
+
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_includes_processing_in_frontmatter(
     mock_transcribe, mock_diarise, tmp_path
 ):
