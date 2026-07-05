@@ -40,6 +40,7 @@ def _build_frontmatter(
     description: str | None,
     source_hash: str | None,
     snapshots: list[dict] | None,
+    media_summary: dict | None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
     escaped_title = title.replace('"', '\\"')
@@ -79,6 +80,10 @@ def _build_frontmatter(
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
     lines.append("  status: publicly_accessible")
+    if media_summary:
+        lines.append("media:")
+        lines.append(f"  count: {media_summary['count']}")
+        lines.append(f"  total_bytes: {media_summary['total_bytes']}")
     lines.append("processing:")
     lines.append("  handler: webpage")
     lines.append(f"  version: {get_version()}")
@@ -138,6 +143,12 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     date_published = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
     title = article.title or "Untitled"
+    media_summary = None
+    if article.media:
+        media_summary = {
+            "count": len(article.media),
+            "total_bytes": sum(len(img.data) for img in article.media),
+        }
     frontmatter = _build_frontmatter(
         title,
         date_published,
@@ -151,6 +162,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         article.description,
         source_hash,
         snapshots,
+        media_summary,
     )
     content = frontmatter + "\n\n" + article.text + "\n"
 
@@ -174,6 +186,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     )
     print(f"Written: {record_path}", file=sys.stderr)
     print(f"Symlink: {link_path}", file=sys.stderr)
+
+    if article.media:
+        media_dir = output_dir / "media" / hex_hash
+        media_dir.mkdir(parents=True, exist_ok=True)
+        for img in article.media:
+            (media_dir / f"{img.img_hash}.{img.ext}").write_bytes(img.data)
+        print(
+            f"Media: {len(article.media)} images -> {media_dir}",
+            file=sys.stderr,
+        )
 
     if needs_sidecar(content):
         sidecar = build_sidecar(content, source_path=asset_path)

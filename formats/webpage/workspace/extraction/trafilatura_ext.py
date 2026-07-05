@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lxml import etree
 from lxml import html as lxml_html
 from trafilatura import bare_extraction
 
-from extraction.images import augment_markdown, harvest_images
+from extraction.images import MediaImage, harvest_images, render_images
 
 
 @dataclass
@@ -19,6 +19,7 @@ class Article:
     date: str | None
     sitename: str | None
     description: str | None
+    media: list[MediaImage] = field(default_factory=list)
 
 
 # Furniture containers that trafilatura otherwise pulls into the article body:
@@ -80,17 +81,18 @@ def extract_article(html: str, url: str | None = None) -> Article | None:
     if doc is None or not doc.text or len(doc.text) < 10:
         return None
 
-    augmented_text = augment_markdown(doc.text, harvest_images(html))
+    text, media = render_images(doc.text, harvest_images(html))
 
     authors = None
     if doc.author:
         authors = [a.strip() for a in doc.author.split(";")]
 
     return Article(
-        text=augmented_text,
+        text=text,
         title=doc.title,
         authors=authors,
         date=doc.date,
         sitename=doc.sitename,
         description=doc.description,
+        media=media,
     )

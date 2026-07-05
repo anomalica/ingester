@@ -12,10 +12,13 @@ the missing detail.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import sys
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
+import requests
 from bs4 import BeautifulSoup
 
 # Element tags that always indicate non-article chrome. We deliberately do
@@ -228,67 +231,184 @@ def _index_by_url(images: Iterable[HarvestedImage]) -> dict[str, HarvestedImage]
     return {img.url: img for img in images}
 
 
-def augment_markdown(markdown: str, images: list[HarvestedImage]) -> str:
-    """Splice alt text + captions into existing image references, dedupe
-    duplicate URLs globally, and append content-region images that
-    trafilatura dropped to the end of the document. Also cleans up empty
-    bold pairs that trafilatura emits between adjacent strong tags.
+# A whole-line italic span, e.g. `*David Charles Grusch (Copyright (c) ...)*`.
+# Trafilatura emits a source's printed caption as a loose italic paragraph on
+# the line after the image; it is the caption, not article prose, and must move
+# into the annotation so the pre-digest can strip it (it often carries a
+# copyright notice that must never be read as a claim).
+_ITALIC_LINE_RE = re.compile(r"^\s*[*_]([^*_].*?)[*_]\s*$")
+
+_CONTENT_TYPE_EXT = {
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+_URL_EXT_RE = re.compile(r"\.(jpe?g|png|gif|webp|svg)(?:[?#]|$)", re.IGNORECASE)
+
+# Fetcher contract: given an image URL, return (bytes, content_type) or None.
+ImageFetch = Callable[[str], "tuple[bytes, str | None] | None"]
+
+
+@dataclass
+class MediaImage:
+    """A downloaded image, keyed by a 12-char hash of its bytes."""
+
+    img_hash: str
+    ext: str
+    data: bytes
+
+
+def _yaml_quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _ext_for(content_type: str | None, url: str) -> str:
+    if content_type:
+        ct = content_type.split(";")[0].strip().lower()
+        if ct in _CONTENT_TYPE_EXT:
+            return _CONTENT_TYPE_EXT[ct]
+    match = _URL_EXT_RE.search(url)
+    if match:
+        ext = match.group(1).lower()
+        return "jpg" if ext == "jpeg" else ext
+    return "jpg"
+
+
+def _default_fetch(url: str) -> tuple[bytes, str | None] | None:
+    resp = requests.get(
+        url, timeout=20, headers={"User-Agent": "Mozilla/5.0 (anomalica-ingester)"}
+    )
+    if resp.status_code != 200 or not resp.content:
+        return None
+    return resp.content, resp.headers.get("Content-Type")
+
+
+def _download(url: str, fetch: ImageFetch) -> MediaImage | None:
+    """Fetch the image bytes; return a MediaImage or None on any failure
+    (a rotted archive.org link must never block the ingest)."""
+    try:
+        result = fetch(url)
+    except Exception as exc:  # network error, bad URL, timeout
+        print(f"  image download failed ({url}): {exc}", file=sys.stderr)
+        return None
+    if not result or not result[0]:
+        print(f"  image download failed ({url}): no content", file=sys.stderr)
+        return None
+    data, content_type = result
+    img_hash = hashlib.sha256(data).hexdigest()[:12]
+    return MediaImage(img_hash=img_hash, ext=_ext_for(content_type, url), data=data)
+
+
+def _format_image_annotation(
+    file: str | None, alt: str | None, caption: str | None
+) -> str:
+    lines = ["<!--", "image:"]
+    if file:
+        lines.append(f"  file: {file}")
+    if alt:
+        lines.append(f"  alt: {_yaml_quote(alt)}")
+    if caption:
+        lines.append(f"  caption: {_yaml_quote(caption)}")
+    lines.append("-->")
+    return "\n".join(lines)
+
+
+def render_images(
+    markdown: str,
+    images: list[HarvestedImage],
+    fetch: ImageFetch | None = None,
+) -> tuple[str, list[MediaImage]]:
+    """Replace trafilatura's ``![alt](url)`` image markdown with structured
+    ``<!-- image: ... -->`` block annotations, downloading the bytes so the
+    record no longer depends on remote (archive.org) URLs that rot.
+
+    Captions come from the source figcaption (already on the HarvestedImage) or,
+    failing that, the italic line immediately following the image - which is
+    where a source's printed caption (often a copyright/attribution notice)
+    lands. Either way the caption moves into the annotation, out of the body
+    prose, so the pre-digest strips it before extraction.
+
+    Returns the transformed markdown and the list of images to write to
+    ``media/{record_hash}/``. On download failure the annotation is emitted
+    without a ``file`` (alt/caption preserved) so a dead link never blocks
+    ingestion.
     """
+    if fetch is None:
+        fetch = _default_fetch
     markdown = _EMPTY_BOLD_RE.sub(r"\1", markdown)
     by_url = _index_by_url(images)
     emitted_urls: set[str] = set()
-    output_lines: list[str] = []
+    downloads: dict[str, MediaImage | None] = {}
+    media: list[MediaImage] = []
 
-    for line in markdown.splitlines():
+    def resolve(url: str) -> MediaImage | None:
+        if url not in downloads:
+            mi = _download(url, fetch)
+            downloads[url] = mi
+            if mi is not None:
+                media.append(mi)
+        return downloads[url]
+
+    lines = markdown.splitlines()
+    output: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         match = _IMG_LINE_RE.search(line)
         if match is None:
-            output_lines.append(line)
+            output.append(line)
+            i += 1
             continue
 
         url = match.group(2).strip()
         existing_alt = match.group(1).strip()
-
-        # Drop any repeat reference to a URL we've already emitted.
-        # Trafilatura sometimes emits the same image twice (a wrapper +
-        # its inner img, or srcset entries); we never want both.
+        # Trafilatura sometimes emits the same image twice (wrapper + inner img,
+        # or srcset entries); never emit both.
         if url in emitted_urls:
+            i += 1
             continue
 
         harvested = by_url.get(url)
-        if harvested is None:
-            output_lines.append(line)
-            emitted_urls.add(url)
-            continue
+        alt = existing_alt or (harvested.alt if harvested else None) or None
+        caption = harvested.caption if harvested else None
 
-        alt = existing_alt or (harvested.alt or "")
-        rebuilt = line.replace(match.group(0), f"![{alt}]({url})")
-        output_lines.append(rebuilt)
-        if harvested.caption:
-            output_lines.append("")
-            output_lines.append(f"*{harvested.caption}*")
+        # Fold the printed caption (loose italic line after the image) into the
+        # annotation. Look past blank lines to the next content line.
+        next_i = i + 1
+        while next_i < len(lines) and not lines[next_i].strip():
+            next_i += 1
+        consume_to = i
+        if next_i < len(lines):
+            cap_match = _ITALIC_LINE_RE.match(lines[next_i])
+            if cap_match:
+                if not caption:
+                    caption = cap_match.group(1).strip()
+                consume_to = next_i
+
+        mi = resolve(url)
+        file = f"{mi.img_hash}.{mi.ext}" if mi else None
+        if file or alt or caption:
+            output.append(_format_image_annotation(file, alt, caption))
+            output.append("")
         emitted_urls.add(url)
+        i = consume_to + 1
 
-    # Anything trafilatura dropped is appended at the end so the reviewer
-    # at least has access; exact position is lost but presence is
-    # preserved. Skip images with no alt and no caption - those are most
-    # likely chrome that snuck through.
-    missing = [
-        img
-        for img in images
-        if img.url not in emitted_urls and (img.caption or img.alt)
-    ]
-    if missing:
-        output_lines.append("")
-        output_lines.append("---")
-        output_lines.append("")
-        output_lines.append("**Additional images from this article:**")
-        output_lines.append("")
-        for img in missing:
-            alt = img.alt or ""
-            output_lines.append(f"![{alt}]({img.url})")
-            if img.caption:
-                output_lines.append("")
-                output_lines.append(f"*{img.caption}*")
-            output_lines.append("")
+    # Content-region images trafilatura dropped entirely: append them so the
+    # reviewer still has them (exact position is lost, presence preserved).
+    # Skip images with no alt and no caption - most likely chrome that slipped
+    # through the content filter.
+    for img in images:
+        if img.url in emitted_urls or not (img.caption or img.alt):
+            continue
+        mi = resolve(img.url)
+        file = f"{mi.img_hash}.{mi.ext}" if mi else None
+        output.append(_format_image_annotation(file, img.alt, img.caption))
+        output.append("")
+        emitted_urls.add(img.url)
 
-    return "\n".join(output_lines)
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip() + "\n"
+    return text, media

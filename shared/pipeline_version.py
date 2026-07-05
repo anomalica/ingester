@@ -21,7 +21,10 @@ import yaml
 # consumers treat as 0 - is stale and a backfill target.
 CURRENT_VERSIONS: dict[str, int] = {
     "pdf": 1,
-    "web": 1,
+    # v2: strip page furniture before extraction, and capture images as media
+    # bytes + structured `<!-- image: file/alt/caption -->` annotations (was
+    # markdown ![](remote-url) with the caption as loose italic prose).
+    "web": 2,
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
     "ebook": 2,
     "audio": 1,
