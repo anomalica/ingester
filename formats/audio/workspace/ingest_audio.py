@@ -439,7 +439,10 @@ def run(
     language = "en"
 
     is_url = source.startswith("http://") or source.startswith("https://")
-    source_url = source if is_url else None
+    # Prefer an explicit source_url from the manifest: re-processing an archived
+    # local source (source is a path, not a URL) supplies the known origin there,
+    # so the record keeps its provenance instead of dropping it.
+    source_url = manifest.get("source_url") or (source if is_url else None)
     title = _resolve_title(manifest, source_url, source_id, source_type)
     publisher = manifest.get("publisher")
     description = manifest.get("description")

@@ -6,14 +6,19 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] [--words] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--words] [--source-url URL [--source-id ID]] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
 	echo "Options:" >&2
-	echo "  --force    Re-process even if output already exists" >&2
-	echo "  --words    Audio/video: retain per-word timestamps and write a" >&2
-	echo "             parallel .v2 record (schema 2); never overwrites v1" >&2
+	echo "  --force        Re-process even if output already exists" >&2
+	echo "  --words        Audio/video: retain per-word timestamps and write a" >&2
+	echo "                 parallel .v2 record (schema 2); never overwrites v1" >&2
+	echo "  --source-url   Provenance for a LOCAL source: stamp this origin URL" >&2
+	echo "                 (a local path carries none). Use when re-processing an" >&2
+	echo "                 archived file, e.g. re-transcribing an .opus as record/2" >&2
+	echo "  --source-id    Optional stable id for --source-url; derived from the URL" >&2
+	echo "                 when omitted (youtube:{id} / url:{hash})" >&2
 	exit 1
 }
 
@@ -25,6 +30,8 @@ INPUT=""
 COPYRIGHT_STATUS=""
 NO_COMMIT=0
 USE_API=0
+SOURCE_URL=""
+SOURCE_ID=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--force)
@@ -53,6 +60,22 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--api)
 		USE_API=1
+		shift
+		;;
+	--source-url)
+		SOURCE_URL="$2"
+		shift 2
+		;;
+	--source-url=*)
+		SOURCE_URL="${1#*=}"
+		shift
+		;;
+	--source-id)
+		SOURCE_ID="$2"
+		shift 2
+		;;
+	--source-id=*)
+		SOURCE_ID="${1#*=}"
 		shift
 		;;
 	--help | -h) usage ;;
@@ -164,8 +187,9 @@ print(result or 'application/octet-stream')
 ")"
 
 	SOURCE_PATH="${RESOLVED}" ASSET_NAME="asset.${EXT}" DETECTED_TYPE="${DETECTED_TYPE}" \
-		MANIFEST_OUT="${RUN_DIR}/manifest.json" COPYRIGHT_STATUS="${COPYRIGHT_STATUS}" python3 -c "
-import json, os
+		MANIFEST_OUT="${RUN_DIR}/manifest.json" COPYRIGHT_STATUS="${COPYRIGHT_STATUS}" \
+		SOURCE_URL="${SOURCE_URL}" SOURCE_ID="${SOURCE_ID}" python3 -c "
+import hashlib, json, os, re
 from datetime import datetime, timezone
 manifest = {
     'source': os.environ['SOURCE_PATH'],
@@ -177,6 +201,19 @@ manifest = {
 copyright_status = os.environ.get('COPYRIGHT_STATUS', '')
 if copyright_status:
     manifest['copyright_status'] = copyright_status
+# Known provenance for re-processing an archived local source (e.g. re-transcribing
+# an archived .opus as record/2): a local path carries no origin, so stamp the
+# supplied source URL and a stable source_id (derived to match the URL path's
+# convention when not given explicitly).
+source_url = os.environ.get('SOURCE_URL', '')
+source_id = os.environ.get('SOURCE_ID', '')
+if source_url:
+    manifest['source_url'] = source_url
+    if not source_id:
+        m = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})', source_url)
+        source_id = f'youtube:{m.group(1)}' if m else 'url:' + hashlib.sha256(source_url.encode('utf-8')).hexdigest()[:12]
+if source_id:
+    manifest['source_id'] = source_id
 with open(os.environ['MANIFEST_OUT'], 'w') as f:
     json.dump(manifest, f, indent=2)
 "
