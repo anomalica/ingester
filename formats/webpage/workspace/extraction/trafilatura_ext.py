@@ -72,7 +72,6 @@ def extract_article(html: str, url: str | None = None) -> Article | None:
         html,
         url=url,
         with_metadata=True,
-        favor_precision=True,
         include_formatting=True,
         include_links=True,
         include_tables=True,

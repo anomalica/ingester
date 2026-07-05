@@ -238,6 +238,14 @@ def _index_by_url(images: Iterable[HarvestedImage]) -> dict[str, HarvestedImage]
 # copyright notice that must never be read as a claim).
 _ITALIC_LINE_RE = re.compile(r"^\s*[*_]([^*_].*?)[*_]\s*$")
 
+
+def _norm(text: str) -> str:
+    """Normalise caption text for comparison: collapse whitespace, drop a
+    trailing full stop. Lets a plain prose caption line be matched against the
+    figcaption it duplicates."""
+    return re.sub(r"\s+", " ", text).strip().rstrip(".").strip()
+
+
 _CONTENT_TYPE_EXT = {
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
@@ -376,17 +384,25 @@ def render_images(
         alt = existing_alt or (harvested.alt if harvested else None) or None
         caption = harvested.caption if harvested else None
 
-        # Fold the printed caption (loose italic line after the image) into the
-        # annotation. Look past blank lines to the next content line.
+        # Fold the printed caption into the annotation. Look past blank lines to
+        # the next content line and consume it when it is the caption: either a
+        # whole-line italic (the caption when the image has no figcaption), or a
+        # line (italic or plain) that duplicates the figcaption we already have
+        # - trafilatura emits the figcaption as body prose too, which would
+        # otherwise leave the caption in both places.
         next_i = i + 1
         while next_i < len(lines) and not lines[next_i].strip():
             next_i += 1
         consume_to = i
         if next_i < len(lines):
             cap_match = _ITALIC_LINE_RE.match(lines[next_i])
-            if cap_match:
-                if not caption:
-                    caption = cap_match.group(1).strip()
+            candidate = (
+                cap_match.group(1).strip() if cap_match else lines[next_i].strip()
+            )
+            if caption and _norm(candidate) == _norm(caption):
+                consume_to = next_i  # duplicate of the figcaption - drop from prose
+            elif cap_match and not caption:
+                caption = candidate  # trailing italic line is the caption
                 consume_to = next_i
 
         mi = resolve(url)
