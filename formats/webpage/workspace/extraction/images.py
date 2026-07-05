@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -77,6 +78,8 @@ _NON_CONTENT_URL_HINTS = (
     "share-",
     "/share/",
     "avatar",
+    "social-media",
+    "social-icons",
 )
 
 
@@ -287,12 +290,23 @@ def _ext_for(content_type: str | None, url: str) -> str:
 
 
 def _default_fetch(url: str) -> tuple[bytes, str | None] | None:
-    resp = requests.get(
-        url, timeout=20, headers={"User-Agent": "Mozilla/5.0 (anomalica-ingester)"}
-    )
-    if resp.status_code != 200 or not resp.content:
-        return None
-    return resp.content, resp.headers.get("Content-Type")
+    """Download image bytes, retrying transient failures (connection refused,
+    timeout, 5xx) with backoff. A 404 is permanent - don't retry. Archive.org
+    rate-limits bulk fetches, so a couple of backed-off retries turn a transient
+    refusal into a success rather than a dropped image."""
+    headers = {"User-Agent": "Mozilla/5.0 (anomalica-ingester)"}
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=30, headers=headers)
+            if resp.status_code == 200 and resp.content:
+                return resp.content, resp.headers.get("Content-Type")
+            if resp.status_code == 404:
+                return None
+        except requests.RequestException:
+            pass
+        if attempt < 2:
+            time.sleep(3 * (attempt + 1))
+    return None
 
 
 def _download(url: str, fetch: ImageFetch) -> MediaImage | None:
