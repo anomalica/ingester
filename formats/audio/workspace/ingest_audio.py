@@ -518,12 +518,6 @@ def main():
         "--force", action="store_true", help="Re-process even if output exists"
     )
     parser.add_argument(
-        "--words",
-        action="store_true",
-        help="Retain per-word timestamps and write the parallel .v2 record "
-        "(schema anomalica/record/2); never overwrites the v1 record",
-    )
-    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Force fresh transcription/diarisation instead of reusing the "
@@ -542,7 +536,9 @@ def main():
             args.staging_dir,
             output_dir,
             args.force,
-            word_timestamps=args.words,
+            # Always produce the latest record type (record/2, per-word
+            # timestamps). The corpus is v2-only; there's no reason to emit v1.
+            word_timestamps=True,
             use_cache=not args.no_cache,
         )
     )
