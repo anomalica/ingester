@@ -300,6 +300,38 @@ if [[ -f "$ASSET_PATH" ]]; then
 		cp "$ASSET_PATH" "$TARGET"
 		echo "Source archived: ${TARGET}" >&2
 	fi
+
+	# Stamp the archived object's extension onto the record. This is the only
+	# place that knows it: codec/container describe the STREAM, the extension is a
+	# property of the FILE (yt-dlp writes .opus while reporting container: ogg), so
+	# consumers cannot derive it and must not guess. See record-format.md.
+	INGESTS_DIR="${INGESTS_DIR}" CONTENT_HASH="${CONTENT_HASH}" ASSET_EXT="${ASSET_EXT}" python3 -c "
+import os, re, sys
+from pathlib import Path
+store = Path(os.environ['INGESTS_DIR']) / 'store'
+h, ext = os.environ['CONTENT_HASH'], os.environ['ASSET_EXT']
+# audio/video/pdf: record is named by the asset hash. web/ebook: the record is
+# body-hashed, and the asset hash is its source_hash.
+cands = [store / f'{h}.v2.md', store / f'{h}.md']
+cands += [p for p in store.glob('*.md') if f'source_hash: sha256:{h}' in p.read_text(errors='replace')[:4000]]
+for p in cands:
+    if not p.exists():
+        continue
+    t = p.read_text()
+    m = re.match(r'^(---\n)(.*?)(\n---\n)', t, re.S)
+    if not m:
+        continue
+    fmv = m.group(2)
+    if re.search(r'^archived_ext:', fmv, re.M):
+        fmv = re.sub(r'^archived_ext:.*$', f'archived_ext: {ext}', fmv, flags=re.M)
+    elif re.search(r'^content_hash:.*$', fmv, re.M):
+        fmv = re.sub(r'^(content_hash:.*)$', r'\1' + f'\narchived_ext: {ext}', fmv, count=1, flags=re.M)
+    else:
+        fmv = fmv + f'\narchived_ext: {ext}'
+    p.write_text(m.group(1) + fmv + m.group(3) + t[m.end():])
+    print(f'Stamped archived_ext: {ext} -> {p.name}', file=sys.stderr)
+    break
+" || true
 fi
 
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
