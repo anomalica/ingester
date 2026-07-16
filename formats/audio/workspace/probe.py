@@ -17,6 +17,7 @@ def probe(audio_path: Path) -> dict:
         bitrate: integer bits per second (None if not reported)
         size_bytes: file size in bytes
         channels: integer number of audio channels
+        duration: float seconds of the FILE (None if not reported)
 
     All fields default to None if probing fails or the field is unavailable.
     """
@@ -27,6 +28,7 @@ def probe(audio_path: Path) -> dict:
         "bitrate": None,
         "size_bytes": audio_path.stat().st_size,
         "channels": None,
+        "duration": None,
     }
 
     try:
@@ -63,6 +65,12 @@ def probe(audio_path: Path) -> dict:
         except (ValueError, TypeError):
             pass
 
+    if fmt.get("duration"):
+        try:
+            result["duration"] = float(fmt["duration"])
+        except (ValueError, TypeError):
+            pass
+
     streams = data.get("streams", [])
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
     if audio_stream:
@@ -81,6 +89,13 @@ def probe(audio_path: Path) -> dict:
         if result["bitrate"] is None and audio_stream.get("bit_rate"):
             try:
                 result["bitrate"] = int(audio_stream["bit_rate"])
+            except (ValueError, TypeError):
+                pass
+        # Likewise duration: some containers (matroska/webm) report it per-stream
+        # only, so a format-level miss is not proof the file's length is unknown.
+        if result["duration"] is None and audio_stream.get("duration"):
+            try:
+                result["duration"] = float(audio_stream["duration"])
             except (ValueError, TypeError):
                 pass
 

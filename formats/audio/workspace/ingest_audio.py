@@ -202,7 +202,7 @@ def _build_frontmatter(
         lines.append(f"source_url: {source_url}")
     if source_id:
         lines.append(f"source_id: {source_id}")
-    lines.append(f"duration: {int(duration)}")
+    lines.append(f"duration: {round(duration, 2)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     if date_accessed:
         lines.append(f"date_accessed: {date_accessed}")
@@ -435,7 +435,12 @@ def run(
         remap[old_id] = f"Speaker {i + 1}"
     turns = [Turn(speaker=remap[t.speaker], sentences=t.sentences) for t in turns]
 
-    duration = segments[-1].end
+    # The FILE's length, not the transcript's. `segments[-1].end` is where the last
+    # word was spoken: any trailing silence, outro music or applause is absent from
+    # it, which understated every record in the corpus by up to 82s. It stays only
+    # as a floor for the case where ffprobe reports no duration at all - a bad
+    # duration beats none, but it is never preferred over the real one.
+    duration = audio_info.get("duration") or (segments[-1].end if segments else 0.0)
     language = "en"
 
     is_url = source.startswith("http://") or source.startswith("https://")
