@@ -292,6 +292,66 @@ def test_run_duration_in_frontmatter(mock_transcribe, mock_diarise, tmp_path):
     assert "duration:" in content
 
 
+@patch("ingest_audio.probe")
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_run_duration_is_the_file_not_the_transcript(
+    mock_transcribe, mock_diarise, mock_probe, tmp_path
+):
+    """duration is the FILE's length, not the transcript's span.
+
+    A file ending in silence, outro music or applause transcribes to a last
+    segment well short of its end. Declaring that as the duration understated
+    every audio record in the corpus (worst: 82s missing), so a probed duration
+    must win over the transcript even though both are plausible numbers.
+    """
+    import ingest_audio
+
+    mock_probe.return_value = {
+        "codec": "mp3",
+        "container": "mp3",
+        "sample_rate": 44100,
+        "bitrate": 128000,
+        "size_bytes": 15,
+        "channels": 1,
+        "duration": 128.44,  # file runs on well past the last word
+    }
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    ingest_audio.run(staging, output, force=False)
+
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert "duration: 128.44" in content
+    assert f"duration: {MOCK_SEGMENTS[-1].end}" not in content
+
+
+@patch("ingest_audio.probe")
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_run_duration_falls_back_when_unprobeable(
+    mock_transcribe, mock_diarise, mock_probe, tmp_path
+):
+    """An unprobeable file still gets a duration: the transcript's end is a poor
+    floor, but a record with no duration at all is worse."""
+    import ingest_audio
+
+    mock_probe.return_value = {
+        "codec": None,
+        "container": None,
+        "sample_rate": None,
+        "bitrate": None,
+        "size_bytes": 15,
+        "channels": None,
+        "duration": None,
+    }
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    ingest_audio.run(staging, output, force=False)
+
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert f"duration: {round(MOCK_SEGMENTS[-1].end, 2)}" in content
+
+
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
 @patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_time_annotations_formatted(mock_transcribe, mock_diarise, tmp_path):
