@@ -49,6 +49,17 @@ def test_detect_from_extension_unknown():
     assert detect_from_extension("file.xyz") is None
 
 
+def test_detect_from_extension_archived_audio():
+    """Every extension the pipeline archives media under must detect as audio/video,
+    not fall through to octet-stream. yt-dlp writes .opus by default, so a local
+    reprocess of an archived source (which detects by EXTENSION, no HTTP header)
+    silently failed at acquire until .opus/.m4a/.oga were added beside .ogg."""
+    assert detect_from_extension("asset.opus") == "audio/ogg"
+    assert detect_from_extension("asset.oga") == "audio/ogg"
+    assert detect_from_extension("asset.m4a") == "audio/mp4"
+    assert detect_from_extension("ASSET.OPUS") == "audio/ogg"  # case-insensitive
+
+
 def test_detect_from_extension_case_insensitive():
     assert detect_from_extension("DOC.PDF") == "application/pdf"
 

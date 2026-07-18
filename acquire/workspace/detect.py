@@ -19,9 +19,12 @@ EXTENSION_MAP = {
     ".pdf": "application/pdf",
     ".mp3": "audio/mpeg",
     ".mp4": "video/mp4",
+    ".m4a": "audio/mp4",
     ".wav": "audio/wav",
     ".webm": "video/webm",
     ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".oga": "audio/ogg",
     ".epub": "application/epub+zip",
     ".mobi": "application/x-mobipocket-ebook",
 }
