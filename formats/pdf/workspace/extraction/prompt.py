@@ -83,7 +83,7 @@ Rules:
   - Reproduce marking values verbatim (minus parens). Do not normalise or expand them.
   - NEVER render classification markings as strikethrough. Strikethrough (~~text~~) is reserved for text genuinely struck out in the source.
 - Em-dashes written as --- must be converted to a single hyphen
-- Title: use the document's actual title or subject. Never put the literal words "undefined", "null", or "None" in the title - if part of a title is missing or unreadable, omit that part rather than writing a placeholder word.
+- Title: use the document's actual title or subject - the core title only. Do NOT append event metadata that sits near the title on a cover page but is not part of it: conference/meeting dates, venue, city, or location (e.g. drop trailing ", February 22-24, 2012. The Westin Tysons Corner, Falls Church, VA."). Keep any real subtitle. Never put the literal words "undefined", "null", or "None" in the title - if part of a title is missing or unreadable, omit that part rather than writing a placeholder word.
 - schema must be: anomalica/record/1
 - source_type must be: pdf{page_context}
 
