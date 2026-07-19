@@ -35,6 +35,25 @@ MAX_RETRIES = 2
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
 
 
+def default_copyright(manifest: dict) -> dict | None:
+    """The copyright block for a PDF when no existing record and no explicit
+    --copyright status apply, or None to leave _patch_frontmatter's `restricted`.
+
+    A source FETCHED from a public URL is, by the fact that we retrieved it
+    anonymously, publicly accessible - so it defaults to `publicly_accessible`,
+    matching the audio/video/web handlers (which all default a URL fetch that way).
+    Only a local file of UNKNOWN provenance keeps the conservative `restricted`.
+    This does NOT open the original PDF: `publicly_accessible` still gates the source
+    file behind proof-of-possession; it only lets the extracted TEXT be surfaced, as
+    for any web/AV source.
+    """
+    if manifest.get("copyright_status"):
+        return {"status": manifest["copyright_status"]}
+    if str(manifest.get("source", "")).startswith(("http://", "https://")):
+        return {"status": "publicly_accessible"}
+    return None
+
+
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
     """Check that content looks like a valid record. Returns (valid, reason)."""
     stripped = strip_code_fences(content)
@@ -366,8 +385,7 @@ def main():
         manifest_fetched = manifest.get("fetched_url")
         if manifest_fetched and manifest_fetched != source_url:
             fetched_url = manifest_fetched
-        if manifest.get("copyright_status"):
-            manifest_copyright = {"status": manifest["copyright_status"]}
+        manifest_copyright = default_copyright(manifest)
 
     # Auto-detect mount paths from container-magic
     mnt_input = Path("/mnt/input")
