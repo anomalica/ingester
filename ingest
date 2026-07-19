@@ -176,9 +176,11 @@ print(result or 'application/octet-stream')
 
 	SOURCE_PATH="${RESOLVED}" ASSET_NAME="asset.${EXT}" DETECTED_TYPE="${DETECTED_TYPE}" \
 		MANIFEST_OUT="${RUN_DIR}/manifest.json" COPYRIGHT_STATUS="${COPYRIGHT_STATUS}" \
-		SOURCE_URL="${SOURCE_URL}" SOURCE_ID="${SOURCE_ID}" python3 -c "
-import hashlib, json, os, re
+		SOURCE_URL="${SOURCE_URL}" SOURCE_ID="${SOURCE_ID}" SCRIPT_DIR="${SCRIPT_DIR}" python3 -c "
+import hashlib, json, os, re, subprocess, sys
 from datetime import datetime, timezone
+sys.path.insert(0, os.path.join(os.environ['SCRIPT_DIR'], 'acquire/workspace'))
+from manifest_meta import video_metadata_fields
 manifest = {
     'source': os.environ['SOURCE_PATH'],
     'asset': os.environ['ASSET_NAME'],
@@ -200,6 +202,22 @@ if source_url:
     if not source_id:
         m = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})', source_url)
         source_id = f'youtube:{m.group(1)}' if m else 'url:' + hashlib.sha256(source_url.encode('utf-8')).hexdigest()[:12]
+    # Re-fetch the source's real metadata so a re-processed local archive keeps its
+    # title/publisher/date instead of falling back to the raw URL (which is what the
+    # record showed until this landed). yt-dlp --dump-json is METADATA ONLY - no
+    # download - so it's cheap and doesn't trigger the download bot-check. The field
+    # mapping (video_metadata_fields) is SHARED with acquire's URL path, so a
+    # reprocess record is indistinguishable from a fresh URL ingest. Best effort: a
+    # fetch failure leaves the URL-only manifest rather than aborting re-transcription.
+    try:
+        proc = subprocess.run(['yt-dlp', '--dump-json', '--no-warnings', source_url],
+                              capture_output=True, text=True, timeout=90)
+        if proc.returncode == 0 and proc.stdout.strip():
+            fields = video_metadata_fields(json.loads(proc.stdout))
+            fields.pop('source_id', None)  # keep the explicit/URL-derived id below
+            manifest.update(fields)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
 if source_id:
     manifest['source_id'] = source_id
 with open(os.environ['MANIFEST_OUT'], 'w') as f:
