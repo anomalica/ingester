@@ -1,7 +1,24 @@
 import json
 from unittest.mock import patch
 
-from acquire import acquire
+from acquire import _ytdlp_creators, acquire
+
+
+def test_ytdlp_creators_distinct_from_channel():
+    # a creator distinct from the channel is captured
+    assert _ytdlp_creators({"channel": "Area52", "creator": "Chris Ramsey"}) == [
+        "Chris Ramsey"
+    ]
+    # creator equal to the channel is dropped (it's the publisher, not a host)
+    assert _ytdlp_creators({"channel": "Area52", "creator": "Area52"}) == []
+    # list form, channel filtered out
+    assert _ytdlp_creators(
+        {"uploader": "Area52", "creators": ["Chris Ramsey", "Area52"]}
+    ) == ["Chris Ramsey"]
+    # nothing exposed -> empty (reviewer fills it)
+    assert _ytdlp_creators({"channel": "Area52"}) == []
+    # comma-separated string is split
+    assert _ytdlp_creators({"artist": "A, B"}) == ["A", "B"]
 
 
 def _patch_fetchers(http_result=None, wayback_result=None, patchright_result=None):

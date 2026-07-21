@@ -51,6 +51,17 @@ def test_ingest_writes_record_to_store(mock_extract, tmp_path):
 
 
 @patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
+def test_ingest_writes_creators_not_authors(mock_extract, tmp_path):
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    ingest_webpage.run(staging, output, force=False)
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert "creators:" in content
+    assert "- Jane Smith" in content
+    assert "authors:" not in content
+
+
+@patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
 def test_ingest_includes_processing_in_frontmatter(mock_extract, tmp_path):
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
