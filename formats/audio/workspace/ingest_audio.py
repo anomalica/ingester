@@ -170,6 +170,7 @@ def _build_frontmatter(
     source_url: str | None,
     source_id: str | None,
     publisher: str | None,
+    creators: list[str] | None,
     known_speakers: list[str],
     duration: float,
     hex_hash: str,
@@ -193,6 +194,10 @@ def _build_frontmatter(
     if publisher:
         escaped_pub = publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')
+    if creators:
+        lines.append("creators:")
+        for creator in creators:
+            lines.append(f"  - {creator}")
     if known_speakers:
         lines.append("speakers:")
         for name in known_speakers:
@@ -450,6 +455,7 @@ def run(
     source_url = manifest.get("source_url") or (source if is_url else None)
     title = _resolve_title(manifest, source_url, source_id, source_type)
     publisher = manifest.get("publisher")
+    creators = manifest.get("creators")
     description = manifest.get("description")
     known_speakers = _extract_known_speakers(title, description, publisher)
     date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
@@ -464,6 +470,7 @@ def run(
         source_url=source_url,
         source_id=source_id,
         publisher=publisher,
+        creators=creators,
         known_speakers=known_speakers,
         duration=duration,
         hex_hash=hex_hash,

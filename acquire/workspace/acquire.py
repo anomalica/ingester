@@ -18,6 +18,26 @@ from fetch.ytdlp import is_video_platform
 WAYBACK_PREFIX = "https://web.archive.org/web/"
 
 
+def _ytdlp_creators(meta: dict) -> list[str]:
+    """Human creators (host/presenter) from yt-dlp metadata, where distinct from
+    the channel. yt-dlp exposes creator/artist only sometimes; often the only
+    name is the channel/uploader, which belongs in `publisher`, not `creators`.
+    Returns [] when there is no distinct creator, leaving the field for a
+    reviewer to fill.
+    """
+    channel = (meta.get("channel") or meta.get("uploader") or "").strip().casefold()
+    raw = (
+        meta.get("creators")
+        or meta.get("artists")
+        or meta.get("creator")
+        or meta.get("artist")
+    )
+    if not raw:
+        return []
+    values = raw if isinstance(raw, list) else [p.strip() for p in str(raw).split(",")]
+    return [v for v in (s.strip() for s in values) if v and v.casefold() != channel]
+
+
 def _url_source_id(url: str) -> str:
     """Generate a stable source_id for a URL by hashing it.
 
@@ -214,6 +234,9 @@ def acquire(url: str, staging_dir: Path) -> int:
                 manifest["source_id"] = fetcher_metadata["source_id"]
             if fetcher_metadata.get("channel"):
                 manifest["publisher"] = fetcher_metadata["channel"]
+            creators = _ytdlp_creators(fetcher_metadata)
+            if creators:
+                manifest["creators"] = creators
             if fetcher_metadata.get("description"):
                 manifest["description"] = fetcher_metadata["description"]
 

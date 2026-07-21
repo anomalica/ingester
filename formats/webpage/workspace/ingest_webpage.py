@@ -34,7 +34,7 @@ def _build_frontmatter(
     source_id: str | None,
     fetched_url: str | None,
     date_accessed: str | None,
-    authors: list[str] | None,
+    creators: list[str] | None,
     hex_hash: str,
     publisher: str | None,
     description: str | None,
@@ -59,10 +59,10 @@ def _build_frontmatter(
         lines.append(f"source_id: {source_id}")
     if fetched_url and fetched_url != url:
         lines.append(f"fetched_url: {fetched_url}")
-    if authors:
-        lines.append("authors:")
-        for author in authors:
-            lines.append(f"  - {author}")
+    if creators:
+        lines.append("creators:")
+        for creator in creators:
+            lines.append(f"  - {creator}")
     if description:
         escaped_desc = description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')

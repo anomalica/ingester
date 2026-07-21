@@ -68,7 +68,7 @@ def _build_frontmatter(
     if book.identifier:
         lines.append(f"source_id: {book.identifier}")
     if book.authors:
-        lines.append("authors:")
+        lines.append("creators:")
         for author in book.authors:
             lines.append(f"  - {author}")
     if book.description:

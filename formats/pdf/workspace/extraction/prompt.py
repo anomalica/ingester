@@ -4,7 +4,7 @@ EXAMPLE = """---
 schema: anomalica/record/1
 title: "Example Document"
 date_published: 2023-07-26
-authors:
+creators:
   - Author Name
 source_type: pdf
 pages: 3
@@ -60,7 +60,8 @@ Transcribe the document faithfully. Reproduce only the content and structure tha
 
 Rules:
 - FAITHFULNESS (most important): never add structure the source does not contain. No section headings, no category or grouping labels (e.g. "Majority Members:", "Attendees:", "Summary:", "Background:"), no tables, and no bold/italic emphasis unless that exact heading, label, table, or emphasis is printed in the document. Do not reorganise or re-lay-out the content; keep the source's own order and wording. When the source uses a visual layout you cannot reproduce (multi-column lists, side-by-side rosters), transcribe the text in natural reading order WITHOUT adding labels to explain the layout.
-- Start with YAML frontmatter: schema, title, date_published, authors, source_type, pages
+- Start with YAML frontmatter: schema, title, date_published, creators, source_type, pages
+- creators: the document's human author(s), one named person per list item. Omit creators entirely when the author is an organisation, agency, military unit, or office rather than a named person (e.g. "89 ATKS", "Department of Defense") - never put a non-person there.
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
 - Mark page boundaries with single-line HTML comments: <!-- file_page: 1 -->
