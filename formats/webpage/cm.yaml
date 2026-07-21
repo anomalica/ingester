@@ -20,6 +20,7 @@ stages:
             - pyyaml
             - beautifulsoup4
             - lxml
+            - requests
 
   development:
     from: base
