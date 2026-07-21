@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from lxml import etree
@@ -57,6 +58,27 @@ def strip_chrome(html: str) -> str:
     return lxml_html.tostring(tree, encoding="unicode")
 
 
+def _normalise_heading(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip().casefold()
+
+
+def _strip_leading_title(text: str, title: str | None) -> str:
+    """Drop a leading markdown heading that merely repeats the article title.
+
+    trafilatura emits the page title as the body's first heading; with the
+    title now living in frontmatter only, that leading heading is a duplicate.
+    Only strips when the heading text matches the title (normalised), so a
+    genuine first heading that is not the title is left untouched.
+    """
+    if not title:
+        return text
+    stripped = text.lstrip("\n")
+    m = re.match(r"#{1,6}[ \t]+(.+?)[ \t]*(?:\n|$)", stripped)
+    if m and _normalise_heading(m.group(1)) == _normalise_heading(title):
+        return stripped[m.end() :].lstrip("\n")
+    return text
+
+
 def extract_article(html: str, url: str | None = None) -> Article | None:
     """Extract article content and metadata from HTML.
 
@@ -80,7 +102,8 @@ def extract_article(html: str, url: str | None = None) -> Article | None:
     if doc is None or not doc.text or len(doc.text) < 10:
         return None
 
-    text, media = render_images(doc.text, harvest_images(html))
+    body_text = _strip_leading_title(doc.text, doc.title)
+    text, media = render_images(body_text, harvest_images(html))
 
     authors = None
     if doc.author:
