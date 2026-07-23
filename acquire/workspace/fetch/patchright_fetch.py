@@ -50,6 +50,10 @@ async def _fetch_async(url: str) -> tuple[bytes, str | None, dict] | None:
 
             await apply_cosmetic_filters(page)
 
+            # The URL after any 3xx/JS redirects - lets acquire detect a dead
+            # content URL that collapsed to the site homepage.
+            final_url = page.url
+
             html = await page.content()
             pdf_bytes = await capture_pdf(page)
 
@@ -79,7 +83,7 @@ async def _fetch_async(url: str) -> tuple[bytes, str | None, dict] | None:
                     }
                 )
 
-            metadata = {"snapshots": snapshots}
+            metadata = {"snapshots": snapshots, "final_url": final_url}
             return (html.encode("utf-8"), "text/html", metadata)
     except Exception:
         return None

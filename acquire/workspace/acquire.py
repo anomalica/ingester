@@ -9,6 +9,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from detect import detect
 from fetch import FETCHERS
@@ -46,6 +47,34 @@ def _url_source_id(url: str) -> str:
     """
     h = hashlib.sha256(url.encode("utf-8")).hexdigest()
     return f"url:{h[:12]}"
+
+
+def _redirected_away(requested: str, final: str | None) -> bool:
+    """True when a fetch LEFT the requested resource - redirected to the site
+    root or an unrelated/shorter path. This is the signature of a dead content
+    URL that 3xx-collapses to a homepage or a generic section (e.g. a removed
+    article -> the publisher's `/news` front). The landing page is not the
+    requested article, so a capture there must not be preferred over an
+    archived copy that still holds the real content.
+
+    Conservative: a redirect that keeps the requested path or DESCENDS into it
+    (scheme/host/trailing-slash canonicalisation, an appended sub-path) is not
+    flagged - only a divergence onto a different path is.
+    """
+    if not final:
+        return False
+    req = urlparse(requested).path.strip("/")
+    fin = urlparse(final).path.strip("/")
+    if not req:
+        return False  # requested the homepage already - nothing lost
+    if not fin:
+        return True  # collapsed to the site root
+    req_segs = req.split("/")
+    fin_segs = fin.split("/")
+    # final descends into (or equals) the requested path -> same resource area
+    if fin_segs[: len(req_segs)] == req_segs:
+        return False
+    return True
 
 
 def _parse_wayback_url(url: str) -> tuple[str, str] | None:
@@ -110,6 +139,18 @@ def acquire(url: str, staging_dir: Path) -> int:
     fetchers = FETCHERS
     if is_video_platform(url):
         fetchers = [(name, fn) for name, fn in FETCHERS if name == "ytdlp"]
+    elif wayback_parsed:
+        # The operator pointed at a SPECIFIC archived snapshot - fetch that exact
+        # capture (honouring their chosen timestamp), first and by preference, and
+        # do NOT re-fetch the live original: for a dead URL the live original
+        # redirects to a generic page. A distinct method name keeps the
+        # wayback+live override (which fires only for method "wayback") off. Falls
+        # through to the normal fetchers if the explicit snapshot is unreachable.
+        from fetch import wayback as _wb
+
+        fetchers = [
+            ("wayback-snapshot", lambda _u, _a=archive_url: _wb.fetch_snapshot(_a))
+        ] + list(FETCHERS)
 
     for method_name, fetcher in fetchers:
         print(f"Trying {method_name}...", file=sys.stderr)
@@ -138,6 +179,21 @@ def acquire(url: str, staging_dir: Path) -> int:
         if is_html and len(content) < MIN_HTML_SIZE:
             print(
                 f"  {method_name}: response too small ({len(content)} bytes), trying next",
+                file=sys.stderr,
+            )
+            continue
+
+        # A live browser capture (patchright) that 3xx-redirected off the
+        # requested article - to the site root or a generic section - is not a
+        # capture of that article. With no archived copy to fall back to on this
+        # path, reject it and fail cleanly rather than ingest the landing page as
+        # the article (a missing record is recoverable; a garbage one is not).
+        # Only patchright reports final_url, so this never touches other fetchers.
+        if is_html and _redirected_away(url, (fetcher_metadata or {}).get("final_url")):
+            print(
+                f"  {method_name}: capture redirected away to "
+                f"{(fetcher_metadata or {}).get('final_url')} - not the requested "
+                "page, trying next",
                 file=sys.stderr,
             )
             continue
@@ -174,27 +230,41 @@ def acquire(url: str, staging_dir: Path) -> int:
             pr_result = _patchright_fetch(url)
             if pr_result and len(pr_result) == 3:
                 pr_content, pr_ctype, pr_metadata = pr_result
-                if pr_metadata and pr_metadata.get("snapshots"):
-                    snapshots_from_fetcher = pr_metadata["snapshots"]
-                # Prefer the live capture as the asset when it returned usable
-                # HTML - it carries the full page, not the archived paywalled
-                # copy. Falls back to the archived asset when the live fetch is
-                # blocked or empty.
-                pr_is_html = (pr_ctype or "").startswith("text/html")
-                if pr_content and pr_is_html and len(pr_content) >= MIN_HTML_SIZE:
-                    content = pr_content
-                    detected_type = pr_ctype or detected_type
-                    asset_hash = hashlib.sha256(content).hexdigest()
-                    (staging_dir / asset_name).write_bytes(content)
-                    manifest["asset_hash"] = asset_hash
-                    manifest["detected_type"] = detected_type
-                    manifest["fetch_method"] = f"{method_name}+live"
-                    if fetcher_metadata is not None:
-                        fetcher_metadata["fetched_url"] = url
+                live_final_url = (pr_metadata or {}).get("final_url")
+                if _redirected_away(url, live_final_url):
+                    # The live original 3xx-redirected off the requested article
+                    # (to the site root or a generic section). The article is
+                    # dead; keep the archived copy the operator pointed at rather
+                    # than preferring the generic landing page. Without this, a
+                    # dead-article-redirects-to-a-section silently overrides the
+                    # real archived content.
                     print(
-                        f"  using live original as asset ({len(content)} bytes)",
+                        f"  live original redirected away to {live_final_url}"
+                        " - keeping archived copy",
                         file=sys.stderr,
                     )
+                else:
+                    if pr_metadata and pr_metadata.get("snapshots"):
+                        snapshots_from_fetcher = pr_metadata["snapshots"]
+                    # Prefer the live capture as the asset when it returned usable
+                    # HTML - it carries the full page, not the archived paywalled
+                    # copy. Falls back to the archived asset when the live fetch is
+                    # blocked or empty.
+                    pr_is_html = (pr_ctype or "").startswith("text/html")
+                    if pr_content and pr_is_html and len(pr_content) >= MIN_HTML_SIZE:
+                        content = pr_content
+                        detected_type = pr_ctype or detected_type
+                        asset_hash = hashlib.sha256(content).hexdigest()
+                        (staging_dir / asset_name).write_bytes(content)
+                        manifest["asset_hash"] = asset_hash
+                        manifest["detected_type"] = detected_type
+                        manifest["fetch_method"] = f"{method_name}+live"
+                        if fetcher_metadata is not None:
+                            fetcher_metadata["fetched_url"] = url
+                        print(
+                            f"  using live original as asset ({len(content)} bytes)",
+                            file=sys.stderr,
+                        )
 
         # Sibling snapshots (e.g. PDF render of an HTML page) - written to
         # staging alongside the main asset and recorded in the manifest so
