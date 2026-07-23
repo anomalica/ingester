@@ -99,7 +99,26 @@ def _all_authors(book: epub.EpubBook) -> list[str]:
     return [v.strip() for v, _ in items if isinstance(v, str) and v.strip()]
 
 
+_CHAPTER_NUMBER_RE = re.compile(r"^(chapter\s+)?\d{1,4}\.?$", re.IGNORECASE)
+
+
+def _is_chapter_number(text: str) -> bool:
+    """A heading that is only a chapter number ('3', '3.', 'Chapter 3') - the
+    number, not the title. Numbered chapters open with the number as their first
+    heading and the real title as the next one."""
+    return bool(_CHAPTER_NUMBER_RE.match(text.strip()))
+
+
 def _chapter_title(soup: BeautifulSoup) -> str | None:
+    """The chapter's title heading, skipping a leading chapter-number heading:
+    a numbered chapter opens '## 3' then '## In the Field', so the title is the
+    second heading, not the first."""
+    for tag_name in ("h1", "h2", "h3"):
+        for tag in soup.find_all(tag_name):
+            text = tag.get_text(" ", strip=True)
+            if text and not _is_chapter_number(text):
+                return text
+    # every heading is a bare number (or there are none) - fall back to the first
     for tag_name in ("h1", "h2", "h3"):
         tag = soup.find(tag_name)
         if tag and tag.get_text(strip=True):
