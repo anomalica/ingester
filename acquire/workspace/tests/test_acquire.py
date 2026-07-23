@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch
 
-from acquire import _ytdlp_creators, acquire
+from acquire import _redirected_away, _ytdlp_creators, acquire
 
 
 def test_ytdlp_creators_distinct_from_channel():
@@ -227,3 +227,138 @@ def test_acquire_keeps_archived_when_live_fetch_blocked(tmp_path):
     assert (tmp_path / "asset.html").read_bytes() == archived
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["fetch_method"] == "wayback"
+
+
+def test_redirected_away_detection():
+    # a dead article that collapses to the site root -> flagged
+    assert _redirected_away(
+        "https://space.com/interviews/clarke_010227.html", "https://www.space.com/"
+    )
+    assert _redirected_away("https://x.com/a/b/c", "https://x.com")
+    # a dead article that lands on a generic section (the real space.com case:
+    # ...clarke_believe.html -> /news) -> flagged
+    assert _redirected_away(
+        "http://www.space.com/peopleinterviews/clarke_believe_010227.html",
+        "https://www.space.com/news",
+    )
+    # an article redirected up to its parent section -> flagged
+    assert _redirected_away("https://x.com/section/article", "https://x.com/section")
+    # any divergence onto an unrelated path -> flagged (keeps the archived copy
+    # of what the operator actually pointed at)
+    assert _redirected_away("https://x.com/old", "https://x.com/new")
+    # redirects that keep the requested path (scheme/host/slash canonicalisation)
+    # or descend into it -> NOT flagged
+    assert not _redirected_away("http://x.com/article", "https://x.com/article")
+    assert not _redirected_away("http://x.com/a", "https://x.com/a/")
+    assert not _redirected_away("https://x.com/article", "https://x.com/article/amp")
+    # requested was already the homepage -> nothing lost, not flagged
+    assert not _redirected_away("https://x.com/", "https://x.com/")
+    # no final url (live fetch failed/blocked) -> not flagged
+    assert not _redirected_away("https://x.com/a", None)
+
+
+def test_acquire_keeps_archived_when_live_redirects_away(tmp_path):
+    # Regression for the space.com/Clarke bug: a dead article whose live original
+    # 301s to a generic section (/news) must NOT override the archived copy the
+    # operator pointed at.
+    archived = (
+        b"<html><body>Clarke's Believe It or Not - the real interview</body></html>"
+        * 30
+    )
+    section = (
+        b"<html><body>space.com News - latest stories, photo of the day</body></html>"
+        * 30
+    )
+    wb = (
+        archived,
+        "text/html",
+        {"fetched_url": "https://web.archive.org/web/2005id_/https://space.com/clarke"},
+    )
+    live = (
+        section,
+        "text/html",
+        {"snapshots": [], "final_url": "https://www.space.com/news"},
+    )
+    with (
+        _patch_fetchers(wayback_result=wb),
+        patch("fetch.patchright_fetch.fetch", return_value=live),
+    ):
+        exit_code = acquire(
+            "http://www.space.com/peopleinterviews/clarke_believe_010227.html", tmp_path
+        )
+    assert exit_code == 0
+    assert (tmp_path / "asset.html").read_bytes() == archived
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["fetch_method"] == "wayback"
+
+
+def test_acquire_prefers_live_when_no_redirect(tmp_path):
+    # The live-first behaviour is preserved when the live original is NOT
+    # redirected away - the fuller live capture still wins over a thin archive.
+    archived = b"<html><body>archived thin copy</body></html>" * 30
+    live_full = b"<html><body>full live article, much richer content</body></html>" * 40
+    wb = (
+        archived,
+        "text/html",
+        {"fetched_url": "https://web.archive.org/web/2020id_/https://ex.com/article"},
+    )
+    live = (
+        live_full,
+        "text/html",
+        {"snapshots": [], "final_url": "https://ex.com/article"},
+    )
+    with (
+        _patch_fetchers(wayback_result=wb),
+        patch("fetch.patchright_fetch.fetch", return_value=live),
+    ):
+        acquire("https://ex.com/article", tmp_path)
+    assert (tmp_path / "asset.html").read_bytes() == live_full
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["fetch_method"] == "wayback+live"
+
+
+def test_acquire_honors_explicit_wayback_url(tmp_path):
+    # Given a specific archived snapshot, acquire fetches THAT capture and does
+    # not re-fetch the live original (which for a dead URL redirects away).
+    real = (
+        b"<html><body>Clarke's Believe It or Not - the real interview</body></html>"
+        * 30
+    )
+    wb_url = (
+        "https://web.archive.org/web/20010405id_/"
+        "http://www.space.com/peopleinterviews/clarke_believe_010227.html"
+    )
+    with (
+        patch(
+            "fetch.wayback.fetch_snapshot",
+            return_value=(real, "text/html", {"fetched_url": wb_url}),
+        ),
+        patch("fetch.patchright_fetch.fetch") as mock_live,
+    ):
+        exit_code = acquire(wb_url, tmp_path)
+    assert exit_code == 0
+    assert (tmp_path / "asset.html").read_bytes() == real
+    mock_live.assert_not_called()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["fetch_method"] == "wayback-snapshot"
+
+
+def test_acquire_rejects_primary_capture_redirected_away(tmp_path):
+    # patchright as the primary fetcher (no wayback) landing on a generic page
+    # after a redirect off the requested article -> rejected, acquire fails clean.
+    landing = b"<html><body>generic section landing page content</body></html>" * 30
+    fetchers = [
+        ("wayback", lambda u: None),
+        (
+            "patchright",
+            lambda u: (
+                landing,
+                "text/html",
+                {"snapshots": [], "final_url": "https://x.com/news"},
+            ),
+        ),
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire("https://x.com/articles/dead-piece", tmp_path)
+    assert exit_code == 1
+    assert not list(tmp_path.glob("asset.*"))
