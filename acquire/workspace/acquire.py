@@ -298,7 +298,15 @@ def acquire(url: str, staging_dir: Path) -> int:
                 )
             if fetcher_metadata.get("duration"):
                 manifest["duration"] = fetcher_metadata["duration"]
-            if fetcher_metadata.get("media_type"):
+            # A video-platform URL IS a video, even though yt-dlp deliberately
+            # downloads the audio-only stream (no video frames are needed to
+            # transcribe). Typing the record from the DOWNLOADED artefact records
+            # a YouTube video as an audio source - how we acquired it, not what it
+            # is. archived_ext already describes the artefact, so naming the source
+            # medium here loses nothing.
+            if is_video_platform(url):
+                manifest["original_type"] = "video"
+            elif fetcher_metadata.get("media_type"):
                 manifest["original_type"] = fetcher_metadata["media_type"]
             if fetcher_metadata.get("source_id"):
                 manifest["source_id"] = fetcher_metadata["source_id"]
