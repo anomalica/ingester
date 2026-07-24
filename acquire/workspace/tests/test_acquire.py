@@ -362,3 +362,21 @@ def test_acquire_rejects_primary_capture_redirected_away(tmp_path):
         exit_code = acquire("https://x.com/articles/dead-piece", tmp_path)
     assert exit_code == 1
     assert not list(tmp_path.glob("asset.*"))
+
+
+def test_acquire_types_video_platform_source_as_video(tmp_path):
+    # yt-dlp deliberately downloads the audio-only stream (no frames needed to
+    # transcribe), but the SOURCE is a video. The record must not be typed from
+    # the .opus artefact - that records how we acquired it, not what it is.
+    opus = b"OggS" + b"\x00" * 400
+    fetchers = [
+        (
+            "ytdlp",
+            lambda u: (opus, "audio/ogg", {"source_id": "youtube:fZyKcJQZrDA"}),
+        )
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire("https://www.youtube.com/watch?v=fZyKcJQZrDA", tmp_path)
+    assert exit_code == 0
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["original_type"] == "video"
