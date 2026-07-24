@@ -1,4 +1,9 @@
-from email_shape import Participant, parse_headers, segment_thread
+from email_shape import (
+    Participant,
+    parse_headers,
+    render_message_annotation,
+    segment_thread,
+)
 
 # The real shape of a WikiLeaks-published Podesta message (emailid/18724), which
 # embeds a full RFC822 source block in the page.
@@ -79,3 +84,39 @@ def test_segment_thread_single_message_is_one_unquoted_segment():
     segs = segment_thread("just one message, no thread\n")
     assert len(segs) == 1
     assert segs[0].quoted is False
+
+
+def _parse_annotation(ann: str):
+    import yaml
+
+    inner = ann[len("<!-- message: ") : -len(" -->")]
+    return yaml.safe_load(inner)
+
+
+def test_message_annotation_is_valid_yaml_with_freeform_date():
+    # "Mar 5, 2015 6:08 PM" carries commas - unquoted it would split the flow
+    # mapping into bogus entries.
+    ann = render_message_annotation(
+        2,
+        Participant(address="robertbfish@earthlink.net", name="Bob Fish"),
+        "Mar 5, 2015 6:08 PM",
+        True,
+    )
+    got = _parse_annotation(ann)
+    assert got["n"] == 2
+    assert got["from"] == "Bob Fish <robertbfish@earthlink.net>"
+    assert got["date"] == "Mar 5, 2015 6:08 PM"
+    assert got["quoted"] is True
+
+
+def test_message_annotation_keeps_iso_date_plain_and_parses():
+    ann = render_message_annotation(1, None, "2015-03-05T18:38:14-05:00", False)
+    assert '"2015-03-05' not in ann  # ISO stays a plain scalar
+    assert _parse_annotation(ann)["quoted"] is False
+
+
+def test_message_annotation_survives_a_comma_in_the_display_name():
+    ann = render_message_annotation(
+        1, Participant(address="j@x.com", name="Smith, John"), None, False
+    )
+    assert _parse_annotation(ann)["from"] == "Smith, John <j@x.com>"

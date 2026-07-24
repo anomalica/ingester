@@ -185,3 +185,106 @@ def segment_thread(body: str, top_author: Participant | None = None) -> list[Seg
         if seg.quoted:
             seg.text = "\n".join(_dequote(seg.text.splitlines())).strip()
     return segments
+
+
+# --- acquisition-side helpers -------------------------------------------------
+
+_PRE_RE = re.compile(r"<pre[^>]*>(.*?)</pre>", re.S | re.I)
+_HEADER_HINT_RE = re.compile(r"^(From|Date|Message-ID):", re.M | re.I)
+
+
+def extract_embedded_rfc822(html: str) -> str | None:
+    """The raw RFC822 message embedded in an HTML page, if there is one.
+
+    Publishers of email dumps (WikiLeaks among them) render the readable message
+    and also embed the original source block verbatim. That block is the
+    authoritative header source - the rendered page's own date/byline furniture
+    is not. Returns the first <pre> that actually parses as a message.
+    """
+    import html as _html
+
+    for raw in _PRE_RE.findall(html or ""):
+        text = _html.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        if not _HEADER_HINT_RE.search(text):
+            continue
+        msg = email.message_from_string(text)
+        if msg.get("From") and (msg.get("Date") or msg.get("Message-ID")):
+            return text
+    return None
+
+
+def _yaml_quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+_PLAIN_FLOW_SCALAR_RE = re.compile(r"^[A-Za-z0-9._:+-]+$")
+
+
+def _flow_scalar(value: str) -> str:
+    """A value safe to write unquoted inside a YAML flow mapping, else quoted."""
+    return value if _PLAIN_FLOW_SCALAR_RE.match(value) else _yaml_quote(value)
+
+
+def render_email_frontmatter(h: EmailHeaders) -> list[str]:
+    """The `email:` frontmatter block.
+
+    Carries only what the flat fields cannot: addresses, to/cc, subject and the
+    threading ids. `date_published` and `creators` are written from the header
+    by the caller and are deliberately NOT repeated here.
+    """
+    lines = ["email:"]
+    if h.from_:
+        lines.append(f"  from: {_yaml_quote(h.from_.rendered())}")
+    for key, people in (("to", h.to), ("cc", h.cc)):
+        if people:
+            lines.append(f"  {key}:")
+            lines.extend(f"    - {_yaml_quote(p.rendered())}" for p in people)
+    if h.subject:
+        lines.append(f"  subject: {_yaml_quote(h.subject)}")
+    if h.message_id:
+        lines.append(f"  message_id: {_yaml_quote(h.message_id)}")
+    if h.in_reply_to:
+        lines.append(f"  in_reply_to: {_yaml_quote(h.in_reply_to)}")
+    if h.references:
+        lines.append("  references:")
+        lines.extend(f"    - {_yaml_quote(r)}" for r in h.references)
+    if h.dkim_signature_present:
+        # Present only when the source carried the signature. Its ABSENCE means
+        # this copy is unsigned, never that verification failed.
+        lines.append("  dkim_signature_present: true")
+    return lines
+
+
+def render_message_annotation(
+    n: int, author: Participant | None, when: str | None, quoted: bool
+) -> str:
+    """One block annotation per thread segment (record-format `message:`).
+
+    A single YAML mapping rather than loose keys, so a parser can never read a
+    missing key as a misplaced one. `quoted` is load-bearing: every claim drawn
+    from a quoted segment belongs to THAT segment's author, never the sender of
+    the containing message.
+    """
+    parts = [f"n: {n}"]
+    if author:
+        parts.append(f"from: {_yaml_quote(author.rendered())}")
+    if when:
+        # This is a YAML FLOW mapping, so any value carrying a comma or brace
+        # must be quoted or it splits into bogus entries. An ISO timestamp is a
+        # safe plain scalar; a free-form attribution date ("Mar 5, 2015 6:08 PM")
+        # is not.
+        parts.append(f"date: {_flow_scalar(when)}")
+    parts.append(f"quoted: {'true' if quoted else 'false'}")
+    return "<!-- message: {" + ", ".join(parts) + "} -->"
+
+
+def render_thread_body(segments: list[Segment], top_when: str | None = None) -> str:
+    """The record body: each message annotated with its own author and quoting."""
+    out: list[str] = []
+    for i, seg in enumerate(segments, 1):
+        when = top_when if (i == 1 and not seg.quoted) else seg.attributed_when
+        out.append(render_message_annotation(i, seg.author, when, seg.quoted))
+        out.append("")
+        out.append(seg.text)
+        out.append("")
+    return "\n".join(out).strip() + "\n"
