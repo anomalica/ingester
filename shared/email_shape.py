@@ -288,3 +288,39 @@ def render_thread_body(segments: list[Segment], top_when: str | None = None) -> 
         out.append(seg.text)
         out.append("")
     return "\n".join(out).strip() + "\n"
+
+
+# The first line of a raw header block. Leading whitespace is allowed because the
+# block is usually indented inside a <pre>, and anchoring hard to the line start
+# missed it - the trim then fired later and left the headers behind.
+_ONLY_LINK_RE = re.compile(r"^\[[^\]]*\]\([^)]*\)$")
+
+_RAW_TAIL_RE = re.compile(
+    r"^[ \t]*(MIME-Version:\s|Delivered-To:\s|Received:\s+(by|from)\s"
+    r"|Content-Type:\s*multipart/)",
+    re.M,
+)
+
+
+def trim_raw_source_tail(text: str) -> str:
+    """Cut the raw MIME source block off the end of an extracted email body.
+
+    A page that publishes an email renders the readable message and then repeats
+    it as raw source. The rendered copy is the record body; the raw block is
+    provenance and already lives in the archived original via source_hash.
+    Leaving it in duplicates the whole message and feeds boundary markers and
+    quoted-printable escapes to every downstream consumer.
+
+    Trimming the extracted TEXT rather than removing the block from the HTML is
+    deliberate: dropping the <pre> changes what the extractor scores as the main
+    content and it selects the site's boilerplate instead.
+    """
+    m = _RAW_TAIL_RE.search(text)
+    if not m:
+        return text
+    lines = text[: m.start()].rstrip().splitlines()
+    # Publishers put a "download the original" link immediately before the raw
+    # block. That is furniture sitting on the boundary, not message content.
+    while lines and (not lines[-1].strip() or _ONLY_LINK_RE.match(lines[-1].strip())):
+        lines.pop()
+    return "\n".join(lines).rstrip() + "\n"

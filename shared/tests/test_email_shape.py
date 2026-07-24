@@ -2,6 +2,7 @@ from email_shape import (
     Participant,
     parse_headers,
     render_message_annotation,
+    trim_raw_source_tail,
     segment_thread,
 )
 
@@ -120,3 +121,27 @@ def test_message_annotation_survives_a_comma_in_the_display_name():
         1, Participant(address="j@x.com", name="Smith, John"), None, False
     )
     assert _parse_annotation(ann)["from"] == "Smith, John <j@x.com>"
+
+
+def test_trim_raw_source_tail_cuts_the_indented_raw_block():
+    # the raw block sits inside a <pre>, so it arrives INDENTED - anchoring hard
+    # to the line start missed it and left the headers in the body
+    text = (
+        "Thx for the note.\n"
+        "\n"
+        "[Download raw source](/podesta-emails//get/18724)\n"
+        "\n"
+        "\t\t\tMIME-Version: 1.0\n"
+        "Received: by 10.25.155.143 with HTTP\n"
+        "From: John Podesta <john.podesta@gmail.com>\n"
+    )
+    got = trim_raw_source_tail(text)
+    assert got.strip() == "Thx for the note."
+    assert "MIME-Version" not in got
+    # the publisher's download link is boundary furniture, not message content
+    assert "Download raw source" not in got
+
+
+def test_trim_raw_source_tail_leaves_an_ordinary_body_alone():
+    text = "Just a normal message.\n\nRegards,\nBob\n"
+    assert trim_raw_source_tail(text) == text

@@ -9,6 +9,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from email_shape import (
+    extract_embedded_rfc822,
+    parse_headers,
+    render_email_frontmatter,
+    render_thread_body,
+    segment_thread,
+    trim_raw_source_tail,
+)
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
 from record import get_version, write_record
@@ -41,6 +49,7 @@ def _build_frontmatter(
     source_hash: str | None,
     snapshots: list[dict] | None,
     media_summary: dict | None,
+    email_headers=None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
     escaped_title = title.replace('"', '\\"')
@@ -50,8 +59,13 @@ def _build_frontmatter(
         f'title: "{escaped_title}"',
         f"date_published: {date_published}",
         "source_type: web",
-        f"source_url: {url}",
     ]
+    # document_type is WHAT the record is; source_type is HOW it was acquired.
+    # Set only when the whole record is one message - never for a container that
+    # merely holds correspondence (those get body-level `message:` annotations).
+    if email_headers is not None:
+        lines.append("document_type: email")
+    lines.append(f"source_url: {url}")
     if publisher:
         escaped_pub = publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')
@@ -66,6 +80,11 @@ def _build_frontmatter(
     if description:
         escaped_desc = description.replace('"', '\\"')
         lines.append(f'description: "{escaped_desc}"')
+    if email_headers is not None:
+        # Carries only what the flat fields cannot - addresses, to/cc, subject and
+        # the threading ids. date_published and creators come from the headers
+        # above and are deliberately not repeated here.
+        lines.extend(render_email_frontmatter(email_headers))
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     if source_hash:
         lines.append(f"source_hash: {content_hash_label(source_hash)}")
@@ -122,6 +141,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     html = asset_path.read_text(encoding="utf-8", errors="replace")
 
+    # A page publishing a single email renders the readable message AND embeds
+    # the raw RFC822 source; the raw block is the authoritative header source.
+    # Detect it BEFORE extraction but do NOT remove it from the HTML - dropping
+    # the <pre> changes what trafilatura scores as the main content and it picks
+    # up the site's boilerplate instead. The raw tail is trimmed off the
+    # extracted text below.
+    raw_message = extract_embedded_rfc822(html)
+
     article = extract_article(html, url)
     if article is None:
         print("No article content extracted", file=sys.stderr)
@@ -129,7 +156,28 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     print(f"Extracted: {article.title}", file=sys.stderr)
 
-    hex_hash = hash_string(article.text)
+    # Email shape: a page publishing a single message embeds the raw RFC822
+    # source alongside the rendered copy. Those headers are AUTHORITATIVE - the
+    # page's own date furniture is not, which is how a 2015 email came out dated
+    # 2000-01-01 (scraped off a date-picker config in the page's JS).
+    email_headers = None
+    if raw_message:
+        email_headers = parse_headers(raw_message)
+        readable = trim_raw_source_tail(article.text)
+        segments = segment_thread(readable, top_author=email_headers.from_)
+        body_text = render_thread_body(
+            segments,
+            top_when=email_headers.date.isoformat() if email_headers.date else None,
+        )
+        print(
+            f"Email: {len(segments)} message(s), "
+            f"{len(email_headers.participants())} participant(s)",
+            file=sys.stderr,
+        )
+    else:
+        body_text = article.text
+
+    hex_hash = hash_string(body_text)
 
     # Web articles are URL-based: use source_id from acquire as the store key.
     # Falls back to content hash only if source_id is missing for some reason.
@@ -140,9 +188,18 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         )
         return 0
 
-    date_published = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if email_headers is not None and email_headers.date:
+        date_published = email_headers.date.date().isoformat()
+    else:
+        date_published = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
     title = article.title or "Untitled"
+    creators = article.authors
+    if email_headers is not None:
+        if email_headers.subject:
+            title = email_headers.subject
+        if email_headers.from_:
+            creators = [email_headers.from_.name or email_headers.from_.address]
     media_summary = None
     if article.media:
         media_summary = {
@@ -156,15 +213,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         source_id,
         fetched_url,
         date_accessed,
-        article.authors,
+        creators,
         hex_hash,
         article.sitename,
         article.description,
         source_hash,
         snapshots,
         media_summary,
+        email_headers,
     )
-    content = frontmatter + "\n\n" + article.text + "\n"
+    content = frontmatter + "\n\n" + body_text + "\n"
 
     result = validate(content, extra_required=["source_url"])
     if result.fixed:
