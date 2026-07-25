@@ -128,6 +128,14 @@ def _normalise_indent(text: str) -> str:
     strip() misses this because the indentation is mid-block. Any line that
     starts with a tab or 4+ spaces (the code-block triggers) is left-stripped;
     1-3 leading spaces are below the threshold and left alone.
+
+    KNOWN LIMITATION (email prose is the common case, so this is the right
+    default): legitimately-indented content in a technical email - a pasted code
+    snippet, a log excerpt, an ASCII table - is flattened with no trace. There is
+    no clean discriminator: "de-indent only a uniform-prefix block" would keep
+    code but miss the reported bug (only the first line carried the tabs, the
+    wrap continuation had none), and "flatten only isolated indented lines" just
+    trades one failure mode for another. Carried deliberately, not overlooked.
     """
     out = []
     for ln in text.splitlines():
