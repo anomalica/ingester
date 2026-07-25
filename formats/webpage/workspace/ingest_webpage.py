@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from email_shape import (
+    drop_leading_heading,
     extract_embedded_rfc822,
     parse_headers,
     render_email_frontmatter,
@@ -164,6 +165,9 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     if raw_message:
         email_headers = parse_headers(raw_message)
         readable = trim_raw_source_tail(article.text)
+        # The page renders the subject as the body's leading heading; with it in
+        # frontmatter that heading is furniture, not message content.
+        readable = drop_leading_heading(readable, email_headers.subject)
         segments = segment_thread(readable, top_author=email_headers.from_)
         body_text = render_thread_body(
             segments,

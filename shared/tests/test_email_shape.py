@@ -2,6 +2,7 @@ from email_shape import (
     Participant,
     parse_headers,
     render_message_annotation,
+    drop_leading_heading,
     trim_raw_source_tail,
     segment_thread,
 )
@@ -145,3 +146,32 @@ def test_trim_raw_source_tail_cuts_the_indented_raw_block():
 def test_trim_raw_source_tail_leaves_an_ordinary_body_alone():
     text = "Just a normal message.\n\nRegards,\nBob\n"
     assert trim_raw_source_tail(text) == text
+
+
+def test_segment_thread_strips_pre_indentation_from_first_segment():
+    # the WikiLeaks bug: the first (unquoted) segment carried five leading tabs
+    # that a block-level strip missed, rendering as an indented code block
+    podesta = Participant(address="john.podesta@gmail.com", name="John Podesta")
+    body = "\t\t\t\t\tThx for the note.\ncontact information.\n"
+    segs = segment_thread(body, top_author=podesta)
+    assert not segs[0].text.startswith(("\t", "    "))
+    assert segs[0].text.splitlines()[0] == "Thx for the note."
+
+
+def test_normalise_indent_leaves_sub_threshold_spaces():
+    from email_shape import _normalise_indent
+
+    # 1-3 leading spaces are below the code-block threshold - left alone
+    assert _normalise_indent("  two spaces") == "  two spaces"
+    assert _normalise_indent("    four spaces") == "four spaces"
+    assert _normalise_indent("\ttab") == "tab"
+
+
+def test_drop_leading_heading_removes_subject_echo():
+    text = "## Re: Leslie Kean book comment\n\nThx for the note.\n"
+    assert drop_leading_heading(text, "Re: Leslie Kean book comment") == (
+        "Thx for the note.\n"
+    )
+    # a genuine first heading that is not the subject is kept
+    kept = "## Some Other Heading\n\nbody\n"
+    assert drop_leading_heading(kept, "Re: Leslie Kean book comment") == kept

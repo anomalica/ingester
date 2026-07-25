@@ -118,6 +118,50 @@ class Segment:
     attributed_when: str | None = None
 
 
+def _normalise_indent(text: str) -> str:
+    """Drop leading indentation that is an extraction artefact, not content.
+
+    A message published inside a <pre> arrives indented, and in CommonMark a
+    leading tab or 4+ leading spaces is an indented code block - the workbench
+    prose pane then renders those lines in a monospace box with overflow and
+    drops the un-indented continuation into its own paragraph. A block-level
+    strip() misses this because the indentation is mid-block. Any line that
+    starts with a tab or 4+ spaces (the code-block triggers) is left-stripped;
+    1-3 leading spaces are below the threshold and left alone.
+    """
+    out = []
+    for ln in text.splitlines():
+        if ln[:1] == "\t" or re.match(r"^ {4,}", ln):
+            ln = ln.lstrip(" \t")
+        out.append(ln)
+    return "\n".join(out)
+
+
+_HEADING_RE = re.compile(r"^#{1,6}[ \t]+(.+?)[ \t]*$")
+
+
+def drop_leading_heading(text: str, title: str | None) -> str:
+    """Drop a leading markdown heading that merely repeats the message subject.
+
+    A page publishing an email renders the subject as the body's first heading;
+    with the subject already in frontmatter that heading is page furniture, not
+    message content. Only strips when it matches the title (normalised), so a
+    genuine first heading is left untouched.
+    """
+    if not title:
+        return text
+    stripped = text.lstrip("\n")
+    m = _HEADING_RE.match(stripped.split("\n", 1)[0])
+    if (
+        m
+        and re.sub(r"\s+", " ", m.group(1)).strip().casefold()
+        == re.sub(r"\s+", " ", title).strip().casefold()
+    ):
+        rest = stripped.split("\n", 1)
+        return rest[1].lstrip("\n") if len(rest) > 1 else ""
+    return text
+
+
 def _dequote(lines: list[str]) -> list[str]:
     """Strip one level of '>' quoting."""
     out = []
@@ -181,9 +225,12 @@ def segment_thread(body: str, top_author: Participant | None = None) -> list[Seg
 
     # A quoted segment arrives '>'-prefixed; strip one level so the prose is
     # readable and the quoting is expressed by the annotation, not punctuation.
+    # Every segment (not only the quoted ones) is de-indented: <pre> indentation
+    # survives the block-level strip mid-segment and renders as a code block.
     for seg in segments:
         if seg.quoted:
-            seg.text = "\n".join(_dequote(seg.text.splitlines())).strip()
+            seg.text = "\n".join(_dequote(seg.text.splitlines()))
+        seg.text = _normalise_indent(seg.text).strip()
     return segments
 
 
