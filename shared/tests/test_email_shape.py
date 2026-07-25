@@ -180,11 +180,17 @@ def test_drop_leading_heading_removes_subject_echo():
 def test_comment_close_in_display_name_cannot_truncate_annotation():
     import yaml
 
-    # a display name carrying '-->' must not close the enclosing HTML comment
+    # a display name carrying a comment-close (-->, or --!> via the HTML5
+    # comment-end-bang state) must not close the enclosing comment
+    for evil_name in ("Bad --> guy", "Bad --!> guy"):
+        evil = Participant(address="e@x.com", name=evil_name)
+        ann = render_message_annotation(1, evil, None, False)
+        payload = ann[: -len(" -->")]
+        assert "-->" not in payload and "--!>" not in payload
+        inner = ann[len("<!-- message: ") : -len(" -->")]
+        assert yaml.safe_load(inner)["from"] == f"{evil_name} <e@x.com>"
     evil = Participant(address="e@x.com", name="Bad --> guy")
     ann = render_message_annotation(1, evil, None, False)
-    # the raw comment-close does not appear inside the annotation payload
-    assert "-->" not in ann[: -len(" -->")]
     # a normal address bracket is left readable (only --> is escaped)
     assert "<e@x.com>" in ann
     # and it round-trips to the exact original bytes via a real YAML parser

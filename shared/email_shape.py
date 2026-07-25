@@ -269,14 +269,23 @@ def extract_embedded_rfc822(html: str) -> str | None:
 
 
 def _yaml_quote(value: str) -> str:
-    # Break the ONLY sequence that can close the enclosing HTML comment early -
-    # a literal '-->' inside an attacker-controlled value (a display name from an
-    # email dump) - by emitting its '>' as the YAML \x3e escape. A bare '>' or an
-    # address's own '<...>' cannot close a comment, so they stay readable; only
-    # the framing threat is touched. This ENCODES rather than mutates: a YAML
-    # parser round-trips '--\x3e' back to '-->', so the archive keeps the exact
-    # bytes the sender wrote. Same mechanism as the \\ and \" escapes already here.
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("-->", "--\\x3e")
+    # Break the sequences that can close the enclosing HTML comment early inside
+    # an attacker-controlled value (a display name from an email dump), by
+    # emitting their '>' as the YAML \x3e escape. BOTH `-->` and `--!>` close a
+    # comment (the HTML5 tokenizer has a comment-end-bang state), so both are
+    # escaped. A bare '>' or an address's own '<...>' cannot close a comment, so
+    # they stay readable; only the framing threats are touched. This ENCODES
+    # rather than mutates: a YAML parser round-trips '--\x3e' / '--!\x3e' back to
+    # the exact bytes, so the archive keeps what the sender wrote. The two
+    # replacements are non-overlapping and neither produces a new closer (the
+    # replacement carries no literal '>'). Same mechanism as the \\ and \"
+    # escapes already here.
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("-->", "--\\x3e")
+        .replace("--!>", "--!\\x3e")
+    )
     return f'"{escaped}"'
 
 
