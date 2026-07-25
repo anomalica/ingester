@@ -185,6 +185,8 @@ def test_comment_close_in_display_name_cannot_truncate_annotation():
     ann = render_message_annotation(1, evil, None, False)
     # the raw comment-close does not appear inside the annotation payload
     assert "-->" not in ann[: -len(" -->")]
+    # a normal address bracket is left readable (only --> is escaped)
+    assert "<e@x.com>" in ann
     # and it round-trips to the exact original bytes via a real YAML parser
     inner = ann[len("<!-- message: ") : -len(" -->")]
     assert yaml.safe_load(inner)["from"] == "Bad --> guy <e@x.com>"
