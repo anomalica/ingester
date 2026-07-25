@@ -175,3 +175,16 @@ def test_drop_leading_heading_removes_subject_echo():
     # a genuine first heading that is not the subject is kept
     kept = "## Some Other Heading\n\nbody\n"
     assert drop_leading_heading(kept, "Re: Leslie Kean book comment") == kept
+
+
+def test_comment_close_in_display_name_cannot_truncate_annotation():
+    import yaml
+
+    # a display name carrying '-->' must not close the enclosing HTML comment
+    evil = Participant(address="e@x.com", name="Bad --> guy")
+    ann = render_message_annotation(1, evil, None, False)
+    # the raw comment-close does not appear inside the annotation payload
+    assert "-->" not in ann[: -len(" -->")]
+    # and it round-trips to the exact original bytes via a real YAML parser
+    inner = ann[len("<!-- message: ") : -len(" -->")]
+    assert yaml.safe_load(inner)["from"] == "Bad --> guy <e@x.com>"

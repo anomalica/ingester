@@ -269,7 +269,14 @@ def extract_embedded_rfc822(html: str) -> str | None:
 
 
 def _yaml_quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # Escape '>' as the YAML \x3e escape so an attacker-controlled value carrying
+    # '-->' (a display name from an email dump) cannot close the enclosing HTML
+    # comment early and truncate the annotation. This ENCODES the value rather
+    # than mutating it - a YAML parser round-trips \x3e back to the exact byte,
+    # so the archive keeps what the sender actually wrote. Same mechanism as the
+    # \\ and \" escapes already here.
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace(">", "\\x3e")
+    return f'"{escaped}"'
 
 
 _PLAIN_FLOW_SCALAR_RE = re.compile(r"^[A-Za-z0-9._:+-]+$")
