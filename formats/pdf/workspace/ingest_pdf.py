@@ -351,12 +351,23 @@ def _extract_chunk_with_retry(
 
 # Metered pricing, USD per 1M tokens (input, output). Used only to report an
 # estimated cost for API runs; the subscription path spends no dollars and its
-# meta carries no token counts.
+# "sonnet" alias is deliberately absent so no dollar figure is shown for it.
+# Keys are matched by prefix, so dated model ids (claude-sonnet-5-YYYYMMDD)
+# still resolve. Sonnet 5 is quoted at its LIST price ($3/$15); an introductory
+# $2/$10 runs through 2026-08-31, but quoting list makes the estimate err high.
 _MODEL_PRICING = {
-    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
     "claude-haiku-4-5": (1.0, 5.0),
 }
+
+
+def _price_for(model: str) -> tuple[float, float]:
+    for key, prices in _MODEL_PRICING.items():
+        if model.startswith(key):
+            return prices
+    return (0.0, 0.0)
 
 
 def _report_usage(all_meta: list[dict], model: str) -> None:
@@ -367,7 +378,7 @@ def _report_usage(all_meta: list[dict], model: str) -> None:
     cache_read = sum((m or {}).get("cache_read_input_tokens", 0) for m in all_meta)
     if not total_in and not total_out:
         return
-    in_price, out_price = _MODEL_PRICING.get(model, (0.0, 0.0))
+    in_price, out_price = _price_for(model)
     cost = (total_in * in_price + total_out * out_price) / 1_000_000
     cache_note = f", {cache_read:,} cache-read" if cache_read else ""
     est = f" = ~${cost:.2f}" if (in_price or out_price) else ""

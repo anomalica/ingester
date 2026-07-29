@@ -20,7 +20,7 @@ class ContentFilteredError(RuntimeError):
 
 
 class AnthropicProvider:
-    def __init__(self, model: str = "claude-sonnet-4-6"):
+    def __init__(self, model: str = "claude-sonnet-5"):
         self.model = model
         self.client = anthropic.Anthropic()
 
