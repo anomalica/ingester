@@ -77,6 +77,7 @@ Rules:
 - Block-level redactions: multi-line HTML comment with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.
 - Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for small mid-sentence redactions
 - Illegible text: {{{{illegible: best guess}}}} or {{{{illegible}}}}
+- Struck-out text: TRANSCRIBE text that is struck through (crossed out) in the source, wrapping it in ~~strikethrough~~. Do NOT omit it. A deletion is content, not an instruction to skip - what was struck and the fact that it was struck are both part of the record, and in an edited or declassified document the struck wording is often the point. Keep the struck text in its place in reading order; only the ~~ markers signal that it was crossed out.
 - Classification markings (for declassified government documents):
   - The document's overall banner goes in frontmatter as `classification:` with the verbatim marking minus the surrounding parentheses, e.g. classification: "SECRET//REL TO USA, FVEY". Omit the field entirely if the document is unmarked or unclassified.
   - Repeated in-body copies of that same overall banner (page headers/footers) are redundant - drop them, don't reproduce them in the prose.
