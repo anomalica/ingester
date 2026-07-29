@@ -126,6 +126,33 @@ def _chapter_title(soup: BeautifulSoup) -> str | None:
     return None
 
 
+def _toc_titles(book: epub.EpubBook) -> dict[str, str]:
+    """Map each document's filename to its title from the epub's navigation
+    (toc.ncx / nav). The TOC is the authoritative source of chapter titles and
+    carries the printed chapter number ('1. Shattered World'); many epubs style
+    titles as `<p class="chaptername">` that the in-body h1-h3 scan cannot see."""
+    titles: dict[str, str] = {}
+
+    def key(href: str) -> str:
+        return posixpath.basename(unquote(href).split("#", 1)[0])
+
+    def walk(entries) -> None:
+        for entry in entries:
+            node, children = entry if isinstance(entry, (tuple, list)) else (entry, ())
+            href = getattr(node, "href", None)
+            title = getattr(node, "title", None)
+            if href and title and title.strip():
+                titles.setdefault(key(href), title.strip())
+            if children:
+                walk(children)
+
+    try:
+        walk(book.toc)
+    except Exception:
+        pass
+    return titles
+
+
 def _strip_navigation(soup: BeautifulSoup) -> None:
     for nav in soup.find_all(["nav", "script", "style"]):
         nav.decompose()
@@ -398,15 +425,17 @@ def extract(epub_path: str) -> ExtractedBook:
     description = _meta_first(book, "DC", "description")
     identifier = _meta_first(book, "DC", "identifier")
 
+    toc = _toc_titles(book)
     images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
     for index, item in enumerate(_spine_documents(book), start=1):
-        chapter_title, markdown = _xhtml_to_markdown(
+        body_title, markdown = _xhtml_to_markdown(
             item.get_content(), item.file_name, book, images
         )
         markdown = _expand_image_tokens(markdown, images)
         if not markdown:
             continue
+        chapter_title = toc.get(posixpath.basename(item.file_name)) or body_title
         chapters.append(Chapter(index=index, title=chapter_title, markdown=markdown))
 
     return ExtractedBook(
