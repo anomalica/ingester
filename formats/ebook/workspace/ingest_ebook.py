@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dedup import find_by_source_id
 from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
 from record import get_version, write_record
@@ -155,6 +156,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
             file=sys.stderr,
         )
         return 0
+
+    if not force and book.identifier:
+        existing = find_by_source_id(store_dir, book.identifier)
+        if existing:
+            print(
+                f"Skipping: source_id '{book.identifier}' already ingested as "
+                f"{existing.stem[:12]}... (use --force to re-extract)",
+                file=sys.stderr,
+            )
+            return 0
 
     media_summary = None
     if book.images:

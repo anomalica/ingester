@@ -34,17 +34,21 @@ def _read_frontmatter(record_path: Path) -> dict | None:
 
 
 def _iter_records(store_dir: Path):
-    """Yield (path, frontmatter) for each record in store_dir."""
+    """Yield (path, frontmatter) for each LIVE record in store_dir.
+
+    Superseded records (carrying `superseded_by`) are skipped: they are retired,
+    so for intake dedup they must not count as an existing copy - a re-ingest of a
+    source whose only record has been superseded should be allowed to proceed."""
     if not store_dir.is_dir():
         return
     for path in sorted(store_dir.glob("*.md")):
         fm = _read_frontmatter(path)
-        if fm is not None:
+        if fm is not None and not fm.get("superseded_by"):
             yield path, fm
 
 
 def find_by_source_id(store_dir: Path, source_id: str) -> Path | None:
-    """Return the path of the first record whose source_id matches."""
+    """Return the path of the first LIVE record whose source_id matches."""
     if not source_id:
         return None
     for path, fm in _iter_records(store_dir):
@@ -54,7 +58,7 @@ def find_by_source_id(store_dir: Path, source_id: str) -> Path | None:
 
 
 def find_by_source_url(store_dir: Path, source_url: str) -> Path | None:
-    """Return the path of the first record whose source_url matches exactly."""
+    """Return the path of the first LIVE record whose source_url matches exactly."""
     if not source_url:
         return None
     for path, fm in _iter_records(store_dir):

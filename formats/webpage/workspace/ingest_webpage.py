@@ -18,6 +18,7 @@ from email_shape import (
     segment_thread,
     trim_raw_source_tail,
 )
+from dedup import find_by_source_id
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
 from record import get_version, write_record
@@ -191,6 +192,16 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
             file=sys.stderr,
         )
         return 0
+
+    if not force and source_id:
+        existing = find_by_source_id(store_dir, source_id)
+        if existing:
+            print(
+                f"Skipping: source_id '{source_id}' already ingested as "
+                f"{existing.stem[:12]}... (use --force to re-extract)",
+                file=sys.stderr,
+            )
+            return 0
 
     if email_headers is not None and email_headers.date:
         date_published = email_headers.date.date().isoformat()
