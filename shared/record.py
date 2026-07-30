@@ -162,6 +162,51 @@ class SymlinkCollisionError(Exception):
     """
 
 
+def _stamp_superseded_by(text: str, new_hash: str) -> str:
+    """Insert a superseded_by pointer into a record's frontmatter, after
+    source_hash if present else content_hash else the opening fence. Idempotent."""
+    if re.search(r"^superseded_by:", text, re.MULTILINE):
+        return text
+    stamp = (
+        f"superseded_by: {new_hash}\n"
+        f'superseded_reason: "Superseded by a --force re-ingest of the same source '
+        f"(new content_hash {new_hash[:12]}). Retired to store/v1; the body stays "
+        f'resolvable via the normative store/ -> store/v1 fallback."\n'
+    )
+    anchor = re.search(r"^source_hash:.*\n", text, re.MULTILINE) or re.search(
+        r"^content_hash:.*\n", text, re.MULTILINE
+    )
+    if anchor:
+        return text[: anchor.end()] + stamp + text[anchor.end() :]
+    if text.startswith("---\n"):
+        return "---\n" + stamp + text[len("---\n") :]
+    return text
+
+
+def _retire_to_v1(old_record: Path, new_hash: str) -> None:
+    """Move a superseded record and its sidecars to store/v1 with a superseded_by
+    stamp, rather than deleting them. A --force re-ingest must NOT bare-delete the
+    prior record: anything downstream can still resolve it by hash (a digest, a
+    redigest sweep), and a review.json on it is irreplaceable human work. The
+    normative resolution order (store/ -> store/v1 via superseded_by -> reported
+    dangling) requires the retired body to stay readable at store/v1/{hash}.md."""
+    v1_dir = old_record.parent / "v1"
+    v1_dir.mkdir(parents=True, exist_ok=True)
+    stamped = _stamp_superseded_by(
+        old_record.read_text(encoding="utf-8", errors="replace"), new_hash
+    )
+    old_record.write_text(stamped)
+    stem = old_record.name[: -len(".md")]
+    old_record.replace(v1_dir / old_record.name)
+    # Carry sidecars (verification.json, review.json) alongside so review work and
+    # possession proofs survive the retirement. Skip other .md files (a .v2 variant
+    # is a distinct record, not a sidecar).
+    for sidecar in old_record.parent.glob(f"{stem}.*"):
+        if sidecar.suffix == ".md":
+            continue
+        sidecar.replace(v1_dir / sidecar.name)
+
+
 def write_record(
     store_dir: Path,
     records_dir: Path,
@@ -186,9 +231,10 @@ def write_record(
         SymlinkCollisionError: if the target symlink already exists and
             points to a different real record. Stale symlinks (broken
             target) and idempotent re-writes (same target) are allowed.
-            When ``force`` is True, the colliding symlink AND the old
-            record file it points at are deleted before the new record
-            is written, since --force re-ingest is an explicit replace.
+            When ``force`` is True, the colliding symlink is repointed and the
+            old record it pointed at is RETIRED to store/v1 with a superseded_by
+            pointer (never deleted), since --force re-ingest is an explicit
+            replace that must not bare-drop a record downstream may resolve.
     """
     store_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
@@ -206,12 +252,11 @@ def write_record(
                     f"already points to {existing_target.name} (a different record). "
                     f"Upstream dedup should have caught this re-ingest."
                 )
-            # --force replace: drop the stale record file too so it does
-            # not orphan in the store. Sidecar files (verification JSON)
-            # that share the same hash stem are removed alongside.
-            old_stem = existing_target.stem
-            for sibling in existing_target.parent.glob(f"{old_stem}*"):
-                sibling.unlink()
+            # --force replace: RETIRE the prior record to store/v1 with a
+            # superseded_by pointer rather than deleting it. Deleting bare-drops a
+            # record anything downstream may resolve by hash and loses any review
+            # work on it. See _retire_to_v1.
+            _retire_to_v1(existing_target, hex_hash)
         link_path.unlink()
     elif link_path.exists():
         link_path.unlink()
