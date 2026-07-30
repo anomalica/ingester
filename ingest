@@ -375,6 +375,21 @@ if [[ -n "$SNAPSHOT_PATHS" ]]; then
 	done <<<"$SNAPSHOT_PATHS"
 fi
 
+# Stamp source-quality labels onto the records produced this run. Host-side
+# because the substitution detector's wordlist lives here, not in the format
+# containers - so the score matches the corpus backfill. Idempotent: it re-derives
+# the quality: block from the body and changes no hash (frontmatter is unhashed).
+QUALITY_TARGETS="$({
+	git -C "$INGESTS_DIR" diff --name-only -- store/
+	git -C "$INGESTS_DIR" ls-files --others --exclude-standard -- store/
+} 2>/dev/null | grep -E '^store/[^/]+\.md$' | sort -u)"
+if [[ -n "$QUALITY_TARGETS" ]]; then
+	while IFS= read -r REC; do
+		[[ -z "$REC" ]] && continue
+		python3 "${SCRIPT_DIR}/shared/quality.py" stamp "${INGESTS_DIR}/${REC}" 2>/dev/null || true
+	done <<<"$QUALITY_TARGETS"
+fi
+
 # Auto-commit any new records to ingests (unless --no-commit,
 # used for bulk corpus runs that want a single bundled commit at the end)
 if [[ "$NO_COMMIT" -eq 1 ]]; then
