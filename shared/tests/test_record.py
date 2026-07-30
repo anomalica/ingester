@@ -148,20 +148,23 @@ def test_write_record_refuses_to_clobber_unrelated_record(tmp_path):
     assert not (store / "bbb222.md").exists()
 
 
-def test_write_record_force_replaces_stale_record(tmp_path):
-    """With force=True, a colliding symlink AND its target are replaced."""
+def test_write_record_force_retires_stale_record_to_v1(tmp_path):
+    """With force=True, the colliding symlink is repointed and its old target is
+    RETIRED to store/v1 with a superseded_by pointer - never deleted - so review
+    work and possession proofs survive."""
     store = tmp_path / "store"
     records = tmp_path / "records"
 
-    write_record(store, records, "aaa111", "first", "2023-06-05", "web", "Test Article")
-    # Sidecar that should also be cleaned up under --force
+    old = "---\ncontent_hash: sha256:aaa111\ntitle: T\n---\nfirst"
+    write_record(store, records, "aaa111", old, "2023-06-05", "web", "Test Article")
     (store / "aaa111.verification.json").write_text("{}")
+    (store / "aaa111.review.json").write_text('{"reviews": []}')
 
     write_record(
         store,
         records,
         "bbb222",
-        "second",
+        "---\ncontent_hash: sha256:bbb222\ntitle: T\n---\nsecond",
         "2023-06-05",
         "web",
         "Test Article",
@@ -170,6 +173,13 @@ def test_write_record_force_replaces_stale_record(tmp_path):
 
     link = records / "2023-06-05-web-test-article.md"
     assert link.resolve() == (store / "bbb222.md").resolve()
-    assert (store / "bbb222.md").read_text() == "second"
+    assert (store / "bbb222.md").read_text().endswith("second")
+    # Old record retired to store/v1, not deleted, and stamped superseded_by.
     assert not (store / "aaa111.md").exists()
-    assert not (store / "aaa111.verification.json").exists()
+    retired = store / "v1" / "aaa111.md"
+    assert retired.exists()
+    assert "superseded_by: bbb222" in retired.read_text()
+    # Sidecars - including the irreplaceable review.json - carried to v1.
+    assert (store / "v1" / "aaa111.verification.json").exists()
+    assert (store / "v1" / "aaa111.review.json").exists()
+    assert not (store / "aaa111.review.json").exists()
