@@ -65,6 +65,25 @@ def test_find_by_source_url_missing_field(tmp_path):
     assert find_by_source_url(store, "https://example.com/article") is None
 
 
+def test_find_by_source_id_skips_superseded(tmp_path):
+    """A superseded record is retired - it must not count as a live duplicate,
+    so the live record with the same source_id is the one returned."""
+    store = tmp_path / "store"
+    _write_record(store, "old", source_id="calibre:4268", superseded_by="newhash")
+    live = _write_record(store, "znew", source_id="calibre:4268")
+
+    assert find_by_source_id(store, "calibre:4268") == live
+
+
+def test_find_by_source_id_all_superseded_returns_none(tmp_path):
+    """If the only record with this source_id is superseded, nothing matches -
+    a re-ingest should be allowed to proceed."""
+    store = tmp_path / "store"
+    _write_record(store, "old", source_id="calibre:4268", superseded_by="newhash")
+
+    assert find_by_source_id(store, "calibre:4268") is None
+
+
 def test_missing_store_dir_returns_none(tmp_path):
     assert find_by_source_id(tmp_path / "no-store", "youtube:X") is None
     assert find_by_source_url(tmp_path / "no-store", "https://x") is None
