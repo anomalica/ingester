@@ -128,7 +128,14 @@ def _preserve_identity(content: str, preserved: dict) -> str:
         title = str(preserved["title"]).replace('"', '\\"')
         fm = re.sub(r"(?m)^title:.*$", f'title: "{title}"', fm, count=1)
     if "date_published" in preserved:
-        date = str(preserved["date_published"])
+        raw = preserved["date_published"]
+        # A stored date parses to a date/datetime; keep day precision, not a time.
+        if isinstance(raw, datetime):
+            date = raw.date().isoformat()
+        elif hasattr(raw, "isoformat"):
+            date = raw.isoformat()
+        else:
+            date = str(raw)
         if re.search(r"(?m)^date_published:", fm):
             fm = re.sub(
                 r"(?m)^date_published:.*$", f"date_published: {date}", fm, count=1
