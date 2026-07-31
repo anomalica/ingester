@@ -543,10 +543,14 @@ def main():
             ):
                 if existing_fm.get(key) is not None:
                     preserved[key] = existing_fm[key]
-    # Provenance preserved from the existing record wins over the manifest.
-    source_url = preserved.get("source_url", source_url)
-    source_file = preserved.get("source_file", source_file)
-    source_id = preserved.get("source_id", source_id)
+    if existing_record.exists():
+        # Re-ingest: provenance comes ONLY from the stored record, never the
+        # manifest. The input is a sources/{hash} file whose basename is the
+        # content hash, not an original filename, so a missing stored field means
+        # omit it (origin-unknown = absence) rather than substitute the hash.
+        source_url = preserved.get("source_url")
+        source_file = preserved.get("source_file")
+        source_id = preserved.get("source_id")
 
     # Provider selection is opt-in to the metered API: default to the
     # Claude Code session (flat-rate subscription) and only use the
