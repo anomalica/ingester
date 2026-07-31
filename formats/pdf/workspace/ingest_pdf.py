@@ -425,6 +425,7 @@ def main():
     source_url = None
     source_id = None
     fetched_url = None
+    local_source_name = None
     if args.staging_dir:
         import json
 
@@ -434,7 +435,24 @@ def main():
             sys.exit(1)
         manifest = json.loads(manifest_path.read_text())
         args.input_file = args.staging_dir / manifest["asset"]
-        source_url = manifest.get("source")
+        # A URL fetch records the URL in "source"; a local-file ingest records the
+        # local PATH there, which is neither a URL nor provenance and must never
+        # leak into source_url (it would put /home/<user>/... in a public record).
+        # Accept "source" as source_url only when it is actually a URL; an explicit
+        # --source-url arrives as manifest["source_url"].
+        source_url = manifest.get("source_url")
+        raw_source = manifest.get("source")
+        if (
+            not source_url
+            and isinstance(raw_source, str)
+            and raw_source.startswith(("http://", "https://"))
+        ):
+            source_url = raw_source
+        # The original filename of a local-file ingest is the basename of its
+        # source PATH; args.input_file is the staged copy (renamed asset.pdf), so
+        # it is not the original. Absent for a URL fetch.
+        if not source_url and isinstance(raw_source, str) and raw_source:
+            local_source_name = Path(raw_source).name
         source_id = manifest.get("source_id")
         # Only distinct fetch URLs are worth recording (acquire sets it equal
         # to source for a plain fetch).
@@ -461,8 +479,8 @@ def main():
         sys.exit(1)
 
     # A PDF ingested from a local file has no URL; record its original filename
-    # as provenance so the record is not left with no acquisition origin.
-    source_file = args.input_file.name if not source_url else None
+    # (from the source path, not the staged asset name) as provenance.
+    source_file = local_source_name
 
     store_dir = output_dir / "store"
     records_dir = output_dir / "records"
