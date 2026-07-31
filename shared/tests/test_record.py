@@ -183,3 +183,36 @@ def test_write_record_force_retires_stale_record_to_v1(tmp_path):
     assert (store / "v1" / "aaa111.verification.json").exists()
     assert (store / "v1" / "aaa111.review.json").exists()
     assert not (store / "aaa111.review.json").exists()
+
+
+def test_write_record_reuses_slug_on_same_hash_reingest(tmp_path):
+    """A re-ingest of the same content_hash keeps its slug even when the re-derived
+    title/date differ, so it does not leave a second alias standing for one record."""
+    store = tmp_path / "store"
+    records = tmp_path / "records"
+    write_record(
+        store,
+        records,
+        "abc123",
+        "---\ncontent_hash: sha256:abc123\ntitle: Old\n---\nbody",
+        "2020-05-14",
+        "pdf",
+        "Old Title",
+        force=True,
+    )
+    # Re-ingest the SAME hash with a different title and date.
+    write_record(
+        store,
+        records,
+        "abc123",
+        "---\ncontent_hash: sha256:abc123\ntitle: New\n---\nbody2",
+        "2020-08-09",
+        "pdf",
+        "New Title",
+        force=True,
+    )
+    links = [p for p in records.iterdir() if p.is_symlink()]
+    assert len(links) == 1  # one alias, not two
+    assert links[0].name == "2020-05-14-pdf-old-title.md"  # the ORIGINAL slug held
+    assert links[0].resolve() == (store / "abc123.md").resolve()
+    assert (store / "abc123.md").read_text().endswith("body2")  # content did update
