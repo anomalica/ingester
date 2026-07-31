@@ -3,10 +3,29 @@
 from ingest_pdf import (
     _check_record,
     _find_missing_pages,
+    _normalise_thematic_breaks,
     _patch_frontmatter,
     _renumber_pages,
     _strip_frontmatter,
 )
+
+
+def test_normalise_thematic_breaks_converts_body_rule():
+    """A bare '---' in the body collides with the YAML delimiter and truncates a
+    naive parser; it must become '***', while the frontmatter delimiters stay."""
+    content = "---\nschema: anomalica/record/1\nsource_type: pdf\n---\nfirst\n\n---\n\nsecond\n"
+    out = _normalise_thematic_breaks(content)
+    # Frontmatter delimiters untouched.
+    assert out.startswith("---\nschema: anomalica/record/1\nsource_type: pdf\n---\n")
+    body = out.split("\n---\n", 1)[1]
+    # No bare '---' survives in the body; the break became '***'.
+    assert not any(line.strip() == "---" for line in body.splitlines())
+    assert "***" in body
+
+
+def test_normalise_thematic_breaks_noop_without_body_rule():
+    content = "---\nsource_type: pdf\n---\njust text, no rule\n"
+    assert _normalise_thematic_breaks(content) == content
 
 
 def test_injects_content_hash():
