@@ -4,6 +4,7 @@ from ingest_pdf import (
     _check_record,
     _find_missing_pages,
     _normalise_thematic_breaks,
+    _preserve_identity,
     _patch_frontmatter,
     _renumber_pages,
     _strip_frontmatter,
@@ -194,3 +195,27 @@ def test_renumber_pages_with_offset():
     assert "file_page: 51" in result
     assert "file_page: 52" in result
     assert "file_page: 1" not in result
+
+
+def test_preserve_identity_holds_stored_title_and_date():
+    """On a re-ingest the model's re-derived title/date are overridden by the stored
+    values, so a re-extraction never renames or re-dates a record."""
+    content = '---\ntitle: "Re-derived"\ndate_published: 2020-08-09\nsource_type: pdf\n---\nbody'
+    out = _preserve_identity(
+        content, {"title": "Stored Title", "date_published": "2020-05-14"}
+    )
+    assert 'title: "Stored Title"' in out
+    assert "date_published: 2020-05-14" in out
+    assert out.endswith("body")
+
+
+def test_preserve_identity_renames_model_date_field():
+    content = '---\ntitle: "T"\ndate: 2020-08-09\n---\nbody'
+    out = _preserve_identity(content, {"date_published": "1975"})
+    assert "date_published: 1975" in out
+    assert "\ndate: " not in out
+
+
+def test_preserve_identity_noop_when_nothing_preserved():
+    content = '---\ntitle: "T"\n---\nbody'
+    assert _preserve_identity(content, {}) == content
