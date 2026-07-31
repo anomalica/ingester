@@ -9,6 +9,17 @@ creators:
 source_type: pdf
 pages: 3
 classification: "SECRET//REL TO USA, FVEY"
+release:
+  declassified_by: "Richard A. Harrison"
+  declassified_by_title: "MG, USCENTCOM Chief of Staff"
+  control_number: "USCENTCOM 26-0028"
+  released_to: "AARO"
+  release_date: 2026-03-16
+  handling: ["FOUO", "PA applies"]
+  markings:
+    - "Declassified by MG Richard A. Harrison, USCENTCOM Chief of Staff"
+    - "FOUO/PA applies"
+    - "Approved for Release to AARO"
 ---
 
 <!-- file_page: 1 -->
@@ -72,7 +83,7 @@ Rules:
 - Footnotes/endnotes: use markdown footnote syntax [^N] for references and [^N]: text for definitions
 - No HTML tags. Use only markdown syntax. No <sup>, <sub>, <br>, or any other HTML.
 - Do not write HTML comments except for annotations (page boundaries, images, redactions)
-- Skip page furniture: page numbers, running headers, running footers, watermarks
+- Skip decorative page furniture: page numbers, running headers, running footers, decorative watermarks. EXCEPTION: release/declassification provenance (declassification overlays, handling caveats, release-control footers) is NOT furniture even though it sits in footers and overlay stamps - capture it in the `release:` block (see below); never skip it.
 - Images/figures: single-line HTML comment with image field: <!-- image: Factual description -->
 - Block-level redactions: multi-line HTML comment with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.
 - Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for small mid-sentence redactions
@@ -84,6 +95,11 @@ Rules:
   - Per-portion markings that DIFFER from the overall banner (paragraph/section prefixes like "(U)", "(S//REL)", "(S/RELIDO)") become an inline annotation at the start of the portion they govern: {{{{classification: U}}}}, {{{{classification: S//REL}}}}, {{{{classification: "S/RELIDO"}}}}. Quote the value if it contains a colon or comma. The marking applies from its position until the next classification marking.
   - Reproduce marking values verbatim (minus parens). Do not normalise or expand them.
   - NEVER render classification markings as strikethrough. Strikethrough (~~text~~) is reserved for text genuinely struck out in the source.
+- Release and declassification provenance (STAMPED on the page - a declassification overlay, a handling caveat, a release-control footer - as opposed to the classification banner above, which is a separate thing): capture it in a top-level `release:` frontmatter block. This is documented provenance for the project, not furniture.
+  - Fields, include those the page actually shows: `declassified_by` (the releasing officer as a PERSON NAME ALONE, e.g. "Richard A. Harrison" - not their rank or post), `declassified_by_title` (rank and post, e.g. "MG, USCENTCOM Chief of Staff"), `control_number` (e.g. "USCENTCOM 26-0028"), `released_to` (e.g. "AARO"), `release_date` (ISO date), `handling` (a YAML list, e.g. ["FOUO", "PA applies"]).
+  - `markings`: REQUIRED whenever a `release:` block is present - a YAML list of the release/declassification stamps VERBATIM as printed. If you have examined the pages and there are NO release or declassification stamps, emit `markings: []` - that asserts examined-and-none-found and is meaningful, so include the block with an empty markings list rather than omitting it.
+  - This is DISTINCT from `classification:` (what the document was marked). Do not copy a classification banner into `release.markings`.
+  - A Bates-style sequence number in a release footer (e.g. "000001") numbers THAT page, not the document - put it on that page's boundary annotation if anywhere, never in the `release:` block.
 - Em-dashes written as --- must be converted to a single hyphen
 - Title: use the document's actual title or subject - the core title only. Do NOT append event metadata that sits near the title on a cover page but is not part of it: conference/meeting dates, venue, city, or location (e.g. drop trailing ", February 22-24, 2012. The Westin Tysons Corner, Falls Church, VA."). Keep any real subtitle. Never put the literal words "undefined", "null", or "None" in the title - if part of a title is missing or unreadable, omit that part rather than writing a placeholder word.
 - schema must be: anomalica/record/1
