@@ -207,6 +207,26 @@ def _retire_to_v1(old_record: Path, new_hash: str) -> None:
         sidecar.replace(v1_dir / sidecar.name)
 
 
+def _existing_slug_for(records_dir: Path, record_path: Path) -> Path | None:
+    """An existing records/ symlink that already resolves to record_path, or None.
+
+    Used to keep a record's human-readable slug STABLE across a re-ingest of the
+    same content_hash: the slug is a downstream join key (digests, queues, links),
+    so a re-extraction must reuse it rather than mint a new one from a re-derived
+    title/date and leave the old symlink orphaned as a second alias."""
+    if not records_dir.is_dir():
+        return None
+    target = record_path.resolve()
+    for link in records_dir.iterdir():
+        if link.is_symlink():
+            try:
+                if (records_dir / os.readlink(link)).resolve() == target:
+                    return link
+            except OSError:
+                continue
+    return None
+
+
 def write_record(
     store_dir: Path,
     records_dir: Path,
@@ -240,8 +260,14 @@ def write_record(
     records_dir.mkdir(parents=True, exist_ok=True)
 
     record_path = store_dir / f"{hex_hash}{variant}.md"
-    link_name = symlink_name(date, source_type, title, variant=variant)
-    link_path = records_dir / link_name
+    # Reuse the existing slug on a same-content_hash re-ingest so the human alias
+    # stays stable; only mint a new slug for a genuinely new record.
+    existing_link = _existing_slug_for(records_dir, record_path)
+    if existing_link is not None:
+        link_path = existing_link
+    else:
+        link_name = symlink_name(date, source_type, title, variant=variant)
+        link_path = records_dir / link_name
 
     if link_path.is_symlink():
         existing_target = (records_dir / os.readlink(link_path)).resolve()
