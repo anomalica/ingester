@@ -98,6 +98,22 @@ def _clean_annotations(content: str) -> str:
     return re.sub(r"\n\n(-->)", r"\n\1", content)
 
 
+def _normalise_thematic_breaks(content: str) -> str:
+    """Convert a standalone `---` line in the BODY to `***`.
+
+    The model sometimes emits a page's horizontal rule as `---`, which is
+    identical to the record's YAML frontmatter delimiter and truncates a naive
+    parser at the body (it once ate 98.8% of an ebook). `***` is an equivalent
+    thematic break that does not collide. The frontmatter's own delimiters are
+    left intact."""
+    m = re.match(r"^(---\n.*?\n---\n)(.*)$", content, re.DOTALL)
+    if not m:
+        return content
+    frontmatter, body = m.group(1), m.group(2)
+    body = re.sub(r"(?m)^---[ \t]*$", "***", body)
+    return frontmatter + body
+
+
 def _patch_frontmatter(
     content: str,
     input_hash: str,
@@ -525,6 +541,7 @@ def main():
         all_meta.extend(chunk_metas)
 
     content = _clean_annotations(content)
+    content = _normalise_thematic_breaks(content)
     model_name = getattr(provider, "model", "unknown")
     _report_usage(all_meta, model_name)
     provider_name = "anthropic-api" if using_api else "claude-code"
