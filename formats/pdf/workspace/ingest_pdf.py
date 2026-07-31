@@ -114,6 +114,30 @@ def _normalise_thematic_breaks(content: str) -> str:
     return frontmatter + body
 
 
+def _preserve_identity(content: str, preserved: dict) -> str:
+    """Override the model's re-derived title/date_published with the values already
+    stored for this record, on a re-ingest. A re-extraction must not rename or
+    re-date a record as a side effect - that regresses metadata (a dropped date, an
+    invented day) and mints a second slug. Provenance is carried via _patch_frontmatter
+    args; this handles the two fields that live in the model's own frontmatter."""
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return content
+    fm = parts[1]
+    if "title" in preserved:
+        title = str(preserved["title"]).replace('"', '\\"')
+        fm = re.sub(r"(?m)^title:.*$", f'title: "{title}"', fm, count=1)
+    if "date_published" in preserved:
+        date = str(preserved["date_published"])
+        if re.search(r"(?m)^date_published:", fm):
+            fm = re.sub(
+                r"(?m)^date_published:.*$", f"date_published: {date}", fm, count=1
+            )
+        elif re.search(r"(?m)^date:", fm):
+            fm = re.sub(r"(?m)^date:.*$", f"date_published: {date}", fm, count=1)
+    return f"---{fm}---{parts[2]}"
+
+
 def _patch_frontmatter(
     content: str,
     input_hash: str,
@@ -498,11 +522,31 @@ def main():
     # manifest (--copyright on the host script), otherwise the
     # _patch_frontmatter default of restricted.
     existing_copyright = manifest_copyright
+    preserved: dict = {}
     existing_record = store_dir / f"{input_hash}.md"
     if existing_record.exists():
         existing_fm = _extract_frontmatter(existing_record.read_text())
-        if existing_fm and "copyright" in existing_fm:
-            existing_copyright = existing_fm["copyright"]
+        if existing_fm:
+            if "copyright" in existing_fm:
+                existing_copyright = existing_fm["copyright"]
+            # A re-ingest of the same source keeps its human-facing identity and
+            # provenance STABLE. The model re-derives title/date from the page and
+            # can regress them (drop a date, invent a day, rename); provenance
+            # (source_url/file/id) cannot be re-derived at all. Carry the stored
+            # values forward so a re-extraction updates only the body + new fields.
+            for key in (
+                "title",
+                "date_published",
+                "source_url",
+                "source_file",
+                "source_id",
+            ):
+                if existing_fm.get(key) is not None:
+                    preserved[key] = existing_fm[key]
+    # Provenance preserved from the existing record wins over the manifest.
+    source_url = preserved.get("source_url", source_url)
+    source_file = preserved.get("source_file", source_file)
+    source_id = preserved.get("source_id", source_id)
 
     # Provider selection is opt-in to the metered API: default to the
     # Claude Code session (flat-rate subscription) and only use the
@@ -576,6 +620,7 @@ def main():
         fetched_url=fetched_url,
         source_file=source_file,
     )
+    content = _preserve_identity(content, preserved)
 
     # Validate, auto-fix, and repair missing pages
     repair_provider = provider
