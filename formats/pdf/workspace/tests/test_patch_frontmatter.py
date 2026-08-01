@@ -1,5 +1,7 @@
 """Tests for frontmatter patching, record checking, and page utilities in ingest_pdf."""
 
+import re
+
 from ingest_pdf import (
     _check_record,
     _find_missing_pages,
@@ -7,6 +9,7 @@ from ingest_pdf import (
     _preserve_identity,
     _patch_frontmatter,
     _renumber_pages,
+    _resequence_pages_sequential,
     _strip_frontmatter,
 )
 
@@ -219,3 +222,45 @@ def test_preserve_identity_renames_model_date_field():
 def test_preserve_identity_noop_when_nothing_preserved():
     content = '---\ntitle: "T"\n---\nbody'
     assert _preserve_identity(content, {}) == content
+
+
+# --- _resequence_pages_sequential tests ---
+
+
+def test_resequence_fixes_chunk_offset_double_count():
+    """The dominant defect: chunk 2's pages emitted as absolute (21-25) then the
+    merge added the offset again (41-45). Complete marker set, wrong values ->
+    resequenced to 1..5 by order."""
+    content = (
+        "---\n---\n"
+        "<!-- file_page: 1 -->\na\n<!-- file_page: 2 -->\nb\n"
+        "<!-- file_page: 41 -->\nc\n<!-- file_page: 42 -->\nd\n<!-- file_page: 43 -->\ne\n"
+    )
+    fixed, changed = _resequence_pages_sequential(content, 5)
+    assert changed
+    assert re.findall(r"file_page: (\d+)", fixed) == ["1", "2", "3", "4", "5"]
+
+
+def test_resequence_fixes_printed_number_substitution():
+    """A page carrying a prominent printed number (31) that the model copied into
+    file_page on a 3-page doc is corrected by position."""
+    content = "<!-- file_page: 1 -->\na\n<!-- file_page: 2 -->\nb\n<!-- file_page: 31 -->\nc\n"
+    fixed, changed = _resequence_pages_sequential(content, 3)
+    assert changed
+    assert re.findall(r"file_page: (\d+)", fixed) == ["1", "2", "3"]
+
+
+def test_resequence_noop_when_already_sequential():
+    content = "<!-- file_page: 1 -->\na\n<!-- file_page: 2 -->\nb\n"
+    fixed, changed = _resequence_pages_sequential(content, 2)
+    assert not changed
+    assert fixed == content
+
+
+def test_resequence_noop_when_count_mismatch():
+    """A short marker count is a genuinely missing/merged page - left for repair,
+    never masked by renumbering."""
+    content = "<!-- file_page: 1 -->\na\n<!-- file_page: 31 -->\nb\n"
+    fixed, changed = _resequence_pages_sequential(content, 3)
+    assert not changed
+    assert fixed == content

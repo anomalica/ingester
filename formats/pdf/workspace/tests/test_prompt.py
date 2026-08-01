@@ -23,3 +23,19 @@ def test_prompt_with_page_offset():
     prompt = build_extraction_prompt(page_offset=51, page_count=50)
     assert "51" in prompt
     assert "100" in prompt
+
+
+def test_prompt_chunk_numbers_from_one_not_absolute():
+    """The chunk must be numbered 1-based; the document offset is applied by code
+    afterwards. Telling the model to number from page_offset makes it emit
+    absolute numbers that the merge then double-counts."""
+    prompt = build_extraction_prompt(page_offset=21, page_count=20)
+    assert "starting from 21" not in prompt
+    assert "from 1" in prompt
+
+
+def test_prompt_file_page_is_not_printed_number():
+    prompt = build_extraction_prompt()
+    line = next(line for line in prompt.splitlines() if line.startswith("- file_page"))
+    assert "printed" in line.lower()
+    assert "position" in line.lower()
