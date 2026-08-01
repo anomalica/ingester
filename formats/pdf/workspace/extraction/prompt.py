@@ -59,8 +59,12 @@ def build_extraction_prompt(
     if page_offset is not None and page_count is not None:
         page_end = page_offset + page_count - 1
         page_context = (
-            f"\n\nThese are pages {page_offset} to {page_end} of a larger document. "
-            f"Number pages starting from {page_offset}."
+            f"\n\nThese are pages {page_offset} to {page_end} of a larger document, "
+            f"given to you as a standalone {page_count}-page excerpt. Number the "
+            f"file_page annotations of THIS excerpt sequentially from 1 (1 for the "
+            f"first page shown here, 2 for the next, and so on) - do NOT start from "
+            f"{page_offset}; the document offset is added afterwards, so adding it "
+            f"yourself would double-count it."
         )
 
     return f"""Extract all content from this PDF into the Anomalica record format.
@@ -76,7 +80,7 @@ Rules:
 - Always quote the title value (e.g. title: "Document Title")
 - Quote any YAML values that contain colons
 - Mark page boundaries with single-line HTML comments: <!-- file_page: 1 -->
-- file_page is always the PDF page number (1-indexed from the start of the file)
+- file_page is the SEQUENTIAL POSITION of the page counting from 1 (the first page you are given is 1, the next is 2, and so on). It is NOT a number printed anywhere on the page - never copy a page number that appears in the document into file_page. If the page shows its own printed number, that printed number goes in printed_page (below), and file_page stays the sequential position.
 - If the page has a printed page number that differs from file_page, add <!-- printed_page: 8 --> on the next line
 - If there is no printed page number, or it matches file_page, omit printed_page
 - Use markdown only to MIRROR structure the source actually has: a heading printed in the document becomes a markdown heading, a table in the document becomes a markdown table, text emphasised in the document becomes bold/italic. Plain prose stays plain prose. Do not add structure the source lacks (see FAITHFULNESS above)

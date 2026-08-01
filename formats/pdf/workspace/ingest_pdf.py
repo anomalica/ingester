@@ -269,6 +269,27 @@ def _find_missing_pages(content: str, expected_pages: int) -> list[int]:
     return sorted(set(range(1, expected_pages + 1)) - found)
 
 
+def _resequence_pages_sequential(content: str, page_count: int) -> tuple[str, bool]:
+    """Reassign file_page annotations to 1..page_count by reading order.
+
+    file_page is defined as the sequential position of the page from the start of
+    the file, so when the markers are COMPLETE (exactly one per page) but carry
+    wrong values - a chunk-offset double-count, or a printed page number the model
+    copied in - the correct values are simply their order. Only acts when the
+    marker count equals page_count; a mismatch means a genuinely missing or merged
+    page, which must go to repair rather than be masked by renumbering. Returns
+    (content, changed).
+    """
+    markers = re.findall(r"file_page: (\d+)", content)
+    if len(markers) != page_count:
+        return content, False
+    if markers == [str(i) for i in range(1, page_count + 1)]:
+        return content, False
+    counter = iter(range(1, page_count + 1))
+    fixed = re.sub(r"file_page: \d+", lambda _m: f"file_page: {next(counter)}", content)
+    return fixed, True
+
+
 def _repair_missing_pages(
     content: str,
     missing_pages: list[int],
@@ -644,10 +665,30 @@ def main():
     for error in validation.errors:
         print(f"Validation error: {error}", file=sys.stderr)
 
-    # PDF-specific: check page completeness
+    # PDF-specific: file_page must be the sequential position, so no marker can
+    # exceed the page count. A complete-but-misnumbered set (chunk-offset
+    # double-count, or a printed number copied in) is rescued by resequencing; a
+    # residual out-of-range value means the marker count is wrong (a missing or
+    # extra page) and is flagged for repair.
+    content, resequenced = _resequence_pages_sequential(content, page_count)
+    if resequenced:
+        print(
+            f"Resequenced file_page markers to 1..{page_count} (they were complete "
+            "but misnumbered)",
+            file=sys.stderr,
+        )
     found_pages = set(int(m) for m in re.findall(r"file_page: (\d+)", content))
     if found_pages:
         max_page = max(found_pages)
+        if max_page > page_count:
+            validation.errors.append(
+                f"file_page out of range: {max_page} exceeds {page_count} pages"
+            )
+            print(
+                f"Validation error: file_page {max_page} exceeds the {page_count}-page "
+                "document",
+                file=sys.stderr,
+            )
         missing_count = page_count - max_page
         if missing_count > page_count * 0.25:
             validation.errors.append(
