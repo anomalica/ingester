@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from email_shape import (
@@ -35,6 +36,70 @@ def _get_trafilatura_version() -> str:
         return version("trafilatura")
     except PackageNotFoundError:
         return "unknown"
+
+
+_WAYBACK_RE = re.compile(r"web\.archive\.org/web/(\d{4})(\d{2})(\d{2})\d*/", re.I)
+
+
+def _wayback_capture_date(fetched_url: str | None) -> date | None:
+    """The capture date embedded in a Wayback Machine URL, or None.
+
+    Wayback URLs are web.archive.org/web/<YYYYMMDDhhmmss>/<original>. That
+    timestamp is when the page was ARCHIVED, never when it was published - so it
+    must not become date_published, yet extractors happily scrape it from the
+    archive's served-date chrome (a Space.com interview came out dated to its
+    2001-04-13 capture rather than its 2001-02-27 byline).
+    """
+    if not fetched_url:
+        return None
+    m = _WAYBACK_RE.search(fetched_url)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def _date_from_url(url: str | None, not_after: date) -> str | None:
+    """Recover a publication date encoded in the URL path, as YYYY-MM-DD.
+
+    Old news URLs often carry the date in the slug
+    (.../clarke_believe_010227.html -> 2001-02-27). Only a candidate that parses
+    to a real calendar date in [1990-01-01, not_after] is accepted - a page
+    cannot be archived before it is published, so the capture date bounds it and
+    rejects most article-id digit runs that merely look date-like. Used only to
+    replace a date already known to be the Wayback capture, never as a general
+    date source.
+    """
+    if not url:
+        return None
+    floor = date(1990, 1, 1)
+    candidates: list[date] = []
+    # 8-digit YYYYMMDD, optionally separated by / _ . or -.
+    for m in re.finditer(
+        r"(?<!\d)(19\d{2}|20\d{2})[/_.-]?(\d{2})[/_.-]?(\d{2})(?!\d)", url
+    ):
+        try:
+            candidates.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        except ValueError:
+            pass
+    # 6-digit YYMMDD; century inferred and bounded by the capture date.
+    for m in re.finditer(r"(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)", url):
+        yy, mo, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        for century in (2000, 1900):
+            try:
+                cand = date(century + yy, mo, dd)
+            except ValueError:
+                continue
+            if floor <= cand <= not_after:
+                candidates.append(cand)
+                break
+    valid = [c for c in candidates if floor <= c <= not_after]
+    if not valid:
+        return None
+    # The latest date on or before the capture is the best publication estimate.
+    return max(valid).isoformat()
 
 
 def _build_frontmatter(
@@ -206,7 +271,29 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     if email_headers is not None and email_headers.date:
         date_published = email_headers.date.date().isoformat()
     else:
-        date_published = article.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        extracted = article.date
+        capture = _wayback_capture_date(fetched_url)
+        if capture is not None and extracted == capture.isoformat():
+            # The extractor took the Wayback served-date chrome for the
+            # publication date. Recover the real date from the original URL slug
+            # if it carries one; otherwise leave the capture date but flag it -
+            # it is the archive date, not necessarily publication.
+            recovered = _date_from_url(url, not_after=capture)
+            if recovered:
+                print(
+                    f"Discarding Wayback capture date {extracted}; recovered "
+                    f"publication date {recovered} from the original URL slug",
+                    file=sys.stderr,
+                )
+                extracted = recovered
+            else:
+                print(
+                    f"Warning: extracted date {extracted} equals the Wayback "
+                    "capture date and no publication date is recoverable from the "
+                    "URL - it may be the archive's served date, not publication",
+                    file=sys.stderr,
+                )
+        date_published = extracted or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
     title = article.title or "Untitled"
     creators = article.authors
