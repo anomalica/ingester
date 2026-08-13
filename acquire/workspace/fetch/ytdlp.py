@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -91,6 +92,15 @@ def _download(url: str, output_dir: Path) -> tuple[Path | None, dict | None]:
         timeout=TIMEOUT,
     )
     if result.returncode != 0:
+        # yt-dlp's own message is the ONLY thing that says why - age gate, bot
+        # check, region block, a stale extractor. Discarding it left the caller
+        # emitting "could not fetch this video-platform URL", which is a restatement
+        # of the exit code and not a diagnosis: two failed attempts on one video
+        # recorded that string twice and nothing else, so the cause had to be
+        # reproduced by hand afterwards.
+        stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
+        for line in stderr.splitlines()[-8:]:
+            print(f"  yt-dlp: {line}", file=sys.stderr)
         return None, None
 
     files = list(output_dir.iterdir())
