@@ -6,7 +6,7 @@ The PDF ingester takes a PDF file (born-digital or scanned) and produces an Anom
 
 ## Output format
 
-Anomalica record format - markdown with YAML frontmatter and annotations. See the specification in the meta-repository at `architecture/record-format.md` and the ADR at `decisions/0012-record-interchange-format.md`.
+Anomalica record format - markdown with YAML frontmatter and annotations. See the specification in the meta-repository at `architecture/ingest-format.md` and the ADR at `decisions/0012-record-interchange-format.md`.
 
 ## Extraction method
 

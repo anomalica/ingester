@@ -74,7 +74,7 @@ No AI model is used. Web articles have semantic HTML structure that mechanical e
 
 ## Record format
 
-Output follows the Anomalica record format spec (`anomalica/architecture/record-format.md`).
+Output follows the Anomalica record format spec (`anomalica/architecture/ingest-format.md`).
 
 Frontmatter:
 ```yaml

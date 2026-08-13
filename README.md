@@ -35,7 +35,7 @@ The `ingest` script acquires the source, detects its type, and routes to the app
 
 ## Record format
 
-All format handlers produce markdown files with YAML frontmatter and annotations. The full specification is in the [meta-repository](https://github.com/anomalica/anomalica/blob/main/architecture/record-format.md).
+All format handlers produce markdown files with YAML frontmatter and annotations. The full specification is in the [meta-repository](https://github.com/anomalica/anomalica/blob/main/architecture/ingest-format.md).
 
 ## After ingestion
 

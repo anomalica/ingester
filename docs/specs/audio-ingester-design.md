@@ -61,7 +61,7 @@ Phase 2 is a separate piece of work and not covered in detail here.
 
 ## Record format
 
-Follows the specification at `anomalica/architecture/record-format.md`.
+Follows the specification at `anomalica/architecture/ingest-format.md`.
 
 ### Frontmatter
 

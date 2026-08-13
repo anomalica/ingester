@@ -330,7 +330,7 @@ def render_email_frontmatter(h: EmailHeaders) -> list[str]:
 def render_message_annotation(
     n: int, author: Participant | None, when: str | None, quoted: bool
 ) -> str:
-    """One block annotation per thread segment (record-format `message:`).
+    """One block annotation per thread segment (ingest-format `message:`).
 
     A single YAML mapping rather than loose keys, so a parser can never read a
     missing key as a misplaced one. `quoted` is load-bearing: every claim drawn

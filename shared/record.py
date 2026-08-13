@@ -84,7 +84,7 @@ def _quote_class_value(value: str) -> str:
 
 
 def normalise_classification(record_text: str) -> str:
-    """Reconcile classification markings to the record-format conventions:
+    """Reconcile classification markings to the ingest-format conventions:
     lift the document banner to frontmatter `classification`, drop redundant
     in-body repeats of that banner, and convert portion markings that differ
     from the banner to inline `{{classification: VALUE}}` annotations. Strips

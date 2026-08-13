@@ -322,7 +322,7 @@ if [[ -f "$ASSET_PATH" ]]; then
 	# Stamp the archived object's extension onto the record. This is the only
 	# place that knows it: codec/container describe the STREAM, the extension is a
 	# property of the FILE (yt-dlp writes .opus while reporting container: ogg), so
-	# consumers cannot derive it and must not guess. See record-format.md.
+	# consumers cannot derive it and must not guess. See ingest-format.md.
 	INGESTS_DIR="${INGESTS_DIR}" CONTENT_HASH="${CONTENT_HASH}" ASSET_EXT="${ASSET_EXT}" python3 -c "
 import os, re, sys
 from pathlib import Path
