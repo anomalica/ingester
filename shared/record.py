@@ -207,20 +207,20 @@ def _retire_to_v1(old_record: Path, new_hash: str) -> None:
         sidecar.replace(v1_dir / sidecar.name)
 
 
-def _existing_slug_for(records_dir: Path, record_path: Path) -> Path | None:
+def _existing_slug_for(by_name_dir: Path, record_path: Path) -> Path | None:
     """An existing records/ symlink that already resolves to record_path, or None.
 
     Used to keep a record's human-readable slug STABLE across a re-ingest of the
     same content_hash: the slug is a downstream join key (digests, queues, links),
     so a re-extraction must reuse it rather than mint a new one from a re-derived
     title/date and leave the old symlink orphaned as a second alias."""
-    if not records_dir.is_dir():
+    if not by_name_dir.is_dir():
         return None
     target = record_path.resolve()
-    for link in records_dir.iterdir():
+    for link in by_name_dir.iterdir():
         if link.is_symlink():
             try:
-                if (records_dir / os.readlink(link)).resolve() == target:
+                if (by_name_dir / os.readlink(link)).resolve() == target:
                     return link
             except OSError:
                 continue
@@ -229,7 +229,7 @@ def _existing_slug_for(records_dir: Path, record_path: Path) -> Path | None:
 
 def write_record(
     store_dir: Path,
-    records_dir: Path,
+    by_name_dir: Path,
     hex_hash: str,
     content: str,
     date: str,
@@ -238,7 +238,7 @@ def write_record(
     force: bool = False,
     variant: str = "",
 ) -> tuple[Path, Path]:
-    """Write a record to the store and create a symlink in records/.
+    """Write a record to the store and create a symlink in by-name/.
 
     ``variant`` (e.g. ".v2") is inserted before the ``.md`` extension on both
     the store file and the symlink, so a parallel record (such as the
@@ -257,20 +257,20 @@ def write_record(
             replace that must not bare-drop a record downstream may resolve.
     """
     store_dir.mkdir(parents=True, exist_ok=True)
-    records_dir.mkdir(parents=True, exist_ok=True)
+    by_name_dir.mkdir(parents=True, exist_ok=True)
 
     record_path = store_dir / f"{hex_hash}{variant}.md"
     # Reuse the existing slug on a same-content_hash re-ingest so the human alias
     # stays stable; only mint a new slug for a genuinely new record.
-    existing_link = _existing_slug_for(records_dir, record_path)
+    existing_link = _existing_slug_for(by_name_dir, record_path)
     if existing_link is not None:
         link_path = existing_link
     else:
         link_name = symlink_name(date, source_type, title, variant=variant)
-        link_path = records_dir / link_name
+        link_path = by_name_dir / link_name
 
     if link_path.is_symlink():
-        existing_target = (records_dir / os.readlink(link_path)).resolve()
+        existing_target = (by_name_dir / os.readlink(link_path)).resolve()
         if existing_target.exists() and existing_target != record_path.resolve():
             if not force:
                 raise SymlinkCollisionError(
@@ -289,7 +289,7 @@ def write_record(
 
     record_path.write_text(content)
 
-    rel_target = os.path.relpath(record_path, records_dir)
+    rel_target = os.path.relpath(record_path, by_name_dir)
     link_path.symlink_to(rel_target)
 
     # Refresh the store's pipeline-version manifest on every write so consumers

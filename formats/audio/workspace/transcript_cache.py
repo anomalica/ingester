@@ -32,8 +32,8 @@ def _json_default(o):
     return str(o)
 
 
-def archive_path(sources_dir: Path, hex_hash: str) -> Path:
-    return sources_dir / f"{hex_hash}.transcript.json"
+def archive_path(records_dir: Path, hex_hash: str) -> Path:
+    return records_dir / f"{hex_hash}.transcript.json"
 
 
 def save_raw_archive(

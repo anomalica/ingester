@@ -307,13 +307,13 @@ esac
 echo "Done. Staging: ${RUN_DIR}" >&2
 
 # Archive original source file and any sibling snapshots for workbench access
-SOURCES_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/sources"
-mkdir -p "$SOURCES_DIR"
+RECORDS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/records"
+mkdir -p "$RECORDS_DIR"
 ASSET_PATH="${RUN_DIR}/${ASSET}"
 if [[ -f "$ASSET_PATH" ]]; then
 	CONTENT_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
 	ASSET_EXT="${ASSET##*.}"
-	TARGET="${SOURCES_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
+	TARGET="${RECORDS_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
 	if [[ ! -f "$TARGET" ]]; then
 		cp "$ASSET_PATH" "$TARGET"
 		echo "Source archived: ${TARGET}" >&2
@@ -367,7 +367,7 @@ if [[ -n "$SNAPSHOT_PATHS" ]]; then
 		SNAP_PATH="${RUN_DIR}/${SNAP_NAME}"
 		[[ ! -f "$SNAP_PATH" ]] && continue
 		SNAP_HASH="$(sha256sum "$SNAP_PATH" | cut -d' ' -f1)"
-		SNAP_TARGET="${SOURCES_DIR}/${SNAP_HASH}.${SNAP_EXT}"
+		SNAP_TARGET="${RECORDS_DIR}/${SNAP_HASH}.${SNAP_EXT}"
 		if [[ ! -f "$SNAP_TARGET" ]]; then
 			cp "$SNAP_PATH" "$SNAP_TARGET"
 			echo "Snapshot archived: ${SNAP_TARGET}" >&2

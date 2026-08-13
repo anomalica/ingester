@@ -13,7 +13,7 @@ runtime:
     # Source archive (raw audio + the durable raw transcript archive). The
     # complete whisperx+pyannote output is written here as {hash}.transcript.json
     # beside the audio - durable provenance, never discarded.
-    - ../../../sources:/mnt/sources:rw
+    - ../../../records:/mnt/records:rw
     # Persistent HuggingFace model cache so Whisper/pyannote/wav2vec2 weights
     # download once and are reused across runs (the container is --rm). Without
     # this, every ingestion re-downloads ~2.5GB of models.

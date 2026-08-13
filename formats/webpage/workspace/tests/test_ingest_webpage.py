@@ -83,7 +83,7 @@ def test_ingest_creates_symlink(mock_extract, tmp_path):
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
     ingest_webpage.run(staging, output, force=False)
-    links = list((output / "records").glob("*.md"))
+    links = list((output / "by-name").glob("*.md"))
     assert len(links) == 1
     assert links[0].is_symlink()
     assert "2023-06-05-web-test-article" in links[0].name

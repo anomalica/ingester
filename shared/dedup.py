@@ -2,7 +2,8 @@
 
 Layered dedup pipeline (cheapest first):
   1. source_id   - stable platform identifier (e.g. youtube:ZBtMbBPzqHY)
-  2. source_url  - exact URL match
+  2. source_url  - exact match against every URL a record answers to, including
+     the aliases in `also_published_at` and `fetched_url`
   3. content_hash - byte hash of the fetched asset (caller's responsibility)
 
 Source-side checks (1 and 2) avoid downloading and processing entirely when
@@ -47,6 +48,36 @@ def _iter_records(store_dir: Path):
             yield path, fm
 
 
+# A record names ONE source_url, but the same recording is often published in more
+# than one place - an episode on the publisher's channel and a repost elsewhere.
+# When two such records are merged, the survivor keeps one source_url and records
+# the others: `also_published_at` for the alternative listings, `fetched_url` for
+# the one the asset was actually pulled from. Dedup that reads source_url alone
+# re-ingests an alias as a fresh record, recreating the duplicate that merging the
+# two was meant to remove.
+_URL_FIELDS = ("source_url", "fetched_url", "also_published_at")
+
+
+def _urls_of(fm: dict) -> set[str]:
+    """Every URL a record answers to, aliases included.
+
+    Read from the top level AND from the `provenance` block. Decision 0043 makes
+    `provenance` the canonical home for source-origin metadata and the store is
+    mid-migration, so records of both shapes sit side by side; reading one shape
+    only means dedup quietly stops recognising a record the day it is migrated.
+    """
+    urls: set[str] = set()
+    prov = fm.get("provenance")
+    for d in [fm, prov] if isinstance(prov, dict) else [fm]:
+        for key in _URL_FIELDS:
+            value = d.get(key)
+            # `also_published_at` is a list; the others are single strings.
+            for v in value if isinstance(value, list) else [value]:
+                if isinstance(v, str) and v.strip():
+                    urls.add(v.strip())
+    return urls
+
+
 def find_by_source_id(store_dir: Path, source_id: str) -> Path | None:
     """Return the path of the first LIVE record whose source_id matches."""
     if not source_id:
@@ -58,10 +89,18 @@ def find_by_source_id(store_dir: Path, source_id: str) -> Path | None:
 
 
 def find_by_source_url(store_dir: Path, source_url: str) -> Path | None:
-    """Return the path of the first LIVE record whose source_url matches exactly."""
+    """Return the path of the first LIVE record published at this URL.
+
+    Matching is EXACT, and deliberately so: this is the cheap pre-check that
+    avoids a download, not the authority on identity. The scheduler holds the
+    canonicaliser that collapses `?v=ID&t=90s`, `youtu.be/ID` and
+    `source_id: youtube:ID` to one key, and content_hash inside each format
+    handler is the last line of defence. A variant URL that slips past here is
+    caught there; what must not happen is missing an alias we can plainly see.
+    """
     if not source_url:
         return None
     for path, fm in _iter_records(store_dir):
-        if fm.get("source_url") == source_url:
+        if source_url in _urls_of(fm):
             return path
     return None

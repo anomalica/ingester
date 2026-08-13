@@ -535,9 +535,9 @@ def main():
     source_file = local_source_name
 
     store_dir = output_dir / "store"
-    records_dir = output_dir / "records"
+    by_name_dir = output_dir / "by-name"
     store_dir.mkdir(parents=True, exist_ok=True)
-    records_dir.mkdir(parents=True, exist_ok=True)
+    by_name_dir.mkdir(parents=True, exist_ok=True)
 
     input_hash = hash_file(args.input_file)
 
@@ -748,7 +748,7 @@ def main():
     # Write to store and create symlink
     record_path, symlink_path = write_record(
         store_dir=store_dir,
-        records_dir=records_dir,
+        by_name_dir=by_name_dir,
         hex_hash=input_hash,
         content=content,
         date=date,

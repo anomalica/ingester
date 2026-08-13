@@ -186,7 +186,7 @@ def _build_frontmatter(
 def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     """Run the webpage ingestion pipeline. Returns 0 on success, 1 on failure."""
     store_dir = output_dir / "store"
-    records_dir = output_dir / "records"
+    by_name_dir = output_dir / "by-name"
 
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
@@ -336,7 +336,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     record_path, link_path = write_record(
         store_dir,
-        records_dir,
+        by_name_dir,
         hex_hash,
         content,
         date_published,

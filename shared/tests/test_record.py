@@ -82,11 +82,11 @@ def test_get_version_returns_string():
 
 def test_write_record_creates_files(tmp_path):
     store = tmp_path / "store"
-    records = tmp_path / "records"
+    by_name = tmp_path / "by-name"
 
     record_path, link_path = write_record(
         store_dir=store,
-        records_dir=records,
+        by_name_dir=by_name,
         hex_hash="abc123",
         content="---\ntitle: Test\n---\nBody",
         date="2023-06-05",
@@ -105,14 +105,14 @@ def test_write_record_creates_files(tmp_path):
 def test_write_record_replaces_stale_symlink(tmp_path):
     """Stale symlinks (broken target) are safe to overwrite."""
     store = tmp_path / "store"
-    records = tmp_path / "records"
-    records.mkdir(parents=True)
+    by_name = tmp_path / "by-name"
+    by_name.mkdir(parents=True)
 
-    stale = records / "2023-06-05-web-test-article.md"
+    stale = by_name / "2023-06-05-web-test-article.md"
     stale.symlink_to("/nonexistent")
 
     write_record(
-        store, records, "abc123", "content", "2023-06-05", "web", "Test Article"
+        store, by_name, "abc123", "content", "2023-06-05", "web", "Test Article"
     )
     assert stale.resolve() == (store / "abc123.md").resolve()
 
@@ -120,29 +120,29 @@ def test_write_record_replaces_stale_symlink(tmp_path):
 def test_write_record_idempotent_when_symlink_already_correct(tmp_path):
     """Re-running with the same hash and slug is a no-op overwrite."""
     store = tmp_path / "store"
-    records = tmp_path / "records"
+    by_name = tmp_path / "by-name"
 
-    write_record(store, records, "abc123", "v1", "2023-06-05", "web", "Test Article")
-    write_record(store, records, "abc123", "v2", "2023-06-05", "web", "Test Article")
+    write_record(store, by_name, "abc123", "v1", "2023-06-05", "web", "Test Article")
+    write_record(store, by_name, "abc123", "v2", "2023-06-05", "web", "Test Article")
 
     assert (store / "abc123.md").read_text() == "v2"
-    link = records / "2023-06-05-web-test-article.md"
+    link = by_name / "2023-06-05-web-test-article.md"
     assert link.resolve() == (store / "abc123.md").resolve()
 
 
 def test_write_record_refuses_to_clobber_unrelated_record(tmp_path):
     """Symlink pointing to a different real record must not be overwritten."""
     store = tmp_path / "store"
-    records = tmp_path / "records"
+    by_name = tmp_path / "by-name"
 
-    write_record(store, records, "aaa111", "first", "2023-06-05", "web", "Test Article")
+    write_record(store, by_name, "aaa111", "first", "2023-06-05", "web", "Test Article")
 
     with pytest.raises(SymlinkCollisionError):
         write_record(
-            store, records, "bbb222", "second", "2023-06-05", "web", "Test Article"
+            store, by_name, "bbb222", "second", "2023-06-05", "web", "Test Article"
         )
 
-    link = records / "2023-06-05-web-test-article.md"
+    link = by_name / "2023-06-05-web-test-article.md"
     assert link.resolve() == (store / "aaa111.md").resolve()
     assert (store / "aaa111.md").read_text() == "first"
     assert not (store / "bbb222.md").exists()
@@ -153,16 +153,16 @@ def test_write_record_force_retires_stale_record_to_v1(tmp_path):
     RETIRED to store/v1 with a superseded_by pointer - never deleted - so review
     work and possession proofs survive."""
     store = tmp_path / "store"
-    records = tmp_path / "records"
+    by_name = tmp_path / "by-name"
 
     old = "---\ncontent_hash: sha256:aaa111\ntitle: T\n---\nfirst"
-    write_record(store, records, "aaa111", old, "2023-06-05", "web", "Test Article")
+    write_record(store, by_name, "aaa111", old, "2023-06-05", "web", "Test Article")
     (store / "aaa111.verification.json").write_text("{}")
     (store / "aaa111.review.json").write_text('{"reviews": []}')
 
     write_record(
         store,
-        records,
+        by_name,
         "bbb222",
         "---\ncontent_hash: sha256:bbb222\ntitle: T\n---\nsecond",
         "2023-06-05",
@@ -171,7 +171,7 @@ def test_write_record_force_retires_stale_record_to_v1(tmp_path):
         force=True,
     )
 
-    link = records / "2023-06-05-web-test-article.md"
+    link = by_name / "2023-06-05-web-test-article.md"
     assert link.resolve() == (store / "bbb222.md").resolve()
     assert (store / "bbb222.md").read_text().endswith("second")
     # Old record retired to store/v1, not deleted, and stamped superseded_by.
@@ -189,10 +189,10 @@ def test_write_record_reuses_slug_on_same_hash_reingest(tmp_path):
     """A re-ingest of the same content_hash keeps its slug even when the re-derived
     title/date differ, so it does not leave a second alias standing for one record."""
     store = tmp_path / "store"
-    records = tmp_path / "records"
+    by_name = tmp_path / "by-name"
     write_record(
         store,
-        records,
+        by_name,
         "abc123",
         "---\ncontent_hash: sha256:abc123\ntitle: Old\n---\nbody",
         "2020-05-14",
@@ -203,7 +203,7 @@ def test_write_record_reuses_slug_on_same_hash_reingest(tmp_path):
     # Re-ingest the SAME hash with a different title and date.
     write_record(
         store,
-        records,
+        by_name,
         "abc123",
         "---\ncontent_hash: sha256:abc123\ntitle: New\n---\nbody2",
         "2020-08-09",
@@ -211,7 +211,7 @@ def test_write_record_reuses_slug_on_same_hash_reingest(tmp_path):
         "New Title",
         force=True,
     )
-    links = [p for p in records.iterdir() if p.is_symlink()]
+    links = [p for p in by_name.iterdir() if p.is_symlink()]
     assert len(links) == 1  # one alias, not two
     assert links[0].name == "2020-05-14-pdf-old-title.md"  # the ORIGINAL slug held
     assert links[0].resolve() == (store / "abc123.md").resolve()

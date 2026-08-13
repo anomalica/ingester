@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "shared"))
 from verification import build_sidecar, needs_sidecar, write_sidecar  # noqa: E402
 
 INGESTS_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "ingests"
-SOURCES_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "sources"
+RECORDS_DIR_DEFAULT = Path(__file__).resolve().parent.parent / "records"
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
@@ -41,11 +41,11 @@ def _frontmatter(record: str) -> dict:
     return fm
 
 
-def _find_source(sources_dir: Path, content_hash: str | None) -> Path | None:
+def _find_record(records_dir: Path, content_hash: str | None) -> Path | None:
     if not content_hash:
         return None
     bare = content_hash.removeprefix("sha256:")
-    matches = list(sources_dir.glob(f"{bare}.*"))
+    matches = list(records_dir.glob(f"{bare}.*"))
     return matches[0] if matches else None
 
 
@@ -59,7 +59,7 @@ def _duration_from_record(record: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
-def backfill(ingests_dir: Path, sources_dir: Path, force: bool) -> int:
+def backfill(ingests_dir: Path, records_dir: Path, force: bool) -> int:
     store_dir = ingests_dir / "store"
     if not store_dir.exists():
         print(f"Error: store directory not found: {store_dir}", file=sys.stderr)
@@ -94,7 +94,7 @@ def backfill(ingests_dir: Path, sources_dir: Path, force: bool) -> int:
                 continue
 
             fm = _frontmatter(record)
-            source_path = _find_source(sources_dir, fm.get("content_hash"))
+            source_path = _find_record(records_dir, fm.get("content_hash"))
             sidecar = build_sidecar(
                 record,
                 source_path=source_path,
@@ -133,8 +133,8 @@ def main() -> None:
     parser.add_argument(
         "--sources-dir",
         type=Path,
-        default=SOURCES_DIR_DEFAULT,
-        help=f"Path to sources archive (default: {SOURCES_DIR_DEFAULT})",
+        default=RECORDS_DIR_DEFAULT,
+        help=f"Path to the record archive (default: {RECORDS_DIR_DEFAULT})",
     )
     parser.add_argument(
         "--force",
@@ -142,7 +142,7 @@ def main() -> None:
         help="Regenerate sidecars even when one already exists",
     )
     args = parser.parse_args()
-    sys.exit(backfill(args.ingests_dir, args.sources_dir, args.force))
+    sys.exit(backfill(args.ingests_dir, args.records_dir, args.force))
 
 
 if __name__ == "__main__":

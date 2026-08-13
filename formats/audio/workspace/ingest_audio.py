@@ -322,15 +322,15 @@ def run(
     later run, so re-rendering into a different format skips the GPU entirely.
     """
     store_dir = output_dir / "store"
-    records_dir = output_dir / "records"
+    by_name_dir = output_dir / "by-name"
     variant = ".v2" if word_timestamps else ""
 
-    # The raw transcript archive lives beside the source audio (durable, off
-    # git), not in the ingests store. /mnt/sources when containerised; falls
-    # back to the sibling sources/ dir for non-container runs and tests.
-    sources_dir = Path("/mnt/sources")
-    if not sources_dir.exists():
-        sources_dir = output_dir.parent / "sources"
+    # The raw transcript archive lives beside the original audio (durable, off
+    # git), not in the ingests store. /mnt/records when containerised; falls
+    # back to the sibling records/ dir for non-container runs and tests.
+    records_dir = Path("/mnt/records")
+    if not records_dir.exists():
+        records_dir = output_dir.parent / "records"
 
     manifest_path = staging_dir / "manifest.json"
     if not manifest_path.exists():
@@ -386,7 +386,7 @@ def run(
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
-    apath = archive_path(sources_dir, hex_hash)
+    apath = archive_path(records_dir, hex_hash)
     if use_cache and apath.exists():
         print(
             f"Using raw archive ({apath.name}); skipping transcription/diarisation",
@@ -495,7 +495,7 @@ def run(
 
     record_path, link_path = write_record(
         store_dir,
-        records_dir,
+        by_name_dir,
         hex_hash,
         content,
         date_published,

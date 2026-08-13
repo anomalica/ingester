@@ -96,3 +96,74 @@ def test_skips_files_without_frontmatter(tmp_path):
     expected = _write_record(store, "h1", source_id="youtube:X")
 
     assert find_by_source_id(store, "youtube:X") == expected
+
+
+def test_finds_a_record_by_its_alias_url(tmp_path):
+    """A merged record answers to every URL it was published at.
+
+    The same recording is often uploaded twice - the publisher's own channel and
+    a repost. Merging keeps ONE source_url and lists the rest under
+    `also_published_at`; if dedup reads source_url alone, re-pasting the alias
+    ingests it afresh and recreates the duplicate the merge removed.
+    """
+    store = tmp_path / "store"
+    expected = _write_record(
+        store,
+        "h1",
+        source_url="https://www.youtube.com/watch?v=CANON",
+        fetched_url="https://www.youtube.com/watch?v=REPOST",
+    )
+    # A list-valued field cannot go through _write_record's key: value writer.
+    text = expected.read_text().replace(
+        "---\n\nbody",
+        "also_published_at:\n  - https://www.youtube.com/watch?v=REPOST\n---\n\nbody",
+    )
+    expected.write_text(text)
+
+    assert (
+        find_by_source_url(store, "https://www.youtube.com/watch?v=CANON") == expected
+    )
+    assert (
+        find_by_source_url(store, "https://www.youtube.com/watch?v=REPOST") == expected
+    )
+    assert find_by_source_url(store, "https://www.youtube.com/watch?v=OTHER") is None
+
+
+def test_an_alias_on_a_superseded_record_does_not_block_reingest(tmp_path):
+    """Aliases follow the same retirement rule as the record carrying them: a
+    superseded record is not an existing copy, so neither are its aliases."""
+    store = tmp_path / "store"
+    path = _write_record(
+        store,
+        "h1",
+        source_url="https://www.youtube.com/watch?v=CANON",
+        superseded_by="deadbeef",
+    )
+    path.write_text(
+        path.read_text().replace(
+            "---\n\nbody",
+            "also_published_at:\n  - https://www.youtube.com/watch?v=REPOST\n---\n\nbody",
+        )
+    )
+
+    assert find_by_source_url(store, "https://www.youtube.com/watch?v=REPOST") is None
+
+
+def test_finds_an_alias_inside_a_provenance_block(tmp_path):
+    """Records exist in both shapes while decision 0043's provenance migration is
+    in progress. Reading only the top level would drop a record's aliases the day
+    it is migrated - silently, since dedup returning None looks like 'new source'."""
+    store = tmp_path / "store"
+    store.mkdir(parents=True)
+    path = store / "h1.md"
+    path.write_text(
+        "---\n"
+        "schema: anomalica/record/1\n"
+        "provenance:\n"
+        '  source_url: "https://www.youtube.com/watch?v=CANON"\n'
+        "  also_published_at:\n"
+        '    - "https://www.youtube.com/watch?v=REPOST"\n'
+        "---\n\nbody\n"
+    )
+
+    assert find_by_source_url(store, "https://www.youtube.com/watch?v=REPOST") == path

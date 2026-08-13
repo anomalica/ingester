@@ -174,7 +174,7 @@ def test_run_creates_symlink(mock_transcribe, mock_diarise, tmp_path):
     output = tmp_path / "output"
     ingest_audio.run(staging, output, force=False)
 
-    links = list((output / "records").glob("*.md"))
+    links = list((output / "by-name").glob("*.md"))
     assert len(links) == 1
     assert links[0].is_symlink()
     assert "audio" in links[0].name
@@ -422,16 +422,16 @@ def test_build_content_wordless_segment_keeps_prefix():
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
 @patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_raw_archive_written_then_reused(mock_transcribe, mock_diarise, tmp_path):
-    """First run transcribes and writes the raw archive to sources/; a forced
+    """First run transcribes and writes the raw archive to records/; a forced
     re-run reuses the archive and does NOT call the GPU again."""
     import ingest_audio
 
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
-    sources = tmp_path / "sources"  # output.parent / "sources"
+    records = tmp_path / "records"  # output.parent / "records"
 
     ingest_audio.run(staging, output, force=False)  # fresh: transcribes + archives
-    archives = list(sources.glob("*.transcript.json"))
+    archives = list(records.glob("*.transcript.json"))
     assert len(archives) == 1
     assert mock_transcribe.call_count == 1
     assert mock_diarise.call_count == 1
@@ -450,7 +450,7 @@ def test_no_cache_skips_archive(mock_transcribe, mock_diarise, tmp_path):
     staging = _create_staging(tmp_path)
     output = tmp_path / "output"
     ingest_audio.run(staging, output, force=False, use_cache=False)
-    assert list((tmp_path / "sources").glob("*.transcript.json")) == []
+    assert list((tmp_path / "records").glob("*.transcript.json")) == []
 
 
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
