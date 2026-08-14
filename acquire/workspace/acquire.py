@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from detect import detect
 from fetch import FETCHERS
+from fetch import ytdlp
 from fetch.ytdlp import is_video_platform
 
 
@@ -335,12 +336,11 @@ def acquire(url: str, staging_dir: Path) -> int:
         print(f"  {method_name}: success ({detected_type})", file=sys.stderr)
         return 0
 
-    error = (
-        "yt-dlp could not fetch this video-platform URL (not falling back to a "
-        "page-shell scrape)"
-        if is_video_platform(url)
-        else "All fetch methods exhausted"
-    )
+    if is_video_platform(url):
+        reason = ytdlp.last_error or "no downloadable media found"
+        error = f"yt-dlp could not fetch this video-platform URL: {reason}"
+    else:
+        error = "All fetch methods exhausted"
     manifest = {
         "source": url,
         "asset": None,

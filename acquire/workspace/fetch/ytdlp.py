@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,6 +38,89 @@ EXTENSION_TO_MIME = {
 }
 
 TIMEOUT = 600
+
+# The last human-readable reason a yt-dlp fetch failed, set by _download and read
+# by the acquire loop so the ingest error says WHY (a 403 block, a private video,
+# a format gate) rather than a bare "could not fetch".
+last_error: str | None = None
+
+# yt-dlp's own stderr, mapped to a plain reason. Ordered most-specific first.
+_ERROR_REASONS = [
+    (
+        re.compile(r"confirm you.?re not a bot|not a bot", re.I),
+        "YouTube bot check - needs cookies from a signed-in session",
+    ),
+    (
+        re.compile(r"HTTP Error 403|403:\s*Forbidden", re.I),
+        "YouTube blocked the media download (HTTP 403) - the no-token client is "
+        "being rate-limited; needs a PO token or cookies",
+    ),
+    (
+        re.compile(r"experiment that applies DRM|DRM protected|DRM", re.I),
+        "YouTube applied a DRM experiment to the client used - another client or "
+        "cookies may still work",
+    ),
+    (
+        re.compile(r"Requested format is not available", re.I),
+        "no downloadable audio format was offered (PO-token / format gating)",
+    ),
+    (
+        re.compile(r"Private video", re.I),
+        "the video is private",
+    ),
+    (
+        re.compile(r"members-only|join this channel", re.I),
+        "the video is members-only (needs a signed-in, subscribed session)",
+    ),
+    (
+        re.compile(r"confirm your age|age-restricted|inappropriate for some", re.I),
+        "the video is age-restricted (needs a signed-in session)",
+    ),
+    (
+        re.compile(r"not available in your country|geo|geo-?restrict", re.I),
+        "the video is geo-blocked",
+    ),
+    (
+        re.compile(r"This live event|premieres in|will begin", re.I),
+        "a livestream or premiere that has not started yet",
+    ),
+    (
+        re.compile(
+            r"Video unavailable|has been removed|no longer available|terminated", re.I
+        ),
+        "the video is unavailable or has been removed",
+    ),
+]
+
+
+def _classify_error(stderr: str) -> str:
+    """Map yt-dlp's stderr to a plain failure reason. Falls back to the last
+    ERROR line yt-dlp printed, so the caller always has something specific."""
+    for pattern, reason in _ERROR_REASONS:
+        if pattern.search(stderr):
+            return reason
+    for line in reversed(stderr.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("ERROR"):
+            return re.sub(r"^ERROR:\s*", "", stripped)[:200]
+    return "yt-dlp failed with no error output"
+
+
+def _auth_args() -> list[str]:
+    """yt-dlp arguments that get past YouTube's download gating.
+
+    YouTube now requires a proof-of-origin (PO) token to download media; the one
+    client that did not (`android_vr`) is being 403-blocked. A signed-in cookies
+    file is the reliable fix - it returns full formats and is not rate-limited -
+    so point `INGEST_YTDLP_COOKIES` at a Netscape-format cookies.txt to use it.
+    The Node runtime lets yt-dlp solve the signature challenge; with the bgutil
+    PO-token plugin installed it is used automatically, no flag needed.
+    """
+    args = ["--js-runtimes", "node"]
+    cookies = os.environ.get("INGEST_YTDLP_COOKIES", "").strip()
+    if cookies and Path(cookies).is_file():
+        args += ["--cookies", cookies]
+    return args
 
 
 def _is_supported(url: str) -> bool:
@@ -80,6 +164,7 @@ def _download(url: str, output_dir: Path) -> tuple[Path | None, dict | None]:
     result = subprocess.run(
         [
             "yt-dlp",
+            *_auth_args(),
             "--extract-audio",
             "--no-playlist",
             "--no-overwrites",
@@ -98,9 +183,11 @@ def _download(url: str, output_dir: Path) -> tuple[Path | None, dict | None]:
         # of the exit code and not a diagnosis: two failed attempts on one video
         # recorded that string twice and nothing else, so the cause had to be
         # reproduced by hand afterwards.
+        global last_error
         stderr = (result.stderr or b"").decode("utf-8", "replace").strip()
         for line in stderr.splitlines()[-8:]:
             print(f"  yt-dlp: {line}", file=sys.stderr)
+        last_error = _classify_error(stderr)
         return None, None
 
     files = list(output_dir.iterdir())

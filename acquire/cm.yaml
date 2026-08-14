@@ -43,6 +43,9 @@ stages:
             - patchright
             - playwright
             - yt-dlp
+            # PO-token provider plugin: yt-dlp uses it automatically to get past
+            # YouTube's download gating when a bgutil provider is reachable.
+            - bgutil-ytdlp-pot-provider
       - run:
           - mkdir -p /opt/playwright && chmod 777 /opt/playwright
           - playwright install chromium
