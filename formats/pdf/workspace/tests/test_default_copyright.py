@@ -61,3 +61,48 @@ def test_explicit_status_wins():
     the URL default."""
     m = {"source": "https://www.war.gov/x.pdf", "copyright_status": "public_domain"}
     assert default_copyright(m) == {"status": "public_domain"}
+
+
+def test_a_declared_origin_url_is_judged_like_a_fetched_one():
+    """--source-url declares where a local file came from, and that is provenance.
+
+    Otherwise the two routes to one document disagree: fetching a public PDF by
+    URL gives publicly_accessible, while downloading that same PDF and ingesting
+    it with its origin stamped gives restricted - and the file route is taken
+    precisely when the URL is awkward (bot-blocked, dead, archive-only), which
+    says nothing about whether the document is public.
+
+    Observed on Carlotto 2005: acquired from public sources, ingested as a file,
+    then gated behind proof-of-possession.
+    """
+    assert default_copyright(
+        {
+            "source": "/home/x/records/carlotto-2005.pdf",
+            "source_url": "http://carlotto.us/newfrontiersinscience/Papers/v04n04a/v04n04a.pdf",
+        }
+    ) == {"status": "publicly_accessible"}
+
+
+def test_a_declared_government_origin_is_still_public_domain():
+    assert default_copyright(
+        {
+            "source": "/home/x/records/report.pdf",
+            "source_url": "https://www.dtic.mil/x.pdf",
+        }
+    ) == {"status": "public_domain"}
+
+
+def test_a_local_file_with_no_declared_origin_stays_restricted():
+    """No URL, no evidence: the conservative default has to survive this change,
+    or every hand-fed file silently becomes servable."""
+    assert default_copyright({"source": "/home/x/records/unknown.pdf"}) is None
+
+
+def test_an_explicit_status_still_wins():
+    assert default_copyright(
+        {
+            "source": "/home/x/f.pdf",
+            "source_url": "https://example.com/f.pdf",
+            "copyright_status": "licensed",
+        }
+    ) == {"status": "licensed"}

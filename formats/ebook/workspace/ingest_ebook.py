@@ -105,11 +105,14 @@ def _build_frontmatter(
 def _render_body(book: ExtractedBook) -> str:
     parts: list[str] = []
     for chapter in book.chapters:
-        annotation = [f"<!-- chapter: {chapter.index} -->"]
+        annotation = []
+        if chapter.number:
+            annotation.append(f"<!-- chapter: {chapter.number} -->")
         if chapter.title:
             escaped = chapter.title.replace('"', '\\"')
             annotation.append(f'<!-- chapter_title: "{escaped}" -->')
-        parts.append("\n".join(annotation))
+        if annotation:
+            parts.append("\n".join(annotation))
         parts.append(chapter.markdown)
     return "\n\n".join(parts) + "\n"
 

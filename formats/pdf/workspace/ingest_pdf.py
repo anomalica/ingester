@@ -72,14 +72,26 @@ def default_copyright(manifest: dict) -> dict | None:
       That still gates the original file (we don't redistribute someone else's
       copyrighted PDF) while letting the extracted text be surfaced.
     - A local file of UNKNOWN provenance keeps the conservative `restricted`.
+
+    A local file whose origin the operator DECLARED with --source-url is not of
+    unknown provenance, so it is judged on that URL. Without this the two routes to
+    one document disagree: fetching a public PDF by URL yields
+    `publicly_accessible`, while downloading that same PDF and ingesting it with
+    its origin stamped yields `restricted` - and the second route is the one taken
+    precisely when the URL is awkward (bot-blocked, dead, served from an archive),
+    which has nothing to do with whether the document is public. Observed on
+    Carlotto 2005: fetched from public sources, ingested as a file, gated behind
+    proof-of-possession, and a reviewer sent to unlock a paper anyone can download.
     """
     if manifest.get("copyright_status"):
         return {"status": manifest["copyright_status"]}
-    source = str(manifest.get("source", ""))
-    if source.startswith(("http://", "https://")):
-        if is_us_government_host(source):
-            return {"status": "public_domain"}
-        return {"status": "publicly_accessible"}
+    # The fetched location first, then the declared origin.
+    for candidate in (manifest.get("source"), manifest.get("source_url")):
+        source = str(candidate or "")
+        if source.startswith(("http://", "https://")):
+            if is_us_government_host(source):
+                return {"status": "public_domain"}
+            return {"status": "publicly_accessible"}
     return None
 
 

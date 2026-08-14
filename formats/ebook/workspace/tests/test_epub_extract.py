@@ -5,18 +5,23 @@ from bs4 import BeautifulSoup
 from extraction.epub_extract import (
     PAGE_TOKEN_PREFIX,
     PAGE_TOKEN_SUFFIX,
-    _chapter_title,
     _collect_pagebreaks,
     _expand_page_tokens,
     _hoist_heading_page_markers,
     _is_chapter_number,
     _is_pagebreak,
     _pagebreak_label,
+    _split_enumerator,
+    _title_and_number,
 )
 
 
 def _tag(markup: str):
     return BeautifulSoup(markup, "lxml-xml").find("span")
+
+
+def _body(markup: str):
+    return BeautifulSoup(markup, "lxml-xml").find("body")
 
 
 def test_is_pagebreak_epub_type():
@@ -121,20 +126,55 @@ def test_is_chapter_number():
     assert not _is_chapter_number("The Material Code")
 
 
-def test_chapter_title_skips_leading_number_heading():
-    # a numbered chapter opens with the number, then the real title
-    soup = BeautifulSoup(
-        "<body><h2>3</h2><h2>In the Field</h2><p>text</p></body>", "lxml-xml"
-    )
-    assert _chapter_title(soup) == "In the Field"
+def test_title_and_number_number_paragraph_above_heading():
+    # the common case: a number styled as its own <p> above the title heading
+    # (as in '<div><p>1</p><h1>The Secrecy</h1></div>')
+    body = _body("<body><div><p>1</p><h1>The Secrecy</h1></div><p>text</p></body>")
+    title, number, node = _title_and_number(body)
+    assert (title, number) == ("The Secrecy", "1")
+    assert node is not None and node.get_text(strip=True) == "1"
 
 
-def test_chapter_title_uses_first_real_heading():
-    soup = BeautifulSoup("<body><h2>Preface</h2><p>text</p></body>", "lxml-xml")
-    assert _chapter_title(soup) == "Preface"
+def test_title_and_number_number_heading_above_heading():
+    # a numbered chapter that opens with the number as a heading, then the title
+    body = _body("<body><h2>3</h2><h2>In the Field</h2><p>text</p></body>")
+    title, number, node = _title_and_number(body)
+    assert (title, number) == ("In the Field", "3")
+    assert node is not None
 
 
-def test_chapter_title_falls_back_to_number_when_no_title():
+def test_title_and_number_part_divider_has_no_number():
+    # 'PART ONE' above the title is not a number - a part carries no chapter number
+    body = _body("<body><p>PART ONE</p><h1>Bodies and Powers</h1><p>text</p></body>")
+    title, number, node = _title_and_number(body)
+    assert (title, number, node) == ("Bodies and Powers", None, None)
+
+
+def test_title_and_number_plain_title():
+    body = _body("<body><h2>Preface</h2><p>text</p></body>")
+    title, number, node = _title_and_number(body)
+    assert (title, number, node) == ("Preface", None, None)
+
+
+def test_title_and_number_only_number_keeps_it_as_title():
     # a chapter whose only heading is a number keeps the number (no title exists)
-    soup = BeautifulSoup("<body><h1>7</h1><p>text</p></body>", "lxml-xml")
-    assert _chapter_title(soup) == "7"
+    body = _body("<body><h1>7</h1><p>text</p></body>")
+    title, number, node = _title_and_number(body)
+    assert title == "7"
+
+
+def test_split_enumerator_arabic():
+    assert _split_enumerator("1. The Secrecy") == ("1", "The Secrecy")
+
+
+def test_split_enumerator_roman_part():
+    assert _split_enumerator("II. Finding Our Liberty") == ("II", "Finding Our Liberty")
+
+
+def test_split_enumerator_plain_title_unchanged():
+    assert _split_enumerator("Introduction: Danger and Promise") == (
+        None,
+        "Introduction: Danger and Promise",
+    )
+    # a lower-case word that merely looks Roman is not an enumerator
+    assert _split_enumerator("Mix. A Memoir") == (None, "Mix. A Memoir")

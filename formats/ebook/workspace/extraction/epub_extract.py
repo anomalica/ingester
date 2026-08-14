@@ -71,6 +71,7 @@ class Chapter:
     index: int
     title: str | None
     markdown: str
+    number: str | None = None
 
 
 @dataclass
@@ -99,31 +100,82 @@ def _all_authors(book: epub.EpubBook) -> list[str]:
     return [v.strip() for v, _ in items if isinstance(v, str) and v.strip()]
 
 
-_CHAPTER_NUMBER_RE = re.compile(r"^(chapter\s+)?\d{1,4}\.?$", re.IGNORECASE)
+# A block whose whole text is a chapter number and nothing else: a bare Arabic
+# number ('3', '3.') or 'Chapter 3'. This is the printed chapter number, styled
+# as its own line above the title heading - not the title. Group 1 is the number.
+# Deliberately Arabic-only: an all-caps heading ('MIX') can be a valid Roman
+# numeral, so matching Roman here would misread real titles as numbers.
+_CHAPTER_NUMBER_RE = re.compile(r"^(?:chapter\s+)?(\d{1,4})\.?$", re.IGNORECASE)
+
+# A title that leads with its enumerator, as the TOC gives it ('1. The Secrecy',
+# 'II. Finding Our Liberty'). Group 1 is the enumerator, group 2 the bare title.
+# Roman is uppercase-only and both forms need the trailing '. ', so an ordinary
+# title ('Mix. A memoir') is not mistaken for an enumerated one.
+_TOC_ENUMERATOR_RE = re.compile(r"^(\d{1,4}|[IVXLCDM]+)\.\s+(.*\S)$")
+
+_HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 
 
 def _is_chapter_number(text: str) -> bool:
-    """A heading that is only a chapter number ('3', '3.', 'Chapter 3') - the
-    number, not the title. Numbered chapters open with the number as their first
-    heading and the real title as the next one."""
+    """A heading/line that is only a chapter number ('3', '3.', 'Chapter 3',
+    'IV') - the number, not the title. Numbered chapters open with the number on
+    its own line and the real title as the next block."""
     return bool(_CHAPTER_NUMBER_RE.match(text.strip()))
 
 
-def _chapter_title(soup: BeautifulSoup) -> str | None:
-    """The chapter's title heading, skipping a leading chapter-number heading:
-    a numbered chapter opens '## 3' then '## In the Field', so the title is the
-    second heading, not the first."""
-    for tag_name in ("h1", "h2", "h3"):
-        for tag in soup.find_all(tag_name):
-            text = tag.get_text(" ", strip=True)
-            if text and not _is_chapter_number(text):
-                return text
-    # every heading is a bare number (or there are none) - fall back to the first
-    for tag_name in ("h1", "h2", "h3"):
-        tag = soup.find(tag_name)
-        if tag and tag.get_text(strip=True):
-            return tag.get_text(" ", strip=True)
-    return None
+def _is_arabic(enumerator: str | None) -> bool:
+    return bool(enumerator) and enumerator.isdigit()
+
+
+def _split_enumerator(title: str | None) -> tuple[str | None, str | None]:
+    """Split a leading enumerator off a title: '1. The Secrecy' -> ('1', 'The
+    Secrecy'); 'II. Finding Our Liberty' -> ('II', 'Finding Our Liberty');
+    'Contents' -> (None, 'Contents'). The enumerator is returned without its
+    trailing dot so it can serve as a chapter-marker value directly."""
+    if not title:
+        return None, title
+    match = _TOC_ENUMERATOR_RE.match(title.strip())
+    if match:
+        return match.group(1), match.group(2).strip()
+    return None, title.strip()
+
+
+def _title_and_number(body) -> tuple[str | None, str | None, object | None]:
+    """The chapter's title, its printed number, and the number's node.
+
+    A numbered chapter opens with the number on its own line ('1', styled as a
+    `<p>`) immediately above the title heading. The title is the first heading
+    that is not itself a bare number; the number is the block right before it.
+    The number's node is returned so the caller can strip it from the body -
+    otherwise it survives markdownify as an orphan '1' with no context. A part
+    divider ('PART ONE' above the title) has no bare number, so none is taken."""
+    blocks = [
+        (tag, text)
+        for tag in body.find_all(_HEADINGS + ("p",))
+        if (text := tag.get_text(" ", strip=True))
+    ]
+    title_idx = next(
+        (
+            i
+            for i, (tag, text) in enumerate(blocks)
+            if tag.name in _HEADINGS and not _is_chapter_number(text)
+        ),
+        None,
+    )
+    if title_idx is None:
+        title_idx = next(
+            (i for i, (tag, _) in enumerate(blocks) if tag.name in _HEADINGS), None
+        )
+    if title_idx is None:
+        return None, None, None
+
+    title = blocks[title_idx][1]
+    if title_idx > 0:
+        prev_tag, prev_text = blocks[title_idx - 1]
+        match = _CHAPTER_NUMBER_RE.match(prev_text)
+        if match:
+            return title, match.group(1), prev_tag
+    return title, None, None
 
 
 def _toc_titles(book: epub.EpubBook) -> dict[str, str]:
@@ -339,11 +391,13 @@ def _xhtml_to_markdown(
     chapter_file: str,
     book: epub.EpubBook,
     images: list[ExtractedImage],
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str | None, str]:
     soup = BeautifulSoup(xhtml, "lxml-xml")
     _strip_navigation(soup)
-    title = _chapter_title(soup)
     body = soup.find("body") or soup
+    title, number, number_tag = _title_and_number(body)
+    if number_tag is not None:
+        number_tag.decompose()
     _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
     _collect_pagebreaks(body)
@@ -355,7 +409,7 @@ def _xhtml_to_markdown(
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
-    return title, md.strip()
+    return title, number, md.strip()
 
 
 def _yaml_quote(value: str) -> str:
@@ -429,14 +483,26 @@ def extract(epub_path: str) -> ExtractedBook:
     images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
     for index, item in enumerate(_spine_documents(book), start=1):
-        body_title, markdown = _xhtml_to_markdown(
+        body_title, body_number, markdown = _xhtml_to_markdown(
             item.get_content(), item.file_name, book, images
         )
         markdown = _expand_image_tokens(markdown, images)
         if not markdown:
             continue
-        chapter_title = toc.get(posixpath.basename(item.file_name)) or body_title
-        chapters.append(Chapter(index=index, title=chapter_title, markdown=markdown))
+        raw_title = toc.get(posixpath.basename(item.file_name)) or body_title
+        enumerator, clean_title = _split_enumerator(raw_title)
+        # The printed number in the body is authoritative; fall back to an Arabic
+        # enumerator from the TOC title. A Roman enumerator alone marks a part
+        # divider ('II. Finding Our Liberty'), which carries no chapter number.
+        number = body_number or (enumerator if _is_arabic(enumerator) else None)
+        chapters.append(
+            Chapter(
+                index=index,
+                title=clean_title or raw_title,
+                markdown=markdown,
+                number=number,
+            )
+        )
 
     return ExtractedBook(
         title=title,
