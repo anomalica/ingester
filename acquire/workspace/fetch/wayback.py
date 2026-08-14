@@ -12,6 +12,8 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+import sys
+
 import requests
 
 REDIRECT_BASE = "https://web.archive.org/web/{year}/{url}"
@@ -82,6 +84,32 @@ def _fetch_raw_or_wrapped(
     return (resp.content, resp.headers.get("Content-Type"), {"fetched_url": resp.url})
 
 
+# The Wayback crawler caps some captures, storing a prefix and nothing else. The
+# response still reads 200 with a Content-Type of application/pdf, and a truncated
+# PDF often opens far enough to look real - so it would be ingested as a complete
+# record of a document whose second half simply is not there.
+#
+# The capture reports the ORIGINAL length in x-archive-orig-x-crawler-content-length
+# while serving fewer bytes, which is the only signal that anything is wrong, and it
+# is in the response we already have. Observed live: a 2,617,753-byte PDF stored as
+# exactly 1,048,576 - one mebibyte, to the byte.
+def _truncated_capture(resp) -> str | None:
+    """Why this capture is short, or None if it is whole."""
+    declared = resp.headers.get("x-archive-orig-x-crawler-content-length")
+    if not declared:
+        return None
+    try:
+        expected = int(declared)
+    except (TypeError, ValueError):
+        return None
+    got = len(resp.content)
+    # Only flag a real shortfall: some captures differ by a byte or two through
+    # transfer encoding, and refusing those would reject good snapshots.
+    if expected > 0 and got < expected * 0.99:
+        return f"{got} of {expected} bytes stored - this Wayback capture is truncated"
+    return None
+
+
 def fetch_snapshot(archive_url: str) -> tuple[bytes, str | None, dict] | None:
     """Fetch an EXPLICIT Wayback snapshot the operator pointed at - the exact
     timestamp they chose, in raw id_ mode. Honours that capture rather than
@@ -101,6 +129,18 @@ def fetch_snapshot(archive_url: str) -> tuple[bytes, str | None, dict] | None:
             and resp.content
             and _SNAPSHOT_TIMESTAMP_RE.search(resp.url)
         ):
+            short = _truncated_capture(resp)
+            if short:
+                # Refuse rather than ingest a partial document as a whole one. The
+                # operator picked this timestamp; another capture of the same URL is
+                # usually intact, and the CDX listing shows the stored sizes.
+                print(f"  wayback: {short} - {resp.url}", file=sys.stderr)
+                print(
+                    "  wayback: refusing it; pick another snapshot "
+                    "(cdx: /cdx/search/cdx?url=...&output=json&fl=timestamp,length)",
+                    file=sys.stderr,
+                )
+                continue
             return (
                 resp.content,
                 resp.headers.get("Content-Type"),
