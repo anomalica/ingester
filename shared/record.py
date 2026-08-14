@@ -208,7 +208,7 @@ def _retire_to_v1(old_record: Path, new_hash: str) -> None:
 
 
 def _existing_slug_for(by_name_dir: Path, record_path: Path) -> Path | None:
-    """An existing records/ symlink that already resolves to record_path, or None.
+    """An existing by-name/ symlink that already resolves to record_path, or None.
 
     Used to keep a record's human-readable slug STABLE across a re-ingest of the
     same content_hash: the slug is a downstream join key (digests, queues, links),
