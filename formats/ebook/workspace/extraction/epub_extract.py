@@ -100,82 +100,200 @@ def _all_authors(book: epub.EpubBook) -> list[str]:
     return [v.strip() for v, _ in items if isinstance(v, str) and v.strip()]
 
 
-# A block whose whole text is a chapter number and nothing else: a bare Arabic
-# number ('3', '3.') or 'Chapter 3'. This is the printed chapter number, styled
-# as its own line above the title heading - not the title. Group 1 is the number.
-# Deliberately Arabic-only: an all-caps heading ('MIX') can be a valid Roman
-# numeral, so matching Roman here would misread real titles as numbers.
+# A block whose whole text is a bare Arabic chapter number ('3', '3.', 'Chapter
+# 3'). Group 1 is the number. Used only for the loose "is this a number?" check.
 _CHAPTER_NUMBER_RE = re.compile(r"^(?:chapter\s+)?(\d{1,4})\.?$", re.IGNORECASE)
-
-# A title that leads with its enumerator, as the TOC gives it ('1. The Secrecy',
-# 'II. Finding Our Liberty'). Group 1 is the enumerator, group 2 the bare title.
-# Roman is uppercase-only and both forms need the trailing '. ', so an ordinary
-# title ('Mix. A memoir') is not mistaken for an enumerated one.
-_TOC_ENUMERATOR_RE = re.compile(r"^(\d{1,4}|[IVXLCDM]+)\.\s+(.*\S)$")
 
 _HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 
+# Chapter designations come in many forms across the corpus: Arabic ('1. The
+# Secrecy'), Roman ('Chapter IV'), and spelled-out ('Chapter One', 'ONE'). All
+# are normalised to a decimal string so a claim's location reads 'ch1:' whatever
+# the book's own convention was.
+_ONES = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+_ROMAN_RE = re.compile(r"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$")
+_ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+def _word_to_int(text: str) -> int | None:
+    """A spelled-out cardinal to its value: 'Twelve' -> 12, 'twenty-one' -> 21.
+    Handles 1-99, which spans any real chapter count."""
+    words = text.strip().lower().replace("-", " ").split()
+    if len(words) == 1:
+        return _ONES.get(words[0]) or _TENS.get(words[0])
+    if len(words) == 2 and words[0] in _TENS and words[1] in _ONES:
+        return _TENS[words[0]] + _ONES[words[1]]
+    return None
+
+
+def _roman_to_int(text: str) -> int | None:
+    s = text.strip().upper()
+    if not s or not _ROMAN_RE.match(s):
+        return None
+    total, prev = 0, 0
+    for ch in reversed(s):
+        value = _ROMAN_VALUES[ch]
+        total += -value if value < prev else value
+        prev = value
+    return total
+
+
+def _enum_to_int(token: str) -> int | None:
+    """One enumerator token to an int, trying Arabic, then Roman, then a
+    spelled-out cardinal. 'IV' -> 4, 'Twelve' -> 12, '7' -> 7; a word that is
+    none of these ('Notes') -> None."""
+    t = token.strip().rstrip(".")
+    if t.isdigit():
+        return int(t)
+    roman = _roman_to_int(t)
+    if roman is not None:
+        return roman
+    return _word_to_int(t)
+
 
 def _is_chapter_number(text: str) -> bool:
-    """A heading/line that is only a chapter number ('3', '3.', 'Chapter 3',
-    'IV') - the number, not the title. Numbered chapters open with the number on
-    its own line and the real title as the next block."""
+    """A heading/line that is only an Arabic chapter number ('3', '3.',
+    'Chapter 3')."""
     return bool(_CHAPTER_NUMBER_RE.match(text.strip()))
 
 
-def _is_arabic(enumerator: str | None) -> bool:
-    return bool(enumerator) and enumerator.isdigit()
+_DESIGNATION_TOKEN = r"([0-9]{1,4}|[A-Za-z]+(?:-[A-Za-z]+)?)"
+_CHAPTER_PREFIX_RE = re.compile(
+    rf"^chapter\s+{_DESIGNATION_TOKEN}\b[\s:.–—-]*(.*)$", re.IGNORECASE
+)
+_PART_PREFIX_RE = re.compile(
+    rf"^part\s+{_DESIGNATION_TOKEN}\b[\s:.–—-]*(.*)$", re.IGNORECASE
+)
+_ARABIC_TITLE_RE = re.compile(r"^(\d{1,4})[.:)]\s+(.*\S)$")
+_ROMAN_TITLE_RE = re.compile(r"^([IVXLCDM]+)\.\s+(.*\S)$")
+_BARE_DESIGNATION_RE = re.compile(rf"^{_DESIGNATION_TOKEN}\.?$")
+
+# A bare heading ('ONE', 'IV', '7') is only read as a chapter number below this
+# ceiling. It rejects a stray page or endnote number ('178') and an all-caps
+# word that happens to be a valid Roman numeral ('MIX' == 1009) from being
+# mistaken for a chapter, while still covering any real chapter count.
+_MAX_BARE_CHAPTER = 99
 
 
-def _split_enumerator(title: str | None) -> tuple[str | None, str | None]:
-    """Split a leading enumerator off a title: '1. The Secrecy' -> ('1', 'The
-    Secrecy'); 'II. Finding Our Liberty' -> ('II', 'Finding Our Liberty');
-    'Contents' -> (None, 'Contents'). The enumerator is returned without its
-    trailing dot so it can serve as a chapter-marker value directly."""
-    if not title:
-        return None, title
-    match = _TOC_ENUMERATOR_RE.match(title.strip())
-    if match:
-        return match.group(1), match.group(2).strip()
-    return None, title.strip()
+def _parse_designation(text: str | None) -> tuple[str | None, str | None, bool]:
+    """Split a heading/TOC entry into (number, title, is_part).
+
+    number is the chapter number as a decimal string, whatever notation the
+    source used ('Chapter One' and 'Chapter I' and '1.' all give '1'), or None.
+    title is the text with the designation removed. is_part marks a part divider
+    ('Part One', 'II. Finding Our Liberty'), which carries a title but never a
+    chapter number.
+    """
+    t = (text or "").strip()
+    if not t:
+        return None, None, False
+    m = _PART_PREFIX_RE.match(t)
+    if m:
+        return None, (m.group(2).strip() or None), True
+    m = _CHAPTER_PREFIX_RE.match(t)
+    if m and (n := _enum_to_int(m.group(1))) is not None:
+        return str(n), (m.group(2).strip() or None), False
+    m = _ARABIC_TITLE_RE.match(t)
+    if m:
+        return m.group(1), m.group(2).strip(), False
+    m = _ROMAN_TITLE_RE.match(t)
+    if m:
+        # Uppercase Roman + '. ' is the part-divider convention in these books.
+        return None, m.group(2).strip(), True
+    m = _BARE_DESIGNATION_RE.match(t)
+    if m and (n := _enum_to_int(m.group(1))) is not None and n <= _MAX_BARE_CHAPTER:
+        return str(n), None, False
+    return None, t, False
 
 
-def _title_and_number(body) -> tuple[str | None, str | None, object | None]:
-    """The chapter's title, its printed number, and the number's node.
+def _is_pure_designation(text: str) -> bool:
+    """The whole heading is just a number ('Chapter One', 'ONE', '1') with no
+    title of its own."""
+    number, title, is_part = _parse_designation(text)
+    return number is not None and title is None and not is_part
 
-    A numbered chapter opens with the number on its own line ('1', styled as a
-    `<p>`) immediately above the title heading. The title is the first heading
-    that is not itself a bare number; the number is the block right before it.
-    The number's node is returned so the caller can strip it from the body -
-    otherwise it survives markdownify as an orphan '1' with no context. A part
-    divider ('PART ONE' above the title) has no bare number, so none is taken."""
+
+def _analyse_body(body) -> tuple[str | None, str | None, object | None]:
+    """The chapter's title, its number, and the node to strip from the body.
+
+    Finds the title heading (the first heading that is not itself just a number)
+    and the chapter number, which may sit in that heading ('Chapter One: ...'),
+    in a bare block right above it ('1' or 'ONE' styled as its own line), or be
+    the heading itself when the chapter has no title of its own. The number's
+    node is returned so the caller can drop it - otherwise it survives markdownify
+    as an orphan '1'. A part divider ('PART ONE' above the title) yields no number.
+    """
     blocks = [
         (tag, text)
         for tag in body.find_all(_HEADINGS + ("p",))
         if (text := tag.get_text(" ", strip=True))
     ]
-    title_idx = next(
+    headings = [
+        (i, tag, text) for i, (tag, text) in enumerate(blocks) if tag.name in _HEADINGS
+    ]
+    if not headings:
+        return None, None, None
+
+    # The title heading is the first heading that is neither a bare number nor a
+    # part word; that heading may still carry its own number ('Chapter One: X').
+    title_entry = next(
         (
-            i
-            for i, (tag, text) in enumerate(blocks)
-            if tag.name in _HEADINGS and not _is_chapter_number(text)
+            (i, tag, text)
+            for i, tag, text in headings
+            if not _is_pure_designation(text) and not _parse_designation(text)[2]
         ),
         None,
     )
-    if title_idx is None:
-        title_idx = next(
-            (i for i, (tag, _) in enumerate(blocks) if tag.name in _HEADINGS), None
-        )
-    if title_idx is None:
-        return None, None, None
 
-    title = blocks[title_idx][1]
-    if title_idx > 0:
-        prev_tag, prev_text = blocks[title_idx - 1]
-        match = _CHAPTER_NUMBER_RE.match(prev_text)
-        if match:
-            return title, match.group(1), prev_tag
-    return title, None, None
+    if title_entry is None:
+        # Every heading is a bare number (e.g. 'ONE'..'SIX') - the number is the
+        # chapter's identity and it has no separate title.
+        i, tag, text = headings[0]
+        number = _parse_designation(text)[0]
+        return None, number, (tag if number else None)
+
+    idx, _tag, text = title_entry
+    number, title, _ = _parse_designation(text)
+    title = title or text
+
+    # A bare number block immediately above the title ('1' or 'ONE' styled alone).
+    strip_node = None
+    if number is None and idx > 0:
+        prev_tag, prev_text = blocks[idx - 1]
+        if _is_pure_designation(prev_text):
+            number = _parse_designation(prev_text)[0]
+            strip_node = prev_tag
+    return title, number, strip_node
 
 
 def _toc_titles(book: epub.EpubBook) -> dict[str, str]:
@@ -395,7 +513,7 @@ def _xhtml_to_markdown(
     soup = BeautifulSoup(xhtml, "lxml-xml")
     _strip_navigation(soup)
     body = soup.find("body") or soup
-    title, number, number_tag = _title_and_number(body)
+    title, number, number_tag = _analyse_body(body)
     if number_tag is not None:
         number_tag.decompose()
     _strip_internal_anchors(body)
@@ -482,6 +600,7 @@ def extract(epub_path: str) -> ExtractedBook:
     toc = _toc_titles(book)
     images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
+    max_number = 0
     for index, item in enumerate(_spine_documents(book), start=1):
         body_title, body_number, markdown = _xhtml_to_markdown(
             item.get_content(), item.file_name, book, images
@@ -489,19 +608,29 @@ def extract(epub_path: str) -> ExtractedBook:
         markdown = _expand_image_tokens(markdown, images)
         if not markdown:
             continue
-        raw_title = toc.get(posixpath.basename(item.file_name)) or body_title
-        enumerator, clean_title = _split_enumerator(raw_title)
-        # The printed number in the body is authoritative; fall back to an Arabic
-        # enumerator from the TOC title. A Roman enumerator alone marks a part
-        # divider ('II. Finding Our Liberty'), which carries no chapter number.
-        number = body_number or (enumerator if _is_arabic(enumerator) else None)
-        chapters.append(
-            Chapter(
-                index=index,
-                title=clean_title or raw_title,
-                markdown=markdown,
-                number=number,
+        toc_title = toc.get(posixpath.basename(item.file_name))
+        # The TOC is authoritative: when it names a section, its number (or lack
+        # of one) is trusted, so a back-matter section it titles "Notes" is not
+        # given a chapter number just because the body groups notes by chapter.
+        # The body number is used only where the TOC has no entry at all, as with
+        # a book whose chapters are bare 'ONE'..'SIX' the TOC never lists.
+        if toc_title:
+            toc_number, toc_clean, is_part = _parse_designation(toc_title)
+            number = None if is_part else toc_number
+            title = toc_clean or body_title
+        else:
+            # A section the TOC does not list takes its number from the body, but
+            # only if it continues the chapter sequence upward. That keeps a book
+            # whose chapters are bare 'ONE'..'SIX' while rejecting back-matter
+            # (endnotes grouped "5. Cognitive Ease") that reuses chapter numbers.
+            number = (
+                body_number if body_number and int(body_number) > max_number else None
             )
+            title = body_title
+        if number:
+            max_number = max(max_number, int(number))
+        chapters.append(
+            Chapter(index=index, title=title, markdown=markdown, number=number)
         )
 
     return ExtractedBook(
