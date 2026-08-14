@@ -400,7 +400,10 @@ cd "$INGESTS_DIR"
 if [[ -n "$(git status --porcelain)" ]]; then
 	echo "" >&2
 	echo "Committing new records to ingests..." >&2
-	git add store/ records/ media/
+	# by-name/, not records/: the rename landed and this staging line did not,
+	# so every ingest extracted fine and then died at the commit with
+	# "pathspec 'records/' did not match any files", leaving the record uncommitted.
+	git add store/ by-name/ media/
 	NEW_FILES="$(git diff --cached --name-only --diff-filter=A | grep '^store/' | wc -l)"
 	if [[ "$NEW_FILES" -gt 0 ]]; then
 		COMMIT_MSG="feat: add ${NEW_FILES} record(s) from ${HANDLER} ingestion"
