@@ -1,0 +1,55 @@
+# Metadata corrections applied to ebook records at ingest time.
+#
+# EPUBs routinely carry wrong, missing, or mangled Dublin Core metadata: a
+# filename where the title should be, no author, an all-caps title, a nonsense
+# date. This file overrides that metadata by the archived EPUB's own sha256
+# (the record's `source_hash`), so the correction is applied every time the
+# same file is ingested - it is not lost on re-ingestion, and it needs no edit
+# to the stored record.
+#
+# Only genuine corrections belong here. Where an EPUB's own metadata is already
+# right, no entry is needed - a plain re-ingest carries it through.
+#
+# Key: the source file's sha256 (bare, no "sha256:" prefix).
+# Fields: only those given are overridden; anything omitted keeps the EPUB's
+# value. `creators` replaces the whole author list. `date_published` is the
+# work's first-publication year where an EPUB dates a reissue of a much older
+# work, or a real year where the EPUB carries a nonsense one.
+
+# Messengers of Deception - EPUB dates it 0101-01-01. First published 1979.
+a47fcf70d587fc3ffc3d457219d9f192549659ed2f93d626324879b9d160aaa1:
+  date_published: "1979"
+
+# Surviving Death - author stored surname-first in the EPUB.
+64cd12d07a404e70abde63ae51273ba3ae2f17c5409f8f760e67ab0819c7151c:
+  creators:
+    - Leslie Kean
+
+# The Invisible College - all-caps title; misspelt author; 2014 reissue of a
+# 1975 work.
+66bb8c4ee890034de022126e0ad8403a5822e217f2b35246422f627ed9b25194:
+  title: "The Invisible College: What a Group of Scientists Has Discovered About UFO Influences on the Human Race"
+  date_published: "1975"
+  creators:
+    - Jacques Vallée
+
+# Dark Mission - EPUB drops the subtitle and the co-author; 2010 reissue of the
+# 2007 first edition.
+a6d2a2d94db0aa29a0528882df065625fa2434f39891ce67fe556cd902b25717:
+  title: "Dark Mission: The Secret History of NASA"
+  date_published: "2007"
+  creators:
+    - Richard C. Hoagland
+    - Mike Bara
+
+# Beelzebub's Tales to His Grandson - EPUB has a garbled title, bare surname,
+# and 0101-01-01 date. First published 1950.
+aea33448f6212659ae8c8526ce69622d045a1f190eb9c5d1a14deede4037e97a:
+  title: "Beelzebub's Tales to His Grandson: All and Everything, First Series"
+  date_published: "1950"
+  creators:
+    - G. I. Gurdjieff
+
+# American Cosmic - EPUB drops the subtitle.
+45cb74b84935120fa2bef13759b0fa42a7796a15b53f774793d6cdf0f6ea3432:
+  title: "American Cosmic: UFOs, Religion, Technology"

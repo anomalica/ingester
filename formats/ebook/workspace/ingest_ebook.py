@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from dedup import find_by_source_id
 from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
@@ -17,6 +18,35 @@ from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
 from extraction.epub_extract import ExtractedBook, extract
+
+_OVERRIDES_PATH = Path(__file__).resolve().parent / "metadata_overrides.yaml"
+
+
+def _apply_metadata_overrides(book: ExtractedBook, source_hash: str) -> list[str]:
+    """Override an EPUB's own metadata with hand-verified corrections, keyed by
+    the source file's sha256. EPUBs often carry a junk title, no author, or a
+    nonsense date; the correction lives in metadata_overrides.yaml so it is
+    reapplied on every re-ingest rather than lost. Returns the fields changed."""
+    if not _OVERRIDES_PATH.exists():
+        return []
+    table = yaml.safe_load(_OVERRIDES_PATH.read_text()) or {}
+    entry = table.get(source_hash)
+    if not entry:
+        return []
+    changed = []
+    if "title" in entry:
+        book.title = entry["title"]
+        changed.append("title")
+    if "creators" in entry:
+        book.authors = list(entry["creators"])
+        changed.append("creators")
+    if "publisher" in entry:
+        book.publisher = entry["publisher"]
+        changed.append("publisher")
+    if "date_published" in entry:
+        book.date_published = str(entry["date_published"])
+        changed.append("date_published")
+    return changed
 
 
 def _ebooklib_version() -> str:
@@ -145,6 +175,11 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print("No chapters extracted", file=sys.stderr)
         return 1
 
+    source_hash = hash_file(asset_path)
+    changed = _apply_metadata_overrides(book, source_hash)
+    if changed:
+        print(f"Metadata override applied: {', '.join(changed)}", file=sys.stderr)
+
     print(
         f"Extracted: {book.title} ({len(book.chapters)} chapters, {len(book.images)} images)",
         file=sys.stderr,
@@ -178,7 +213,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         }
 
     date_published = _normalise_date(book.date_published)
-    source_hash = hash_file(asset_path)
     frontmatter = _build_frontmatter(
         book,
         date_published,
