@@ -3,18 +3,36 @@
 from bs4 import BeautifulSoup
 
 from extraction.epub_extract import (
+    FN_TOKEN_PREFIX,
+    FN_TOKEN_SUFFIX,
     PAGE_TOKEN_PREFIX,
     PAGE_TOKEN_SUFFIX,
     _analyse_body,
+    _collect_footnotes,
     _collect_pagebreaks,
     _enum_to_int,
-    _expand_page_tokens,
-    _hoist_heading_page_markers,
+    _expand_footnote_tokens,
     _is_chapter_number,
+    _is_noteref,
     _is_pagebreak,
+    _note_content,
     _pagebreak_label,
     _parse_designation,
+    _expand_page_tokens,
+    _hoist_heading_page_markers,
 )
+
+
+class _StubResolver:
+    """Stands in for _FootnoteResolver in tests: numbers refs in order and
+    returns a fixed definition for each."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def resolve(self, base_file: str, href: str) -> tuple[str, str]:
+        self.count += 1
+        return str(self.count), f"note {self.count}"
 
 
 def _tag(markup: str):
@@ -224,3 +242,83 @@ def test_analyse_body_bare_cardinal_is_number_not_title():
     title, number, node = _analyse_body(body)
     assert (title, number) == (None, "1")
     assert node is not None
+
+
+def test_is_noteref_sup_link():
+    a = _body('<body><a href="notes.xhtml#n5"><sup>3</sup></a></body>').find("a")
+    assert _is_noteref(a)
+
+
+def test_is_noteref_epub_type():
+    a = _body('<body><a epub:type="noteref" href="#n5">3</a></body>').find("a")
+    assert _is_noteref(a)
+
+
+def test_is_noteref_rejects_plain_and_external_links():
+    plain = _body('<body><a href="chapter2.xhtml">Chapter 2</a></body>').find("a")
+    external = _body('<body><a href="https://x.com"><sup>1</sup></a></body>').find("a")
+    assert not _is_noteref(plain)
+    assert not _is_noteref(external)
+
+
+def test_note_content_strips_marker_and_backlink():
+    note = _body(
+        '<body><li id="n1">1. Smith 1967, p. 34. '
+        '<a href="ch.xhtml#r1">↩</a></li></body>'
+    ).find("li")
+    assert _note_content(note) == "Smith 1967, p. 34."
+
+
+def test_note_content_keeps_external_link():
+    note = _body(
+        '<body><p id="n2">fn2 See <a href="https://x.com">the site</a>.</p></body>'
+    ).find("p")
+    assert _note_content(note) == "See [the site](https://x.com)."
+
+
+def test_collect_footnotes_replaces_ref_with_marker():
+    body = _body(
+        '<body><p>A claim.<a href="notes.xhtml#n1"><sup>1</sup></a> More.</p></body>'
+    )
+    defs = _collect_footnotes(body, "ch.xhtml", _StubResolver())
+    assert defs == ["[^1]: note 1"]
+    token = f"{FN_TOKEN_PREFIX}1{FN_TOKEN_SUFFIX}"
+    assert token in str(body)
+    assert body.find("a") is None
+
+
+def test_expand_footnote_tokens():
+    md = f"A claim.{FN_TOKEN_PREFIX}3{FN_TOKEN_SUFFIX} More."
+    assert _expand_footnote_tokens(md) == "A claim.[^3] More."
+
+
+def _minimal_epub(path: str) -> str:
+    """A two-section EPUB: a numbered chapter and a back-matter section, so a
+    test can prove the book title is not overwritten by the last section."""
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_title("My Book")
+    book.add_author("A. Writer")
+    ch = epub.EpubHtml(title="1. First Chapter", file_name="c1.xhtml")
+    ch.content = "<html><body><h1>1. First Chapter</h1><p>Body one.</p></body></html>"
+    back = epub.EpubHtml(title="About the Author", file_name="c2.xhtml")
+    back.content = "<html><body><h1>About the Author</h1><p>A bio.</p></body></html>"
+    book.add_item(ch)
+    book.add_item(back)
+    book.toc = (ch, back)
+    book.spine = [ch, back]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(path, book)
+    return path
+
+
+def test_extract_book_title_survives_the_chapter_loop(tmp_path):
+    from extraction.epub_extract import extract
+
+    book = extract(_minimal_epub(str(tmp_path / "b.epub")))
+    # the book keeps its own title, not the last section's ("About the Author")
+    assert book.title == "My Book"
+    numbered = [c for c in book.chapters if c.number]
+    assert numbered and numbered[0].number == "1"

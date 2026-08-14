@@ -345,6 +345,121 @@ def _strip_internal_anchors(body) -> None:
         a.unwrap()
 
 
+# Footnote markers survive markdownify as a plain-text token and expand to a
+# `[^N]` reference afterwards, the same round-trip trick images and pagebreaks
+# use (markdownify mangles anything that looks like markup).
+FN_TOKEN_PREFIX = "ANOMALICAFN"
+FN_TOKEN_SUFFIX = "FNEND"
+FN_TOKEN_RE = re.compile(rf"{FN_TOKEN_PREFIX}(\d+){FN_TOKEN_SUFFIX}")
+
+
+def _attr_contains(tag, local_name: str, needle: str) -> bool:
+    """True if any of the tag's attributes whose local name is `local_name`
+    (ignoring namespace) contains `needle` - handles `epub:type` however
+    BeautifulSoup exposes it."""
+    for key, value in tag.attrs.items():
+        local = key.rsplit(":", 1)[-1].rsplit("}", 1)[-1]
+        if local == local_name and needle in str(value):
+            return True
+    return False
+
+
+def _is_noteref(a) -> bool:
+    """A note reference: the little superscript that points at a footnote or
+    endnote. Recognised by `epub:type="noteref"`, `role="doc-noteref"`, or the
+    common plain form of a linked superscript pointing at an in-book anchor."""
+    if _attr_contains(a, "type", "noteref") or _attr_contains(a, "role", "noteref"):
+        return True
+    href = (a.get("href") or "").strip()
+    if "#" in href and not href.startswith(("http://", "https://", "mailto:")):
+        return a.find("sup") is not None
+    return False
+
+
+def _note_content(element) -> str:
+    """A footnote definition's text as a single markdown line, with its return
+    arrow and leading marker number stripped. Parsed with the HTML parser so no
+    XML declaration is prepended to the fragment."""
+    frag = BeautifulSoup(str(element), "html.parser")
+    for a in frag.find_all("a"):
+        # An internal anchor in a note is its return arrow - remove it and its
+        # text; an external link is a citation - keep it.
+        if not (a.get("href") or "").startswith(("http://", "https://", "mailto:")):
+            a.decompose()
+    text = markdownify(str(frag), heading_style="ATX")
+    text = re.sub(r"\s+", " ", text).strip()
+    # Drop a markdown list bullet markdownify added, then the note's own leading
+    # marker ('1', '1.', or an id-derived 'fn1').
+    return re.sub(r"^(?:[-*]\s+)?(?:fn\s*)?\d+[.\s]*", "", text).strip()
+
+
+class _FootnoteResolver:
+    """Resolves note references to their definitions across the whole book.
+
+    A note reference in one chapter points, by href, at a definition that often
+    lives in a different spine document (a shared endnotes section). Numbers are
+    assigned once, book-wide, so every `[^N]` is unique in the flattened record;
+    the definition is placed with the chapter that cites it. Dedicated notes
+    documents are recorded so the caller can drop them - their content has been
+    pulled into the per-chapter definitions and would otherwise appear twice."""
+
+    def __init__(self, book: epub.EpubBook) -> None:
+        self.book = book
+        self.counter = 0
+        self.note_documents: set[str] = set()
+        self._soups: dict[str, BeautifulSoup | None] = {}
+
+    def _soup(self, filename: str) -> BeautifulSoup | None:
+        if filename not in self._soups:
+            item = self.book.get_item_with_href(filename)
+            self._soups[filename] = (
+                BeautifulSoup(item.get_content(), "lxml-xml") if item else None
+            )
+        return self._soups[filename]
+
+    def resolve(self, base_file: str, href: str) -> tuple[str, str]:
+        """Assign the next book-wide number to a reference and return
+        (label, definition-text). The text is empty when the target cannot be
+        found - the marker is still emitted rather than left as a bare digit."""
+        self.counter += 1
+        label = str(self.counter)
+        target, _, fragment = href.partition("#")
+        if not fragment:
+            return label, ""
+        target_file = _resolve_href(base_file, target) if target else base_file
+        soup = self._soup(target_file)
+        content = ""
+        if soup is not None and (element := soup.find(id=fragment)) is not None:
+            content = _note_content(element)
+        if posixpath.basename(target_file) != posixpath.basename(base_file):
+            self.note_documents.add(posixpath.basename(target_file))
+        return label, content
+
+
+def _collect_footnotes(
+    body, chapter_file: str, resolver: _FootnoteResolver
+) -> list[str]:
+    """Replace each note reference in the body with a token and return the
+    footnote definitions in reference order, as `[^N]: text` lines. Runs before
+    internal anchors are unwrapped, so the reference links are still intact."""
+    definitions = []
+    for a in body.find_all("a"):
+        if not _is_noteref(a):
+            continue
+        href = (a.get("href") or "").strip()
+        if not href:
+            continue
+        label, content = resolver.resolve(chapter_file, href)
+        a.replace_with(f"{FN_TOKEN_PREFIX}{label}{FN_TOKEN_SUFFIX}")
+        if content:
+            definitions.append(f"[^{label}]: {content}")
+    return definitions
+
+
+def _expand_footnote_tokens(md: str) -> str:
+    return FN_TOKEN_RE.sub(lambda m: f"[^{m.group(1)}]", md)
+
+
 def _resolve_href(base_file: str, src: str) -> str:
     src = unquote(src.split("#", 1)[0].split("?", 1)[0])
     base_dir = posixpath.dirname(base_file)
@@ -509,6 +624,7 @@ def _xhtml_to_markdown(
     chapter_file: str,
     book: epub.EpubBook,
     images: list[ExtractedImage],
+    resolver: _FootnoteResolver,
 ) -> tuple[str | None, str | None, str]:
     soup = BeautifulSoup(xhtml, "lxml-xml")
     _strip_navigation(soup)
@@ -516,6 +632,7 @@ def _xhtml_to_markdown(
     title, number, number_tag = _analyse_body(body)
     if number_tag is not None:
         number_tag.decompose()
+    footnotes = _collect_footnotes(body, chapter_file, resolver)
     _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
     _collect_pagebreaks(body)
@@ -523,11 +640,15 @@ def _xhtml_to_markdown(
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = _expand_redaction_tokens(md)
     md = _expand_page_tokens(md)
+    md = _expand_footnote_tokens(md)
     md = _hoist_heading_page_markers(md)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
-    return title, number, md.strip()
+    md = md.strip()
+    if footnotes:
+        md = f"{md}\n\n" + "\n".join(footnotes)
+    return title, number, md
 
 
 def _yaml_quote(value: str) -> str:
@@ -598,12 +719,14 @@ def extract(epub_path: str) -> ExtractedBook:
     identifier = _meta_first(book, "DC", "identifier")
 
     toc = _toc_titles(book)
+    resolver = _FootnoteResolver(book)
     images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
+    chapter_files: list[str] = []
     max_number = 0
     for index, item in enumerate(_spine_documents(book), start=1):
         body_title, body_number, markdown = _xhtml_to_markdown(
-            item.get_content(), item.file_name, book, images
+            item.get_content(), item.file_name, book, images, resolver
         )
         markdown = _expand_image_tokens(markdown, images)
         if not markdown:
@@ -617,7 +740,7 @@ def extract(epub_path: str) -> ExtractedBook:
         if toc_title:
             toc_number, toc_clean, is_part = _parse_designation(toc_title)
             number = None if is_part else toc_number
-            title = toc_clean or body_title
+            section_title = toc_clean or body_title
         else:
             # A section the TOC does not list takes its number from the body, but
             # only if it continues the chapter sequence upward. That keeps a book
@@ -626,12 +749,21 @@ def extract(epub_path: str) -> ExtractedBook:
             number = (
                 body_number if body_number and int(body_number) > max_number else None
             )
-            title = body_title
+            section_title = body_title
         if number:
             max_number = max(max_number, int(number))
         chapters.append(
-            Chapter(index=index, title=title, markdown=markdown, number=number)
+            Chapter(index=index, title=section_title, markdown=markdown, number=number)
         )
+        chapter_files.append(posixpath.basename(item.file_name))
+
+    # Drop dedicated notes documents: their definitions have been pulled into the
+    # chapters that cite them, so keeping the raw section would duplicate them.
+    chapters = [
+        chapter
+        for chapter, filename in zip(chapters, chapter_files)
+        if filename not in resolver.note_documents
+    ]
 
     return ExtractedBook(
         title=title,
