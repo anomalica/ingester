@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,13 @@ class ClaudeCodeProvider:
             f"Return ONLY the markdown output. No commentary, no summary, no preamble."
         )
 
+        # ANTHROPIC_API_KEY must not be visible to Claude Code. Its presence takes
+        # precedence over the claude.ai login, which disables the connectors and
+        # makes the CLI exit 1 with a warning rather than extracting - intermittent
+        # chunk failures on a 416-page document, each one costing a retry. This is
+        # the subscription path by definition (the API path does not come through
+        # here), so the key is not merely unnecessary, it is actively wrong.
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         result = subprocess.run(
             [
                 "claude",
@@ -67,6 +75,7 @@ class ClaudeCodeProvider:
             input=full_prompt,
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode != 0:
             print(f"Claude Code stderr: {result.stderr.strip()}", file=sys.stderr)

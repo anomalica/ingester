@@ -120,6 +120,17 @@ def _auth_args() -> list[str]:
     cookies = os.environ.get("INGEST_YTDLP_COOKIES", "").strip()
     if cookies and Path(cookies).is_file():
         args += ["--cookies", cookies]
+    # The bgutil PO-token provider in script mode: a self-contained Node script
+    # (baked into the image) that mints the token yt-dlp needs, with no separate
+    # service to keep running. Used automatically when present.
+    pot_script = os.environ.get(
+        "INGEST_YTDLP_POT_SCRIPT", "/opt/bgutil/server/build/generate_once.js"
+    )
+    if Path(pot_script).is_file():
+        args += [
+            "--extractor-args",
+            f"youtubepot-bgutilscript:script_path={pot_script}",
+        ]
     return args
 
 

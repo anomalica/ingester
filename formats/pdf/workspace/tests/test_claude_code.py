@@ -171,3 +171,40 @@ def test_extract_chunk_writes_temp_file_and_cleans_up(tmp_path):
     # Temp file should have been cleaned up
     for p in temp_files_created:
         assert not p.exists(), f"Temp file {p} was not cleaned up"
+
+
+def test_the_api_key_is_hidden_from_claude_code(monkeypatch, tmp_path):
+    """ANTHROPIC_API_KEY takes precedence over the claude.ai login, which disables
+    the connectors and makes the CLI exit 1 with a warning instead of extracting.
+
+    This path IS the subscription path - the API path never reaches here - so the
+    key is not merely unnecessary, it actively breaks the run. It cost intermittent
+    chunk failures on a 416-page document, each one burning a retry.
+    """
+    import subprocess as sp
+
+    from extraction import claude_code as cc  # noqa: F401
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-be-passed")
+    monkeypatch.setenv("KEEP_ME", "yes")
+
+    seen: dict = {}
+
+    def _fake_run(cmd, **kw):
+        seen.update(kw)
+        return sp.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr(cc.subprocess, "run", _fake_run)
+
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    try:
+        cc.ClaudeCodeProvider("claude-opus-5")._call_claude("prompt", pdf)
+    except Exception:
+        pass  # the call fails by design here; the environment is what matters
+
+    assert seen, "subprocess.run was never reached - the test proves nothing"
+
+    env = seen.get("env") or {}
+    assert "ANTHROPIC_API_KEY" not in env
+    assert env.get("KEEP_ME") == "yes"  # the rest of the environment survives
