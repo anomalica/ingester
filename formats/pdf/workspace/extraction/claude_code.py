@@ -11,6 +11,13 @@ from shared.validator import strip_code_fences
 from extraction.prompt import build_extraction_prompt
 
 
+# How long one chunk extraction may take before it is treated as failed. Chunks
+# normally finish in 8-16 minutes; this is generous enough not to cut a slow one
+# and short enough that a hang costs a chunk rather than the night. Tunable,
+# because the thing it guards (chunk size, model, page density) is tunable.
+CALL_TIMEOUT_S = float(os.environ.get("PDF_CALL_TIMEOUT_S", "1800"))
+
+
 def _extract_metadata(envelope: dict) -> dict:
     """Extract useful metadata from the Claude Code response envelope."""
     meta = {}
@@ -58,25 +65,37 @@ class ClaudeCodeProvider:
         # the subscription path by definition (the API path does not come through
         # here), so the key is not merely unnecessary, it is actively wrong.
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        result = subprocess.run(
-            [
-                "claude",
-                "--print",
-                "--model",
-                self.model,
-                "--allowedTools",
-                "Read",
-                "--no-session-persistence",
-                "--add-dir",
-                str(pdf_path.parent),
-                "--output-format",
-                "json",
-            ],
-            input=full_prompt,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "claude",
+                    "--print",
+                    "--model",
+                    self.model,
+                    "--allowedTools",
+                    "Read",
+                    "--no-session-persistence",
+                    "--add-dir",
+                    str(pdf_path.parent),
+                    "--output-format",
+                    "json",
+                ],
+                input=full_prompt,
+                capture_output=True,
+                text=True,
+                env=env,
+                # A WALL. Without one this call could hang forever, and one did: a
+                # single 20-page chunk sat 30 minutes with no output, no CPU and no
+                # way to recover, because nothing above this has a timeout either -
+                # the batch script's own timeout only covers the whole document, and
+                # once it exits, nothing is watching at all. A hung call has to become
+                # a failed chunk so the retry and re-split logic can do their job.
+                timeout=CALL_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Claude Code timed out after {CALL_TIMEOUT_S:.0f}s"
+            ) from exc
         if result.returncode != 0:
             print(f"Claude Code stderr: {result.stderr.strip()}", file=sys.stderr)
             raise RuntimeError(

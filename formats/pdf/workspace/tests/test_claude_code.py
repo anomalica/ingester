@@ -208,3 +208,40 @@ def test_the_api_key_is_hidden_from_claude_code(monkeypatch, tmp_path):
     env = seen.get("env") or {}
     assert "ANTHROPIC_API_KEY" not in env
     assert env.get("KEEP_ME") == "yes"  # the rest of the environment survives
+
+
+def test_a_timed_out_call_fails_the_chunk_not_the_document(monkeypatch, tmp_path):
+    """A hang must become a retryable chunk failure.
+
+    The call had no timeout at all, and one hung for 30 minutes with no output and
+    no CPU - unrecoverable, because the batch script's timeout covers the whole
+    document and stops watching once it exits. Adding a timeout is only half the
+    fix: TimeoutExpired is a SubprocessError, and the retry/re-split logic upstream
+    catches RuntimeError, so an unconverted timeout would take down a 416-page
+    document over one slow chunk - worse than the hang it replaced.
+    """
+    import subprocess as sp
+
+    from extraction import claude_code as cc
+
+    def _timeout(cmd, **kw):
+        raise sp.TimeoutExpired(cmd, kw.get("timeout", 1))
+
+    monkeypatch.setattr(cc.subprocess, "run", _timeout)
+
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    with pytest.raises(RuntimeError, match="timed out"):
+        cc.ClaudeCodeProvider("claude-opus-5")._call_claude("prompt", pdf)
+
+
+def test_the_call_timeout_is_tunable(monkeypatch):
+    """The thing it guards - chunk size, model, page density - is tunable, so the
+    guard has to be too, or the first tuning silently invalidates it."""
+    import importlib
+
+    monkeypatch.setenv("PDF_CALL_TIMEOUT_S", "42")
+    from extraction import claude_code as cc
+
+    importlib.reload(cc)
+    assert cc.CALL_TIMEOUT_S == 42.0
