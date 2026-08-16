@@ -21,6 +21,22 @@ from extraction.epub_extract import ExtractedBook, extract
 
 _OVERRIDES_PATH = Path(__file__).resolve().parent / "metadata_overrides.yaml"
 
+# Statuses under which the source's own blurb is itself gated: reproducing a
+# licensed publisher's description republishes their copy, so it is cut to a short
+# identifying excerpt rather than stored whole (ingest-format.md).
+_GATED_BLURB_STATUSES = {"licensed", "restricted"}
+_BLURB_MAX_CHARS = 200
+
+
+def _gated_blurb(text: str) -> str:
+    """A short leading excerpt of a gated description - enough to identify the
+    work without republishing the publisher's blurb."""
+    text = text.strip()
+    if len(text) <= _BLURB_MAX_CHARS:
+        return text
+    cut = text[:_BLURB_MAX_CHARS].rsplit(" ", 1)[0].rstrip(" ,.;:-")
+    return f"{cut}..."
+
 
 def _apply_metadata_overrides(book: ExtractedBook, source_hash: str) -> list[str]:
     """Override an EPUB's own metadata with hand-verified corrections, keyed by
@@ -84,6 +100,8 @@ def _build_frontmatter(
     media_summary: dict | None,
 ) -> str:
     escaped_title = book.title.replace('"', '\\"')
+    # A book is presumptively copyrighted; a reviewer can widen it in the workbench.
+    copyright_status = "licensed"
     lines = [
         "---",
         "schema: anomalica/record/1",
@@ -103,8 +121,12 @@ def _build_frontmatter(
         for author in book.authors:
             lines.append(f"  - {author}")
     if book.description:
-        escaped_desc = book.description.replace('"', '\\"')
-        lines.append(f'description: "{escaped_desc}"')
+        desc = book.description
+        if copyright_status in _GATED_BLURB_STATUSES:
+            desc = _gated_blurb(desc)
+        if desc:
+            escaped_desc = desc.replace('"', '\\"')
+            lines.append(f'description: "{escaped_desc}"')
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     if source_hash:
         lines.append(f"source_hash: {content_hash_label(source_hash)}")
@@ -112,7 +134,7 @@ def _build_frontmatter(
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append("  status: licensed")
+    lines.append(f"  status: {copyright_status}")
     if media_summary:
         lines.append("media:")
         lines.append(f"  count: {media_summary['count']}")

@@ -100,6 +100,90 @@ def _all_authors(book: epub.EpubBook) -> list[str]:
     return [v.strip() for v, _ in items if isinstance(v, str) and v.strip()]
 
 
+def _strip_html(text: str | None) -> str | None:
+    """Plain text of a metadata value that may carry HTML markup.
+
+    Publisher blurbs arrive in dc:description as HTML (`<p>`, `<strong>`, inline
+    styles). A metadata field is not a body - the markup has no place in it and a
+    consumer treating description as text would render the tags - so it is reduced
+    to text with whitespace collapsed.
+    """
+    if not text:
+        return None
+    plain = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+    plain = re.sub(r"\s+", " ", plain).strip()
+    return plain or None
+
+
+# Identifier schemes we recognise as a value-embedded prefix (isbn:X, urn:uuid:X).
+_ID_PREFIX_SCHEMES = ("isbn", "uuid", "doi", "calibre", "asin", "amazon", "google")
+# Preference order when a book carries several: ISBN is globally stable, the
+# calibre id is a local library artefact. Lower rank wins.
+_SCHEME_RANK = {"isbn": 0, "doi": 1, "uuid": 2, "calibre": 3}
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+_ISBN13_RE = re.compile(r"^97[89]\d{10}$")
+
+
+def _scheme_and_value(value: str, attrs: dict | None) -> tuple[str | None, str]:
+    """Best (scheme, value) for one dc:identifier.
+
+    A value-embedded prefix (`urn:isbn:`, `isbn:`, `uuid:`, `calibre:`) wins; then
+    the OPF `scheme` attribute; then an unambiguous shape (ISBN-13, a UUID).
+    Scheme is lowercased. None means undetermined - the value is emitted bare
+    rather than guessed onto a wrong scheme.
+    """
+    v = value.strip()
+    m = re.match(r"^(?:urn:)?([A-Za-z][\w-]*):(.+)$", v)
+    if m and m.group(1).lower() in _ID_PREFIX_SCHEMES:
+        return m.group(1).lower(), m.group(2).strip()
+    scheme = None
+    for key, val in (attrs or {}).items():
+        if (
+            key == "scheme"
+            or key.endswith("}scheme")
+            or key.lower().endswith(":scheme")
+        ):
+            scheme = str(val).strip().lower() or None
+            break
+    if scheme:
+        return scheme, v
+    digits = v.replace("-", "").replace(" ", "")
+    if _ISBN13_RE.match(digits):
+        return "isbn", digits
+    if _UUID_RE.match(v):
+        return "uuid", v
+    return None, v
+
+
+def _pick_identifier(items: Iterable) -> str | None:
+    """The most useful identifier for a book, emitted as `scheme:value`.
+
+    An EPUB carries several dc:identifier entries - ISBN, a publisher UUID, the
+    calibre internal id - in no fixed order, and taking the first yielded a bare
+    ISBN on one book and a bare UUID on the next, unschemed so `provenance.
+    identifiers` had nowhere to key them. Prefer ISBN over DOI, UUID, calibre and
+    emit the scheme.
+    """
+    best: tuple[int, str | None, str] | None = None
+    for entry in items or []:
+        value = entry[0] if isinstance(entry, (list, tuple)) else entry
+        attrs = (
+            entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
+        )
+        if not isinstance(value, str) or not value.strip():
+            continue
+        scheme, val = _scheme_and_value(value, attrs)
+        rank = _SCHEME_RANK.get(scheme, 8 if scheme else 9)
+        if best is None or rank < best[0]:
+            best = (rank, scheme, val)
+    if best is None:
+        return None
+    _, scheme, val = best
+    return f"{scheme}:{val}" if scheme else val
+
+
 # A block whose whole text is a bare Arabic chapter number ('3', '3.', 'Chapter
 # 3'). Group 1 is the number. Used only for the loose "is this a number?" check.
 _CHAPTER_NUMBER_RE = re.compile(r"^(?:chapter\s+)?(\d{1,4})\.?$", re.IGNORECASE)
@@ -715,8 +799,8 @@ def extract(epub_path: str) -> ExtractedBook:
     publisher = _meta_first(book, "DC", "publisher")
     language = _meta_first(book, "DC", "language")
     date_published = _meta_first(book, "DC", "date")
-    description = _meta_first(book, "DC", "description")
-    identifier = _meta_first(book, "DC", "identifier")
+    description = _strip_html(_meta_first(book, "DC", "description"))
+    identifier = _pick_identifier(book.get_metadata("DC", "identifier"))
 
     toc = _toc_titles(book)
     resolver = _FootnoteResolver(book)
