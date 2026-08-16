@@ -264,3 +264,50 @@ def test_resequence_noop_when_count_mismatch():
     fixed, changed = _resequence_pages_sequential(content, 3)
     assert not changed
     assert fixed == content
+
+
+def test_model_datetime_is_normalised_to_a_bare_date():
+    """The extraction model authors this field, so the prompt cannot guarantee its
+    shape - it has emitted datetimes where every other handler writes a bare date,
+    and YAML then parses one field as two types across the corpus."""
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        "date_published: 2023-07-26 00:00:00+00:00\npages: 1\n---\n\nBody text."
+    )
+    result = _patch_frontmatter(content, "abc123", 1)
+    assert "date_published: 2023-07-26\n" in result
+
+
+def test_a_year_only_date_is_left_alone():
+    """A document that evidences only a year gets a year; padding it to 2023-01-01
+    would state a day the document does not."""
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        "date_published: 1972\npages: 1\n---\n\nBody text."
+    )
+    result = _patch_frontmatter(content, "abc123", 1)
+    assert "date_published: 1972\n" in result
+
+
+def test_authors_is_renamed_to_creators():
+    """`creators` is the medium-neutral field. The prompt asks for it, but a
+    model-authored frontmatter can still arrive with `authors` - 10 records did
+    before the handlers were reconciled."""
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        "authors:\n  - Eric W. Davis\npages: 1\n---\n\nBody text."
+    )
+    result = _patch_frontmatter(content, "abc123", 1)
+    assert "creators:\n  - Eric W. Davis" in result
+    assert "authors:" not in result
+
+
+def test_authors_is_left_alone_when_creators_already_exists():
+    """Two lists is a review problem; silently merging them would be a guess."""
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        "creators:\n  - Real Author\nauthors:\n  - Someone Else\npages: 1\n---\n\nBody."
+    )
+    result = _patch_frontmatter(content, "abc123", 1)
+    assert "creators:\n  - Real Author" in result
+    assert "authors:\n  - Someone Else" in result

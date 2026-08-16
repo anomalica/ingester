@@ -1,4 +1,5 @@
-from ingest_pdf import default_copyright, is_us_government_host
+from ingest_pdf import default_copyright
+from shared.copyright import is_us_government_host
 
 
 def test_us_government_sources_are_public_domain():
