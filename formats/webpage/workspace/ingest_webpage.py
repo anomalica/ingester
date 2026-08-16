@@ -24,6 +24,7 @@ from dates import normalise_published, published_scalar
 from dedup import find_by_source_id
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
+from publisher import canonical_publisher, strip_site_suffix
 from record import get_version, write_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
@@ -315,7 +316,10 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
             timezone.utc
         ).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
-    title = article.title or "Untitled"
+    # The page's own site name is chrome, not part of either field: it rides on the
+    # end of the title AND arrives as the publisher with a tagline attached.
+    title = strip_site_suffix(article.title or "Untitled", article.sitename, url)
+    publisher = canonical_publisher(article.sitename, url)
     creators = article.authors
     if email_headers is not None:
         if email_headers.subject:
@@ -337,7 +341,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         date_accessed,
         creators,
         hex_hash,
-        article.sitename,
+        publisher,
         article.description,
         source_hash,
         snapshots,
