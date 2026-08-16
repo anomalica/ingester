@@ -292,3 +292,27 @@ def test_copyright_status_matches_hostname_not_substring():
         ingest_webpage._copyright_status("https://example.gov.uk/report")
         == "publicly_accessible"
     )
+
+
+LIBERATION_TIMES_ARTICLE = Article(
+    text="Article body about the disclosure debate, long enough to be a record.",
+    title="Evidence, Drones and the UFO Debate — Liberation Times | Reimagining Old News",
+    authors=["A Reporter"],
+    date="2025-06-05",
+    sitename="Liberation Times | Reimagining Old News",
+    description="A test article",
+)
+
+
+@patch("ingest_webpage.extract_article", return_value=LIBERATION_TIMES_ARTICLE)
+def test_site_chrome_is_kept_out_of_the_title_and_publisher(mock_extract, tmp_path):
+    """The shape 23 records carry: the site's tagline arrives as the publisher AND
+    on the end of the title. Both are chrome - the publisher is the masthead, and
+    the title is what the article is called."""
+    staging = _create_staging(tmp_path, url="https://www.liberationtimes.com/x")
+    output = tmp_path / "output"
+    ingest_webpage.run(staging, output, force=False)
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert 'title: "Evidence, Drones and the UFO Debate"' in content
+    assert 'publisher: "Liberation Times"' in content
+    assert "Reimagining Old News" not in content
