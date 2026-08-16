@@ -39,3 +39,15 @@ def test_prompt_file_page_is_not_printed_number():
     line = next(line for line in prompt.splitlines() if line.startswith("- file_page"))
     assert "printed" in line.lower()
     assert "position" in line.lower()
+
+
+def test_prompt_forbids_a_second_frontmatter_block_in_the_body():
+    """A compiled document (proceedings, a FOIA release) has real internal document
+    boundaries with per-item titles and authors. Given no rule, the model invented a
+    fenced metadata block at each one - 17 of them in a 416-page proceedings - which
+    put `schema:` and `source_type:` into the body as content, because a `***` fence
+    is a thematic break and everything inside it is evidence."""
+    prompt = build_extraction_prompt()
+    assert "ONE frontmatter block" in prompt
+    assert "COMPILED document" in prompt
+    assert "never appear in the body" in prompt
