@@ -139,6 +139,13 @@ def _extract_known_speakers(
         words = candidate.split()
         if not (2 <= len(words) <= 3):
             return False
+        # Latin script only, DELIBERATELY. Kanji and kana have no case, so a
+        # Japanese-script name fails here and the roster comes back empty rather
+        # than wrong. Relaxing this to "not lowercase" would admit any capitalised
+        # fragment - "2024 Update" becomes a person - and a false name is far more
+        # expensive than a missing one: it reaches the graph as a node someone must
+        # later find and merge. If non-Latin sources arrive, add a script-aware
+        # check; do not loosen this one.
         if not all(w[0].isupper() for w in words):
             return False
         if any(w.lower() in NOT_NAMES for w in words):

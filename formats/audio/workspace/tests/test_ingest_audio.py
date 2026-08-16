@@ -565,3 +565,33 @@ def test_a_channel_that_is_its_host_still_counts():
     from ingest_audio import _extract_known_speakers
 
     assert _extract_known_speakers("An Episode", None, "Lex Fridman") == ["Lex Fridman"]
+
+
+def test_a_non_latin_name_is_rejected_by_design_not_by_oversight():
+    """`_looks_like_name` tests word[0].isupper(), and kanji and kana have no case,
+    so a Japanese-script candidate is rejected and the roster comes back EMPTY.
+
+    That is the intended behaviour, not a bug to fix. Relaxing the test to "not
+    lowercase" would admit any capitalised fragment - "2024 Update" would become a
+    person - and a false name is the expensive failure: it reaches the graph as a
+    node somebody has to find and merge later. Finding it is the hard part; the
+    corpus was once unanimous on a speaker's spelling and unanimously wrong.
+
+    An empty roster costs a reviewer some typing instead. If non-Latin sources ever
+    arrive, add a script-aware check rather than loosening this one.
+    """
+    from ingest_audio import _extract_known_speakers
+
+    assert _extract_known_speakers("高野 定雄: コスモアイル羽咋", None, None) == []
+    assert _extract_known_speakers("Interview (Ft. 高野 定雄)", None, None) == []
+    # The romanised form of the same person is picked up normally.
+    assert _extract_known_speakers("Josen Takano: Cosmo Isle Hakui", None, None) == [
+        "Josen Takano"
+    ]
+
+
+def test_a_capitalised_non_name_stays_out():
+    """The concrete cost of relaxing the script check above."""
+    from ingest_audio import _extract_known_speakers
+
+    assert _extract_known_speakers("2024 Update", None, None) == []
