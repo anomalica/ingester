@@ -13,6 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.copyright import default_status
+from shared.dates import normalise_published
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
 from shared.record import (
@@ -169,6 +170,26 @@ def _patch_frontmatter(
     # Rename date to date_published if present
     if "\ndate:" in frontmatter and "\ndate_published:" not in frontmatter:
         frontmatter = re.sub(r"\ndate: ", "\ndate_published: ", frontmatter, count=1)
+
+    # The model writes this field, so the prompt cannot guarantee its shape: it has
+    # emitted datetimes and quoted ISO strings where every other handler writes a
+    # bare date. Normalise the type; the precision it read off the document stands.
+    date_match = re.search(r"(?m)^date_published:[ \t]*(.+?)[ \t]*$", frontmatter)
+    if date_match:
+        raw_date = date_match.group(1).strip().strip("\"'")
+        normalised = normalise_published(raw_date)
+        if normalised and normalised != date_match.group(1).strip():
+            frontmatter = frontmatter.replace(
+                date_match.group(0), f"date_published: {normalised}", 1
+            )
+
+    # `creators` is the medium-neutral field; the prompt asks for it, but a
+    # model-authored frontmatter can still arrive with `authors`. Only when there is
+    # no creators list to collide with - two lists is a review problem, not ours.
+    if re.search(r"(?m)^authors:", frontmatter) and not re.search(
+        r"(?m)^creators:", frontmatter
+    ):
+        frontmatter = re.sub(r"(?m)^authors:", "creators:", frontmatter, count=1)
 
     if "date_extracted:" not in frontmatter:
         frontmatter = (

@@ -20,6 +20,7 @@ from email_shape import (
     trim_raw_source_tail,
 )
 from copyright import status_or
+from dates import normalise_published
 from dedup import find_by_source_id
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
@@ -310,7 +311,9 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
                     "URL - it may be the archive's served date, not publication",
                     file=sys.stderr,
                 )
-        date_published = extracted or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_published = normalise_published(extracted) or datetime.now(
+            timezone.utc
+        ).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
     title = article.title or "Untitled"
     creators = article.authors

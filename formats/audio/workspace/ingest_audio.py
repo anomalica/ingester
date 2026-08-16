@@ -11,6 +11,7 @@ from pathlib import Path
 
 from alignment.align import align
 from copyright import status_or
+from dates import normalise_published
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
@@ -460,7 +461,9 @@ def run(
     creators = manifest.get("creators")
     description = manifest.get("description")
     known_speakers = _extract_known_speakers(title, description, publisher)
-    date_published = manifest.get("date", manifest.get("fetched_at", "")[:10])
+    date_published = normalise_published(
+        manifest.get("date", manifest.get("fetched_at", "")[:10])
+    )
     if not date_published:
         date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     date_accessed = manifest.get("fetched_at")
