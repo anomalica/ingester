@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from dates import normalise_published
+from dates import normalise_published, published_scalar
 
 
 def test_a_bare_date_is_already_right():
@@ -60,3 +60,25 @@ def test_an_unreadable_value_is_preserved_not_discarded():
     """Losing the value would destroy the only evidence of what the source said."""
     assert normalise_published("circa 1972") == "circa 1972"
     assert normalise_published("11/07/2026") == "11/07/2026"
+
+
+def test_day_precision_is_written_bare_so_yaml_types_it_as_a_date():
+    assert published_scalar("2026-07-11") == "2026-07-11"
+    assert published_scalar("2026-07-11 00:00:00+00:00") == "2026-07-11"
+
+
+def test_a_year_is_quoted_because_a_bare_year_is_an_integer():
+    """`date_published: 2026` parses as the number 2026, which is the same
+    one-field-many-types problem this helper exists to end - the corpus held 7 of
+    them. Below day precision the value is a string that says how much is known."""
+    assert published_scalar("2026") == '"2026"'
+    assert published_scalar("2026-07") == '"2026-07"'
+
+
+def test_an_unreadable_value_is_quoted_rather_than_emitted_raw():
+    assert published_scalar("circa 1972") == '"circa 1972"'
+
+
+def test_no_value_writes_nothing_and_lets_the_caller_decide():
+    assert published_scalar(None) == ""
+    assert published_scalar("") == ""

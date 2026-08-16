@@ -11,7 +11,7 @@ from pathlib import Path
 
 from alignment.align import align
 from copyright import status_or
-from dates import normalise_published
+from dates import normalise_published, published_scalar
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
@@ -189,7 +189,7 @@ def _build_frontmatter(
         "---",
         f"schema: {schema}",
         f'title: "{escaped_title}"',
-        f"date_published: {date_published}",
+        f"date_published: {published_scalar(date_published)}",
         f"source_type: {source_type}",
     ]
     if word_timestamps:

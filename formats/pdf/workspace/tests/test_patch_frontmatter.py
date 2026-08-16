@@ -213,9 +213,11 @@ def test_preserve_identity_holds_stored_title_and_date():
 
 
 def test_preserve_identity_renames_model_date_field():
+    """A preserved year-only date is written QUOTED: bare `1975` is a YAML integer,
+    so the field would parse as a number beside neighbours that parse as dates."""
     content = '---\ntitle: "T"\ndate: 2020-08-09\n---\nbody'
     out = _preserve_identity(content, {"date_published": "1975"})
-    assert "date_published: 1975" in out
+    assert 'date_published: "1975"' in out
     assert "\ndate: " not in out
 
 
@@ -286,7 +288,7 @@ def test_a_year_only_date_is_left_alone():
         "date_published: 1972\npages: 1\n---\n\nBody text."
     )
     result = _patch_frontmatter(content, "abc123", 1)
-    assert "date_published: 1972\n" in result
+    assert 'date_published: "1972"\n' in result
 
 
 def test_authors_is_renamed_to_creators():

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from shared.copyright import default_status
-from shared.dates import normalise_published
+from shared.dates import published_scalar
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
 from shared.record import (
@@ -92,14 +92,9 @@ def _preserve_identity(content: str, preserved: dict) -> str:
         title = str(preserved["title"]).replace('"', '\\"')
         fm = re.sub(r"(?m)^title:.*$", f'title: "{title}"', fm, count=1)
     if "date_published" in preserved:
-        raw = preserved["date_published"]
-        # A stored date parses to a date/datetime; keep day precision, not a time.
-        if isinstance(raw, datetime):
-            date = raw.date().isoformat()
-        elif hasattr(raw, "isoformat"):
-            date = raw.isoformat()
-        else:
-            date = str(raw)
+        # A stored date parses back as a date/datetime (or an int, for a bare year);
+        # published_scalar renders whichever it is at its own precision.
+        date = published_scalar(preserved["date_published"])
         if re.search(r"(?m)^date_published:", fm):
             fm = re.sub(
                 r"(?m)^date_published:.*$", f"date_published: {date}", fm, count=1
@@ -177,10 +172,10 @@ def _patch_frontmatter(
     date_match = re.search(r"(?m)^date_published:[ \t]*(.+?)[ \t]*$", frontmatter)
     if date_match:
         raw_date = date_match.group(1).strip().strip("\"'")
-        normalised = normalise_published(raw_date)
-        if normalised and normalised != date_match.group(1).strip():
+        scalar = published_scalar(raw_date)
+        if scalar and scalar != date_match.group(1).strip():
             frontmatter = frontmatter.replace(
-                date_match.group(0), f"date_published: {normalised}", 1
+                date_match.group(0), f"date_published: {scalar}", 1
             )
 
     # `creators` is the medium-neutral field; the prompt asks for it, but a

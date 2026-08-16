@@ -13,9 +13,11 @@ through, and only a time component is removed.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 _PRECISIONS = ((10, "%Y-%m-%d"), (7, "%Y-%m"), (4, "%Y"))
+_FULL_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def normalise_published(value: object) -> str:
@@ -54,3 +56,21 @@ def normalise_published(value: object) -> str:
         # at the precision that was matched and no finer.
         return parsed.strftime(fmt)
     return candidate
+
+
+def published_scalar(value: object) -> str:
+    """`normalise_published` rendered as the YAML scalar to write in frontmatter.
+
+    Day precision is written bare, so YAML types it as a date. Anything shorter is
+    QUOTED, because a bare `2026` is a YAML integer - the field then parses as a
+    number in a corpus where its neighbours are dates, which is the same
+    one-field-many-types problem in a new disguise. `2026-07` is not a valid date
+    either, so it is quoted for the same reason: with day precision the type is a
+    date, and below it the type is a string that says how much is known.
+    """
+    text = normalise_published(value)
+    if not text:
+        return ""
+    if _FULL_DATE.fullmatch(text):
+        return text
+    return '"{}"'.format(text.replace('"', '\\"'))

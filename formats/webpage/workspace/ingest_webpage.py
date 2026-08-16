@@ -20,7 +20,7 @@ from email_shape import (
     trim_raw_source_tail,
 )
 from copyright import status_or
-from dates import normalise_published
+from dates import normalise_published, published_scalar
 from dedup import find_by_source_id
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
@@ -142,7 +142,7 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
         f'title: "{escaped_title}"',
-        f"date_published: {date_published}",
+        f"date_published: {published_scalar(date_published)}",
         "source_type: web",
     ]
     # document_type is WHAT the record is; source_type is HOW it was acquired.
