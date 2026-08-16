@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,24 @@ def _get_tool_versions() -> dict[str, str]:
     return versions
 
 
+_FEATURING = re.compile(r"\((?:ft|feat|featuring)\.?\s+([^)]+)\)", re.I)
+
+# Words that mark a YouTube channel rather than a person. The publisher rule below
+# exists to catch a channel that IS its host ("Lex Fridman"), but it also let
+# "Lehto Files", "Bigelow Podcast" and "NIGHT SHIFT" into speaker rosters as people.
+_CHANNEL_WORDS = {
+    "channel",
+    "clips",
+    "files",
+    "media",
+    "news",
+    "podcast",
+    "radio",
+    "show",
+    "tv",
+}
+
+
 def _extract_known_speakers(
     title: str, description: str | None, publisher: str | None
 ) -> list[str]:
@@ -111,6 +130,11 @@ def _extract_known_speakers(
         "by",
     }
 
+    def _looks_like_channel(candidate: str) -> bool:
+        if candidate.isupper():
+            return True
+        return any(w.strip(".").lower() in _CHANNEL_WORDS for w in candidate.split())
+
     def _looks_like_name(candidate: str) -> bool:
         words = candidate.split()
         if not (2 <= len(words) <= 3):
@@ -121,13 +145,26 @@ def _extract_known_speakers(
             return False
         return True
 
-    # Title often has "Guest Name: Topic | Show" or "Guest Name | Topic"
-    for sep in [":", "|"]:
-        if sep in title:
-            candidate = title.split(sep)[0].strip().strip('"')
+    # A "(Ft. Name)" credit names the guest outright, so it beats splitting the
+    # title on punctuation. Preferring the pre-colon segment is what put job titles
+    # in the roster: 'Presidential Advisor: "I Directly Handled UFO Material"
+    # (Ft. Harald Malmgren)' yielded "Presidential Advisor" and discarded the name.
+    featured = set()
+    for credit in _FEATURING.findall(title):
+        for part in re.split(r"&|,| and ", credit):
+            candidate = part.strip().strip('"')
             if _looks_like_name(candidate):
-                names.add(candidate)
-            break
+                featured.add(candidate)
+    names |= featured
+
+    # Title often has "Guest Name: Topic | Show" or "Guest Name | Topic"
+    if not featured:
+        for sep in [":", "|"]:
+            if sep in title:
+                candidate = title.split(sep)[0].strip().strip('"')
+                if _looks_like_name(candidate):
+                    names.add(candidate)
+                break
 
     # First line of description often introduces the guest
     if description:
@@ -145,8 +182,10 @@ def _extract_known_speakers(
                     names.add(candidate)
                 break
 
-    # Publisher might be a person (e.g. "Lex Fridman") not an organisation
-    if publisher and _looks_like_name(publisher):
+    # Publisher might be a person (e.g. "Lex Fridman") not an organisation - but a
+    # channel name is not a person however much it reads like one, so reject the
+    # legible cases: a show word, or the all-caps styling channels favour.
+    if publisher and _looks_like_name(publisher) and not _looks_like_channel(publisher):
         names.add(publisher)
 
     return sorted(names)
