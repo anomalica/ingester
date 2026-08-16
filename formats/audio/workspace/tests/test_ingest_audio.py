@@ -517,3 +517,51 @@ def test_resolve_title_falls_back_to_source_id_then_generic():
 
     assert ingest_audio._resolve_title({}, None, "youtube:x", "audio") == "youtube:x"
     assert ingest_audio._resolve_title({}, None, None, "video") == "Untitled video"
+
+
+def test_featured_credit_beats_the_pre_colon_split():
+    """The pre-colon segment of a clickbait title is a job title, not a person, and
+    the real name sits in the credit the split threw away. This put "Presidential
+    Advisor", "NASA Chief" and "CIA Contractor" into speaker rosters as people."""
+    from ingest_audio import _extract_known_speakers
+
+    names = _extract_known_speakers(
+        'Presidential Advisor: "I Directly Handled UFO Material" (Ft. Harald Malmgren)',
+        None,
+        None,
+    )
+    assert names == ["Harald Malmgren"]
+
+
+def test_a_credit_can_name_more_than_one_guest():
+    from ingest_audio import _extract_known_speakers
+
+    names = _extract_known_speakers(
+        "I Saw A 300ft UFO In The Indonesian Jungle (Ft. Michael Herrera & UAPGerb)",
+        None,
+        None,
+    )
+    # UAPGerb is a handle, not a two-or-three-word personal name, so it stays out.
+    assert names == ["Michael Herrera"]
+
+
+def test_the_title_split_still_works_without_a_credit():
+    from ingest_audio import _extract_known_speakers
+
+    names = _extract_known_speakers("Jesse Michels: Inside the Program", None, None)
+    assert names == ["Jesse Michels"]
+
+
+def test_a_channel_name_is_not_a_speaker():
+    """A channel that reads like a person is still a channel. These reached the
+    corpus as people: Lehto Files, Bigelow Podcast, NIGHT SHIFT."""
+    from ingest_audio import _extract_known_speakers
+
+    for channel in ("Lehto Files", "Bigelow Podcast", "NIGHT SHIFT", "AetherNet TV"):
+        assert _extract_known_speakers("An Episode", None, channel) == [], channel
+
+
+def test_a_channel_that_is_its_host_still_counts():
+    from ingest_audio import _extract_known_speakers
+
+    assert _extract_known_speakers("An Episode", None, "Lex Fridman") == ["Lex Fridman"]
