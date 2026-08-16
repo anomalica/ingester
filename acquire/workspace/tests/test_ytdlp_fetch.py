@@ -4,6 +4,15 @@ from unittest.mock import MagicMock, patch
 from fetch.ytdlp import _download, _is_supported, fetch, is_video_platform
 
 
+def _failed_run(stderr: bytes = b"ERROR: unable to download video data"):
+    """A failed subprocess result whose stderr decodes to a real string.
+
+    _download now classifies the failure by reading stderr, so a bare
+    MagicMock(returncode=1) leaves it matching regexes against a mock object.
+    """
+    return MagicMock(returncode=1, stderr=stderr)
+
+
 def test_is_supported_youtube_watch():
     assert _is_supported("https://www.youtube.com/watch?v=abc123")
 
@@ -97,7 +106,7 @@ def test_fetch_returns_none_when_download_fails(mock_download):
 
 @patch("fetch.ytdlp.subprocess.run")
 def test_download_calls_ytdlp_with_info_json(mock_run, tmp_path):
-    mock_run.return_value = MagicMock(returncode=1)
+    mock_run.return_value = _failed_run()
     _download("https://www.youtube.com/watch?v=abc123", tmp_path)
 
     cmd = mock_run.call_args[0][0]
@@ -112,7 +121,7 @@ def test_download_calls_ytdlp_with_info_json(mock_run, tmp_path):
 
 @patch("fetch.ytdlp.subprocess.run")
 def test_download_returns_none_on_nonzero_exit(mock_run, tmp_path):
-    mock_run.return_value = MagicMock(returncode=1)
+    mock_run.return_value = _failed_run()
     audio, metadata = _download("https://www.youtube.com/watch?v=abc123", tmp_path)
     assert audio is None
     assert metadata is None
