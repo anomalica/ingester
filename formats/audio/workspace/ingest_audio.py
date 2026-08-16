@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from alignment.align import align
+from copyright import status_or
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
@@ -178,6 +179,7 @@ def _build_frontmatter(
     language: str,
     source_audio: list[dict],
     word_timestamps: bool = False,
+    copyright_status: str = "publicly_accessible",
 ) -> str:
     """Assemble YAML frontmatter for an audio/video record."""
     escaped_title = title.replace('"', '\\"')
@@ -213,7 +215,7 @@ def _build_frontmatter(
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append("  status: publicly_accessible")
+    lines.append(f"  status: {copyright_status}")
     tool_versions = _get_tool_versions()
     lines.append("processing:")
     lines.append("  handler: audio")
@@ -478,6 +480,7 @@ def run(
         language=language,
         source_audio=source_audio_list,
         word_timestamps=word_timestamps,
+        copyright_status=status_or(manifest, "publicly_accessible"),
     )
     body = _build_content(turns, word_timestamps=word_timestamps)
     content = frontmatter + "\n\n" + body

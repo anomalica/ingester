@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
+from shared.copyright import default_status
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
 from shared.record import (
@@ -35,64 +36,14 @@ MAX_RETRIES = 2
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
 
 
-def _host(url: str) -> str:
-    """Lowercased hostname of a URL, or "" if it isn't one."""
-    from urllib.parse import urlparse
-
-    try:
-        return (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return ""
-
-
-def is_us_government_host(url: str) -> bool:
-    """True for a US federal host, whose works are public domain (17 USC 105).
-
-    Matches the `.gov` and `.mil` TLDs (and their subdomains: apps.dtic.mil,
-    www.congress.gov). NOT a hard rule - a government site can host a third-party
-    contractor report that retains copyright - so this is a default a reviewer can
-    override in the workbench, not a licence determination.
-    """
-    h = _host(url)
-    return bool(h) and (h.endswith(".gov") or h.endswith(".mil") or h in ("gov", "mil"))
-
-
 def default_copyright(manifest: dict) -> dict | None:
     """The copyright block for a PDF when no existing record and no explicit
-    --copyright status apply, or None to leave _patch_frontmatter's `restricted`.
-
-    Three tiers, most specific first:
-
-    - A US GOVERNMENT source (.gov/.mil) is public domain by law - no copyright, so
-      nothing to gate. It serves openly. Gating a DTIC report or a congress.gov
-      hearing document behind proof-of-possession protects nothing and just hides
-      the document from its reviewer.
-    - Any other source FETCHED from a public URL is, by the fact that we retrieved
-      it anonymously, publicly accessible - matching the audio/video/web handlers.
-      That still gates the original file (we don't redistribute someone else's
-      copyrighted PDF) while letting the extracted text be surfaced.
-    - A local file of UNKNOWN provenance keeps the conservative `restricted`.
-
-    A local file whose origin the operator DECLARED with --source-url is not of
-    unknown provenance, so it is judged on that URL. Without this the two routes to
-    one document disagree: fetching a public PDF by URL yields
-    `publicly_accessible`, while downloading that same PDF and ingesting it with
-    its origin stamped yields `restricted` - and the second route is the one taken
-    precisely when the URL is awkward (bot-blocked, dead, served from an archive),
-    which has nothing to do with whether the document is public. Observed on
-    Carlotto 2005: fetched from public sources, ingested as a file, gated behind
-    proof-of-possession, and a reviewer sent to unlock a paper anyone can download.
+    --copyright status apply, or None to leave _patch_frontmatter's `restricted`
+    for a local file of unknown provenance. Judgement lives in shared/copyright.py
+    so web and audio/video reach the same answer for the same source.
     """
-    if manifest.get("copyright_status"):
-        return {"status": manifest["copyright_status"]}
-    # The fetched location first, then the declared origin.
-    for candidate in (manifest.get("source"), manifest.get("source_url")):
-        source = str(candidate or "")
-        if source.startswith(("http://", "https://")):
-            if is_us_government_host(source):
-                return {"status": "public_domain"}
-            return {"status": "publicly_accessible"}
-    return None
+    status = default_status(manifest)
+    return {"status": status} if status else None
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:

@@ -9,7 +9,6 @@ import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 from email_shape import (
     drop_leading_heading,
@@ -20,6 +19,7 @@ from email_shape import (
     segment_thread,
     trim_raw_source_tail,
 )
+from copyright import status_or
 from dedup import find_by_source_id
 from hashing import content_hash_label, hash_string, store_exists
 from pipeline_version import current_version
@@ -103,9 +103,6 @@ def _date_from_url(url: str | None, not_after: date) -> str | None:
     return max(valid).isoformat()
 
 
-_US_GOV_TLDS = {"gov", "mil"}
-
-
 def _copyright_status(url: str) -> str:
     """Acquisition default per ingest-format.md: a `.gov`/`.mil` HOSTNAME is a US
     government work (17 USC 105) and carries no copyright -> `public_domain`; any
@@ -113,11 +110,12 @@ def _copyright_status(url: str) -> str:
     hostname's final label, never a substring, so `example.com/fake.gov` and
     `example.gov.uk` do not qualify. This is the DEFAULT for a new acquisition -
     a reviewer can override it in the workbench.
+
+    The judgement itself lives in shared/copyright.py so the pdf, web and
+    audio/video handlers cannot drift apart on it again - they did, and a .gov
+    press release came out gated behind proof-of-possession as a result.
     """
-    host = (urlparse(url).hostname or "").lower()
-    if host.rsplit(".", 1)[-1] in _US_GOV_TLDS:
-        return "public_domain"
-    return "publicly_accessible"
+    return status_or({"source": url}, "publicly_accessible")
 
 
 def _build_frontmatter(
@@ -135,6 +133,7 @@ def _build_frontmatter(
     snapshots: list[dict] | None,
     media_summary: dict | None,
     email_headers=None,
+    copyright_status: str | None = None,
 ) -> str:
     """Assemble YAML frontmatter for a web record."""
     escaped_title = title.replace('"', '\\"')
@@ -183,7 +182,7 @@ def _build_frontmatter(
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append(f"  status: {_copyright_status(url)}")
+    lines.append(f"  status: {copyright_status or _copyright_status(url)}")
     if media_summary:
         lines.append("media:")
         lines.append(f"  count: {media_summary['count']}")
@@ -341,6 +340,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         snapshots,
         media_summary,
         email_headers,
+        copyright_status=status_or(manifest, "publicly_accessible"),
     )
     content = frontmatter + "\n\n" + body_text + "\n"
 
