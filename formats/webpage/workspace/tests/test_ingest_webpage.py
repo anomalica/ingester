@@ -254,3 +254,41 @@ def test_wayback_capture_date_kept_when_no_slug_date(tmp_path):
         ingest_webpage.run(staging, output, force=False)
     content = list((output / "store").glob("*.md"))[0].read_text()
     assert "date_published: 2020-01-01" in content
+
+
+def test_copyright_status_gov_mil_hostname_is_public_domain():
+    # A US government host is public domain (17 USC 105).
+    assert (
+        ingest_webpage._copyright_status("https://docs.house.gov/x.pdf")
+        == "public_domain"
+    )
+    assert (
+        ingest_webpage._copyright_status("https://www.defense.gov/a") == "public_domain"
+    )
+    assert (
+        ingest_webpage._copyright_status("https://media.defense.gov/b.pdf")
+        == "public_domain"
+    )
+
+
+def test_copyright_status_defaults_publicly_accessible():
+    assert (
+        ingest_webpage._copyright_status("https://www.nytimes.com/2017/x")
+        == "publicly_accessible"
+    )
+    assert (
+        ingest_webpage._copyright_status("https://space.com/y") == "publicly_accessible"
+    )
+
+
+def test_copyright_status_matches_hostname_not_substring():
+    # The spec is explicit: hostname final label, never a substring - these must NOT
+    # qualify, or a substring match would open copyrighted material.
+    assert (
+        ingest_webpage._copyright_status("https://example.com/fake.gov/report.pdf")
+        == "publicly_accessible"
+    )
+    assert (
+        ingest_webpage._copyright_status("https://example.gov.uk/report")
+        == "publicly_accessible"
+    )

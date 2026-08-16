@@ -9,6 +9,7 @@ import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from email_shape import (
     drop_leading_heading,
@@ -102,6 +103,23 @@ def _date_from_url(url: str | None, not_after: date) -> str | None:
     return max(valid).isoformat()
 
 
+_US_GOV_TLDS = {"gov", "mil"}
+
+
+def _copyright_status(url: str) -> str:
+    """Acquisition default per ingest-format.md: a `.gov`/`.mil` HOSTNAME is a US
+    government work (17 USC 105) and carries no copyright -> `public_domain`; any
+    other anonymously-fetched URL is provably `publicly_accessible`. Matches the
+    hostname's final label, never a substring, so `example.com/fake.gov` and
+    `example.gov.uk` do not qualify. This is the DEFAULT for a new acquisition -
+    a reviewer can override it in the workbench.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    if host.rsplit(".", 1)[-1] in _US_GOV_TLDS:
+        return "public_domain"
+    return "publicly_accessible"
+
+
 def _build_frontmatter(
     title: str,
     date_published: str,
@@ -165,7 +183,7 @@ def _build_frontmatter(
         lines.append(f"date_accessed: {date_accessed}")
     lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
     lines.append("copyright:")
-    lines.append("  status: publicly_accessible")
+    lines.append(f"  status: {_copyright_status(url)}")
     if media_summary:
         lines.append("media:")
         lines.append(f"  count: {media_summary['count']}")
