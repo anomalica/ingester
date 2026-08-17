@@ -7,6 +7,7 @@ from ingest_pdf import (
     _find_missing_pages,
     _normalise_thematic_breaks,
     _preserve_identity,
+    _separate_braces_in_math,
     _patch_frontmatter,
     _renumber_pages,
     _resequence_pages_sequential,
@@ -313,3 +314,37 @@ def test_authors_is_left_alone_when_creators_already_exists():
     result = _patch_frontmatter(content, "abc123", 1)
     assert "creators:\n  - Real Author" in result
     assert "authors:\n  - Someone Else" in result
+
+
+def test_doubled_braces_inside_math_are_separated():
+    r"""`x^{{n}}` matches the {{...}} inline-annotation grammar, so a consumer
+    reading the body against the spec parses part of an equation as an annotation -
+    and the prose anchor's marker-skip reduces it to `x^` first. A space between the
+    braces renders identically in TeX. Both braces are KEPT - a space is inserted,
+    never a token deleted, so the equation stays exactly what the page printed."""
+    body = r"The exponent \( x^{{n}} \) and \[ \frac{{a}}{{b}} \] follow."
+    out = _separate_braces_in_math(body)
+    assert r"x^{ {n} }" in out
+    assert r"\frac{ {a} }{ {b} }" in out
+    assert "{{" not in out and "}}" not in out
+
+
+def test_annotations_in_prose_are_untouched():
+    """The guard is scoped to math spans precisely so the real annotation grammar
+    survives - rewriting these would destroy the redaction record."""
+    body = "The name was {{redacted: ~2 words}} and the rest {{illegible}}."
+    assert _separate_braces_in_math(body) == body
+
+
+def test_annotations_outside_a_math_span_survive_alongside_one():
+    body = r"{{redacted}} then \( y^{{2}} \) then {{illegible: maybe}}."
+    out = _separate_braces_in_math(body)
+    assert "{{redacted}}" in out
+    assert "{{illegible: maybe}}" in out
+    assert r"y^{ {2} }" in out
+
+
+def test_deeper_nesting_is_fully_separated():
+    body = r"\[ \frac{{{a}}}{c} \]"
+    out = _separate_braces_in_math(body)
+    assert "{{" not in out and "}}" not in out
