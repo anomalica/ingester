@@ -51,3 +51,41 @@ def test_prompt_forbids_a_second_frontmatter_block_in_the_body():
     assert "ONE frontmatter block" in prompt
     assert "COMPILED document" in prompt
     assert "never appear in the body" in prompt
+
+
+def test_prompt_teaches_the_document_boundary_annotation():
+    """Telling the model only what NOT to do left it with nowhere to put per-paper
+    metadata, which is how the fenced blocks happened. The annotation landed in
+    ingest-format.md (e157803), so the prompt now names the right place."""
+    prompt = build_extraction_prompt()
+    assert "<!-- document: {n: 3," in prompt
+    assert "NEVER the container's" in prompt
+
+
+def test_prompt_requires_latex_and_forbids_dollar_delimiters():
+    """Dollar delimiters collide with the dollar figures this corpus is full of:
+    `$50-$60` opens math at `$5` and closes at the second `$`, turning prose
+    between them into an equation."""
+    prompt = build_extraction_prompt()
+    assert "\\[ ... \\]" in prompt
+    assert "\\( ... \\)" in prompt
+    assert "NEVER $ or $$" in prompt
+
+
+def test_prompt_forbids_simplifying_an_equation():
+    """Same fidelity bar as a quote - flattening to unicode loses radical scope and
+    subscripts, which is a loss of meaning rather than a simplification."""
+    prompt = build_extraction_prompt()
+    assert "AS PRINTED" in prompt
+    assert "do not solve it" in prompt
+
+
+def test_prompt_keeps_doubled_braces_out_of_math():
+    """`x^{{n}}` matches the {{...}} inline-annotation regex, so a consumer parsing
+    the body reads part of an equation as an annotation. Prevented at source rather
+    than by requiring every consumer to lift math spans before parsing - the same
+    argument that chose non-colliding delimiters over an escape mechanism."""
+    prompt = build_extraction_prompt()
+    assert "NEVER put two braces together" in prompt
+    assert "x^{{n}}" in prompt
+    assert "x^{ {n} }" in prompt
