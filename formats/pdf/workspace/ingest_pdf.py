@@ -78,6 +78,33 @@ def _normalise_thematic_breaks(content: str) -> str:
     return frontmatter + body
 
 
+_MATH_SPAN = re.compile(r"\\\[.*?\\\]|\\\(.*?\\\)", re.DOTALL)
+
+
+def _separate_braces_in_math(content: str) -> str:
+    """Put a space between doubled braces INSIDE math spans: `x^{{n}}` -> `x^{ n }`.
+
+    Nested TeX groups put two braces together, and `{{...}}` is the record format's
+    inline-annotation grammar - so a consumer reading a body against the spec parses
+    part of an equation as an annotation, and the prose anchor's marker-skipping
+    reduces `x^{{n}}` to `x^` before anything else runs. Silent corruption of an
+    equation, in a record whose point is the equation.
+
+    The prompt already tells the model not to write it; this is the deterministic
+    half, for the same reason `_normalise_thematic_breaks` exists - a prompt
+    constrains a model, it does not guarantee one. Scoped strictly to math spans, so
+    a genuine `{{redacted}}` or `{{illegible}}` in prose is never touched.
+    """
+
+    def fix(match: re.Match) -> str:
+        span = match.group(0)
+        while "{{" in span or "}}" in span:
+            span = span.replace("{{", "{ {").replace("}}", "} }")
+        return span
+
+    return _MATH_SPAN.sub(fix, content)
+
+
 def _preserve_identity(content: str, preserved: dict) -> str:
     """Override the model's re-derived title/date_published with the values already
     stored for this record, on a re-ingest. A re-extraction must not rename or
@@ -615,6 +642,7 @@ def main():
 
     content = _clean_annotations(content)
     content = _normalise_thematic_breaks(content)
+    content = _separate_braces_in_math(content)
     model_name = getattr(provider, "model", "unknown")
     _report_usage(all_meta, model_name)
     provider_name = "anthropic-api" if using_api else "claude-code"
