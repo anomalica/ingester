@@ -14,7 +14,7 @@ import anomalica_common.llm.transport as transport
 from anomalica_common.llm import spend_confirmed
 
 from extraction.openrouter_vision import OpenRouterVisionProvider
-from ingest_pdf import _estimate_vision_cost
+from ingest_pdf import _estimate_vision_cost, _resolve_provider_kind
 
 
 @pytest.fixture(autouse=True)
@@ -83,3 +83,35 @@ def test_small_run_authorises_on_confirmation():
     ok = spend_confirmed(est, "openai/gpt-5.6-luna", confirm=True, echo=lambda _: None)
     assert ok is True
     assert transport._metered_spend_authorised is True
+
+
+# --- provider routing: INGEST_USE_API must govern the vision path -------------
+
+
+def test_luna_default_routes_to_openrouter(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.delenv("INGEST_USE_API", raising=False)
+    assert _resolve_provider_kind("openai/gpt-5.6-luna") == "openrouter"
+
+
+def test_use_api_zero_forces_subscription_even_with_luna_default(monkeypatch):
+    # The load-bearing fix: "0" is a real off-switch over the path that spends,
+    # not a no-op. Previously the Luna path ignored it entirely.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("INGEST_USE_API", "0")
+    assert _resolve_provider_kind("openai/gpt-5.6-luna") == "subscription"
+
+
+def test_missing_openrouter_key_downgrades_to_subscription(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("INGEST_USE_API", raising=False)
+    assert _resolve_provider_kind("openai/gpt-5.6-luna") == "subscription"
+
+
+def test_plain_model_uses_subscription_unless_use_api_1(monkeypatch):
+    monkeypatch.delenv("INGEST_USE_API", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert _resolve_provider_kind("sonnet") == "subscription"
+    monkeypatch.setenv("INGEST_USE_API", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    assert _resolve_provider_kind("sonnet") == "api"
