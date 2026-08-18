@@ -26,6 +26,7 @@ INPUT=""
 COPYRIGHT_STATUS=""
 NO_COMMIT=0
 USE_API=0
+INGEST_MODEL="${INGEST_MODEL:-}"
 SOURCE_URL=""
 SOURCE_ID=""
 while [[ $# -gt 0 ]]; do
@@ -49,6 +50,14 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--api)
 		USE_API=1
+		shift
+		;;
+	--model)
+		INGEST_MODEL="$2"
+		shift 2
+		;;
+	--model=*)
+		INGEST_MODEL="${1#*=}"
 		shift
 		;;
 	--source-url)
@@ -113,6 +122,15 @@ if grep -q "^INGEST_USE_API=" "$ENV_FILE"; then
 	sed -i "s|^INGEST_USE_API=.*|INGEST_USE_API=${USE_API}|" "$ENV_FILE"
 else
 	echo "INGEST_USE_API=${USE_API}" >>"$ENV_FILE"
+fi
+
+# PDF handler model override: a bare provider/model id (e.g. openai/gpt-5.6-luna)
+# routes to the metered OpenRouter vision provider. Written every run so it
+# reflects this invocation, not a stale value.
+if grep -q "^INGEST_MODEL=" "$ENV_FILE"; then
+	sed -i "s|^INGEST_MODEL=.*|INGEST_MODEL=${INGEST_MODEL}|" "$ENV_FILE"
+else
+	echo "INGEST_MODEL=${INGEST_MODEL}" >>"$ENV_FILE"
 fi
 
 is_url() {

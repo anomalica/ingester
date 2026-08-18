@@ -31,6 +31,11 @@ CLAUDE_CODE_CHUNK_SIZE = 20
 # API limits (model may stop early on very long documents)
 API_MAX_PAGES_SINGLE_PASS = 50
 API_CHUNK_SIZE = 50
+# OpenRouter vision models take rendered page IMAGES (not native PDF), and image
+# tokens are large, so keep the per-call page count modest; a small document still
+# goes in one call.
+OPENROUTER_MAX_PAGES_SINGLE_PASS = 25
+OPENROUTER_CHUNK_SIZE = 15
 MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
@@ -592,6 +597,19 @@ def main():
     # host script's --api flag). Previously mere presence of
     # ANTHROPIC_API_KEY silently routed everything through the metered
     # API, which made bulk runs unexpectedly expensive.
+    # A metered OpenRouter vision model (e.g. gpt-5.6-luna) is selected by setting
+    # INGEST_MODEL to its bare `provider/model` id. This takes precedence over the
+    # Anthropic paths; like INGEST_USE_API it is an explicit metered opt-in.
+    ingest_model = os.environ.get("INGEST_MODEL", "").strip()
+    using_openrouter = "/" in ingest_model
+    if using_openrouter and not os.environ.get("OPENROUTER_API_KEY"):
+        print(
+            f"INGEST_MODEL={ingest_model} but OPENROUTER_API_KEY is unset; "
+            "falling back to Claude Code",
+            file=sys.stderr,
+        )
+        using_openrouter = False
+
     using_api = os.environ.get("INGEST_USE_API") == "1"
     if using_api and not os.environ.get("ANTHROPIC_API_KEY"):
         print(
@@ -600,7 +618,16 @@ def main():
             file=sys.stderr,
         )
         using_api = False
-    if using_api:
+    if using_openrouter:
+        from extraction.openrouter_vision import OpenRouterVisionProvider
+
+        provider = OpenRouterVisionProvider(ingest_model)
+        max_single_pass = OPENROUTER_MAX_PAGES_SINGLE_PASS
+        chunk_size = OPENROUTER_CHUNK_SIZE
+        print(
+            f"Using OpenRouter vision model: {ingest_model} (metered)", file=sys.stderr
+        )
+    elif using_api:
         from extraction.anthropic_api import AnthropicProvider
 
         provider = AnthropicProvider()
@@ -620,6 +647,15 @@ def main():
 
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
+    if using_openrouter:
+        # Rough pre-flight visibility on metered spend (Luna ~ $0.005/page). The
+        # OpenRouter balance is the hard cap; a corpus-scale run is cost-cleared
+        # with the operator separately.
+        print(
+            f"Metered run: ~{page_count} pages, est. ~${page_count * 0.005:.2f} "
+            f"on {ingest_model}",
+            file=sys.stderr,
+        )
 
     all_meta = []
 

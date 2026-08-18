@@ -23,6 +23,8 @@ stages:
             - anthropic
             - pikepdf
             - pyyaml
+            - pymupdf
+            - requests
 
   development:
     from: base
