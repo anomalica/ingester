@@ -452,6 +452,34 @@ def _price_for(model: str) -> tuple[float, float]:
     return (0.0, 0.0)
 
 
+# Pre-flight estimate for a metered vision run. Measured Luna usage runs ~700
+# image-input tokens/page; text-dense government pages produce ~1500-1800 output
+# tokens/page. Deliberately generous - a spend gate must over-estimate, never
+# under. Chunking re-sends the prompt per chunk but not the page images, so the
+# per-page term dominates and this stays close on multi-chunk runs.
+_EST_INPUT_TOK_PER_PAGE = 900
+_EST_OUTPUT_TOK_PER_PAGE = 1800
+
+
+def _estimate_vision_cost(page_count: int, model: str) -> dict:
+    """A page-based estimate dict for the shared spend gate (format_estimate reads
+    `pages`, `est_input_tokens`, `est_output_tokens`, `usd`, `usd_low/high`)."""
+    from anomalica_common.llm.cost import price_for
+
+    price_in, price_out = price_for(model)
+    in_tok = page_count * _EST_INPUT_TOK_PER_PAGE
+    out_tok = page_count * _EST_OUTPUT_TOK_PER_PAGE
+    usd = in_tok / 1e6 * price_in + out_tok / 1e6 * price_out
+    return {
+        "pages": page_count,
+        "est_input_tokens": in_tok,
+        "est_output_tokens": out_tok,
+        "usd": usd,
+        "usd_low": usd * 0.6,
+        "usd_high": usd * 1.4,
+    }
+
+
 def _report_usage(all_meta: list[dict], model: str) -> None:
     """Print token usage and an estimated cost for a metered extraction run.
     No-op when the meta carries no token counts (the subscription path)."""
@@ -483,6 +511,11 @@ def main():
         "--staging-dir",
         type=Path,
         help="Path to staging directory (alternative to input_file)",
+    )
+    parser.add_argument(
+        "--confirm-spend",
+        action="store_true",
+        help="Approve a metered run whose estimate exceeds the auto-approve ceiling",
     )
     args = parser.parse_args()
 
@@ -626,7 +659,42 @@ def main():
             file=sys.stderr,
         )
         using_api = False
+    page_count = get_page_count(args.input_file)
+    print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
+
     if using_openrouter:
+        # Pre-flight spend gate (hard, not a convention). A metered vision run
+        # prints a dollar estimate and must be authorised BEFORE the provider is
+        # built - authorising is the gate's job, never a constructor's.
+        #
+        # Default is STRICT: every metered run needs an explicit yes
+        # (--confirm-spend / INGEST_SPEND_CONFIRMED=1), matching the written rule
+        # that spend needs a cost-cleared yes with no dollar carve-out. The
+        # auto-approve ceiling is OFF by default (0.00); raising
+        # INGEST_SPEND_CEILING_USD is the operator's explicit decision to let small
+        # per-doc runs proceed unattended, and even then the ceiling only bounds ONE
+        # run - a batch of many cheap runs is the caller's (scheduler's) to approve
+        # on the aggregate, since a per-run gate cannot see it. The OpenRouter
+        # balance is the final hard cap.
+        from anomalica_common.llm import spend_confirmed
+
+        estimate = _estimate_vision_cost(page_count, ingest_model)
+        ceiling = float(os.environ.get("INGEST_SPEND_CEILING_USD", "0.00"))
+        explicit = args.confirm_spend or os.environ.get("INGEST_SPEND_CONFIRMED") == "1"
+        if not spend_confirmed(
+            estimate,
+            ingest_model,
+            confirm=explicit or estimate["usd"] <= ceiling,
+            echo=lambda m: print(m, file=sys.stderr),
+        ):
+            print(
+                f"Refusing: est. ~${estimate['usd']:.2f} exceeds the "
+                f"${ceiling:.2f} auto-approve ceiling for autonomous runs. Re-run "
+                "with --confirm-spend (or INGEST_SPEND_CONFIRMED=1) once approved.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
         from extraction.openrouter_vision import OpenRouterVisionProvider
 
         provider = OpenRouterVisionProvider(ingest_model)
@@ -650,18 +718,6 @@ def main():
         chunk_size = CLAUDE_CODE_CHUNK_SIZE
         print(
             "Using Claude Code session (default; pass --api for metered API)",
-            file=sys.stderr,
-        )
-
-    page_count = get_page_count(args.input_file)
-    print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
-    if using_openrouter:
-        # Rough pre-flight visibility on metered spend (Luna ~ $0.005/page). The
-        # OpenRouter balance is the hard cap; a corpus-scale run is cost-cleared
-        # with the operator separately.
-        print(
-            f"Metered run: ~{page_count} pages, est. ~${page_count * 0.005:.2f} "
-            f"on {ingest_model}",
             file=sys.stderr,
         )
 

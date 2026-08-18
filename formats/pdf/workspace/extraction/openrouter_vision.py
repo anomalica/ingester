@@ -10,10 +10,11 @@ assimilator, so the ingester is no longer a fourth, separately-implemented path 
 a paid model. Only the page RENDERING lives here, because pymupdf is an ingester
 dependency, not a gateway one.
 
-Metered (real money). Constructing this provider IS the metered opt-in -
-ingest_pdf.py builds it only on the explicitly-selected OpenRouter path, after
-printing the cost estimate - so it authorises spend at construction, which is what
-lets the gateway's _require_metered backstop pass for this process.
+Metered (real money). This provider does NOT authorise spend - the caller
+(ingest_pdf.py) must clear the pre-flight gate (spend_confirmed: a printed
+estimate plus authorisation) BEFORE constructing it. Authorising here would be
+wrong twice over: the flag is process-wide (it would unlock the Anthropic paths
+too), and a constructor is not where a spend is approved.
 
 The provider contract matches ClaudeCodeProvider / AnthropicProvider:
 `extract(pdf_path)` and `extract_chunk(pdf_data, page_offset, page_count)` each
@@ -28,7 +29,7 @@ from pathlib import Path
 
 import pymupdf
 
-from anomalica_common.llm import authorise_metered_spend, call_with_pages
+from anomalica_common.llm import call_with_pages
 
 from shared.validator import strip_code_fences
 from extraction.prompt import build_extraction_prompt
@@ -47,7 +48,6 @@ class OpenRouterVisionProvider:
                 "OPENROUTER_API_KEY not set - export it from the Safe before a "
                 "metered OpenRouter run."
             )
-        authorise_metered_spend()
 
     def _render(self, pdf_bytes: bytes) -> list[str]:
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
