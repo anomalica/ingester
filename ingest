@@ -310,7 +310,12 @@ echo "Done. Staging: ${RUN_DIR}" >&2
 RECORDS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/records"
 mkdir -p "$RECORDS_DIR"
 ASSET_PATH="${RUN_DIR}/${ASSET}"
-if [[ -f "$ASSET_PATH" ]]; then
+if [[ ! -f "$ASSET_PATH" ]]; then
+	# A record with no archived original cannot be served for review, and this
+	# must never pass silently: a month-old record with no source on disk was
+	# found by a corpus audit, not by a log, because this step skipped wordlessly.
+	echo "WARNING: no asset at ${ASSET_PATH} - record has NO archived original" >&2
+else
 	CONTENT_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
 	ASSET_EXT="${ASSET##*.}"
 	TARGET="${RECORDS_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
@@ -319,24 +324,39 @@ if [[ -f "$ASSET_PATH" ]]; then
 		echo "Source archived: ${TARGET}" >&2
 	fi
 
-	# Stamp the archived object's extension onto the record. This is the only
-	# place that knows it: codec/container describe the STREAM, the extension is a
-	# property of the FILE (yt-dlp writes .opus while reporting container: ogg), so
-	# consumers cannot derive it and must not guess. See ingest-format.md.
+	# Stamp the archived object's extension onto the record - the archive and this
+	# stamp are ONE statement: an archived file whose record lacks archived_ext
+	# cannot be addressed and reads as sourceless (the codec/container describe the
+	# STREAM; the extension is a property of the FILE - yt-dlp writes .opus while
+	# reporting container: ogg - so consumers must not guess). Parse the whole
+	# frontmatter, never a fixed-size window (source_hash falls past a long ebook
+	# blurb), and be LOUD when nothing matches so a miss surfaces here, not months
+	# later in an audit.
 	INGESTS_DIR="${INGESTS_DIR}" CONTENT_HASH="${CONTENT_HASH}" ASSET_EXT="${ASSET_EXT}" python3 -c "
 import os, re, sys
 from pathlib import Path
 store = Path(os.environ['INGESTS_DIR']) / 'store'
 h, ext = os.environ['CONTENT_HASH'], os.environ['ASSET_EXT']
+
+
+def frontmatter(p):
+    t = p.read_text(errors='replace')
+    m = re.match(r'^(---\n)(.*?)(\n---\n)', t, re.S)
+    return t, m
+
+
 # audio/video/pdf: record is named by the asset hash. web/ebook: the record is
-# body-hashed, and the asset hash is its source_hash.
+# body-hashed and the asset hash is its source_hash - found by parsing each
+# record's frontmatter, never by windowing the file.
 cands = [store / f'{h}.v2.md', store / f'{h}.md']
-cands += [p for p in store.glob('*.md') if f'source_hash: sha256:{h}' in p.read_text(errors='replace')[:4000]]
+for p in store.glob('*.md'):
+    _, m = frontmatter(p)
+    if m and f'source_hash: sha256:{h}' in m.group(2):
+        cands.append(p)
 for p in cands:
     if not p.exists():
         continue
-    t = p.read_text()
-    m = re.match(r'^(---\n)(.*?)(\n---\n)', t, re.S)
+    t, m = frontmatter(p)
     if not m:
         continue
     fmv = m.group(2)
@@ -349,7 +369,9 @@ for p in cands:
     p.write_text(m.group(1) + fmv + m.group(3) + t[m.end():])
     print(f'Stamped archived_ext: {ext} -> {p.name}', file=sys.stderr)
     break
-" || true
+else:
+    print(f'WARNING: archived {h[:12]}.{ext} but found NO record to stamp archived_ext on', file=sys.stderr)
+" || echo "WARNING: archived_ext stamp step errored for ${CONTENT_HASH:0:12}" >&2
 fi
 
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
