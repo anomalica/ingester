@@ -73,12 +73,16 @@ echo "Staging symlink: workspace/test-corpus"
 mkdir -p "${STAGING_DIR}/$(dirname "test-corpus")"
 cp -rL "workspace/test-corpus" "${STAGING_DIR}/test-corpus"
 
+# Build-time secrets (BuildKit). Empty unless build_secrets is configured.
+SECRET_ARGS=()
+
 ${RUNTIME} build \
 	--target "${TARGET}" \
 	--build-arg USER_NAME="${USER_NAME}" \
 	--build-arg USER_UID="${USER_UID}" \
 	--build-arg USER_GID="${USER_GID}" \
 	--build-arg WORKSPACE_NAME="${WORKSPACE_NAME}" \
+	${SECRET_ARGS[@]+"${SECRET_ARGS[@]}"} \
 	--tag "${IMAGE_NAME}:${TAG}" \
 	.
 
