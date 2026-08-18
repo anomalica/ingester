@@ -597,10 +597,15 @@ def main():
     # host script's --api flag). Previously mere presence of
     # ANTHROPIC_API_KEY silently routed everything through the metered
     # API, which made bulk runs unexpectedly expensive.
-    # A metered OpenRouter vision model (e.g. gpt-5.6-luna) is selected by setting
-    # INGEST_MODEL to its bare `provider/model` id. This takes precedence over the
-    # Anthropic paths; like INGEST_USE_API it is an explicit metered opt-in.
-    ingest_model = os.environ.get("INGEST_MODEL", "").strip()
+    # Document ingestion DEFAULTS to the metered Luna vision model - the switch
+    # away from the flat Claude subscription for PDF vision. A per-run override
+    # comes from INGEST_MODEL / `./ingest --model <provider/model>`; the default
+    # itself is INGEST_DEFAULT_MODEL (set it to "" or "sonnet" to fall back to the
+    # Claude subscription). Any bare `provider/model` id routes to OpenRouter.
+    _default_model = os.environ.get(
+        "INGEST_DEFAULT_MODEL", "openai/gpt-5.6-luna"
+    ).strip()
+    ingest_model = os.environ.get("INGEST_MODEL", "").strip() or _default_model
     using_openrouter = "/" in ingest_model
     if using_openrouter and not os.environ.get("OPENROUTER_API_KEY"):
         print(
