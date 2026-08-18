@@ -461,6 +461,47 @@ _EST_INPUT_TOK_PER_PAGE = 900
 _EST_OUTPUT_TOK_PER_PAGE = 1800
 
 
+def _resolve_provider_kind(ingest_model: str, echo=lambda _: None) -> str:
+    """Which extraction backend to use: "openrouter" (metered vision, e.g. Luna),
+    "api" (metered Anthropic), or "subscription" (unmetered Claude Code).
+
+    Document (PDF) ingestion DEFAULTS to Luna vision - a deliberate, recorded
+    exception to the project's subscription-default rule, because the flat Claude
+    subscription cannot do PDF vision as well or as cheaply. Audio/video keep the
+    local Whisper path (a separate container); web/ebook use rule-based extraction
+    with no AI model.
+
+    INGEST_USE_API is the operating rule's metered toggle and it GOVERNS the vision
+    path too, not just the Anthropic one: an explicit "0" forces the unmetered
+    subscription path regardless of the model default (off means off), "1" forces
+    the metered path, and unset defers to the model default (a bare provider/model
+    id routes to OpenRouter). A missing key downgrades to the subscription rather
+    than failing. Before this, "0" left the Luna path untouched - the documented
+    control was a no-op over the path that actually spends.
+    """
+    use_api_env = os.environ.get("INGEST_USE_API")
+    if use_api_env == "0":
+        echo("INGEST_USE_API=0: forcing the unmetered Claude subscription path.")
+        return "subscription"
+    if "/" in ingest_model:
+        if os.environ.get("OPENROUTER_API_KEY"):
+            return "openrouter"
+        echo(
+            f"INGEST_MODEL={ingest_model} but OPENROUTER_API_KEY is unset; "
+            "falling back to the Claude subscription"
+        )
+        return "subscription"
+    if use_api_env == "1":
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            return "api"
+        echo(
+            "INGEST_USE_API=1 but ANTHROPIC_API_KEY is unset; "
+            "falling back to the Claude subscription"
+        )
+        return "subscription"
+    return "subscription"
+
+
 def _estimate_vision_cost(page_count: int, model: str) -> dict:
     """A page-based estimate dict for the shared spend gate (format_estimate reads
     `pages`, `est_input_tokens`, `est_output_tokens`, `usd`, `usd_low/high`)."""
@@ -627,38 +668,15 @@ def main():
         source_file = preserved.get("source_file")
         source_id = preserved.get("source_id")
 
-    # Provider selection is opt-in to the metered API: default to the
-    # Claude Code session (flat-rate subscription) and only use the
-    # Anthropic API when INGEST_USE_API=1 is explicitly set (via the
-    # host script's --api flag). Previously mere presence of
-    # ANTHROPIC_API_KEY silently routed everything through the metered
-    # API, which made bulk runs unexpectedly expensive.
-    # Document ingestion DEFAULTS to the metered Luna vision model - the switch
-    # away from the flat Claude subscription for PDF vision. A per-run override
-    # comes from INGEST_MODEL / `./ingest --model <provider/model>`; the default
-    # itself is INGEST_DEFAULT_MODEL (set it to "" or "sonnet" to fall back to the
-    # Claude subscription). Any bare `provider/model` id routes to OpenRouter.
     _default_model = os.environ.get(
         "INGEST_DEFAULT_MODEL", "openai/gpt-5.6-luna"
     ).strip()
     ingest_model = os.environ.get("INGEST_MODEL", "").strip() or _default_model
-    using_openrouter = "/" in ingest_model
-    if using_openrouter and not os.environ.get("OPENROUTER_API_KEY"):
-        print(
-            f"INGEST_MODEL={ingest_model} but OPENROUTER_API_KEY is unset; "
-            "falling back to Claude Code",
-            file=sys.stderr,
-        )
-        using_openrouter = False
-
-    using_api = os.environ.get("INGEST_USE_API") == "1"
-    if using_api and not os.environ.get("ANTHROPIC_API_KEY"):
-        print(
-            "INGEST_USE_API=1 but ANTHROPIC_API_KEY is unset; "
-            "falling back to Claude Code",
-            file=sys.stderr,
-        )
-        using_api = False
+    kind = _resolve_provider_kind(
+        ingest_model, echo=lambda m: print(m, file=sys.stderr)
+    )
+    using_openrouter = kind == "openrouter"
+    using_api = kind == "api"
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
