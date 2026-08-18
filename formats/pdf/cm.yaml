@@ -10,6 +10,7 @@ runtime:
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
     - ../../../ingests:/mnt/output:rw
+    - ../../../anomalica-common/src:/opt/anomalica-common:ro
 
 stages:
   base:
@@ -44,4 +45,4 @@ commands:
     description: Extract structured content from a PDF
     env:
       PYTHONUNBUFFERED: "1"
-      PYTHONPATH: workspace
+      PYTHONPATH: workspace:/opt/anomalica-common
