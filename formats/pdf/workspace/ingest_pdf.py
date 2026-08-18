@@ -31,11 +31,14 @@ CLAUDE_CODE_CHUNK_SIZE = 20
 # API limits (model may stop early on very long documents)
 API_MAX_PAGES_SINGLE_PASS = 50
 API_CHUNK_SIZE = 50
-# OpenRouter vision models take rendered page IMAGES (not native PDF), and image
-# tokens are large, so keep the per-call page count modest; a small document still
-# goes in one call.
-OPENROUTER_MAX_PAGES_SINGLE_PASS = 25
-OPENROUTER_CHUNK_SIZE = 15
+# OpenRouter vision models take rendered page IMAGES (not native PDF). Beyond ~12
+# pages in one call, Luna silently stops transcribing partway - a 17-page paper
+# came back covering only pages 1-14, dropping substantive appendix content, with
+# finish_reason=stop (not a token-cap truncation). 12/10/8-page calls all cover
+# fully in testing, so cap the per-call page count at 10 for margin and let the
+# pipeline chunk anything longer.
+OPENROUTER_MAX_PAGES_SINGLE_PASS = 10
+OPENROUTER_CHUNK_SIZE = 10
 MIN_CHUNK_SIZE = 1
 MAX_RETRIES = 2
 
