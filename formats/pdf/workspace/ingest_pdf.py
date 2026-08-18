@@ -460,6 +460,14 @@ def _price_for(model: str) -> tuple[float, float]:
 _EST_INPUT_TOK_PER_PAGE = 900
 _EST_OUTPUT_TOK_PER_PAGE = 1800
 
+# The auto-approve ceiling default is part of the spend decision, NOT a tunable: it
+# is 0.00 so that nothing auto-approves and every metered run needs an explicit yes,
+# matching the recorded operating rule. A non-zero default would make that written
+# rule wrong the moment it landed - hence the test pinning this value. A non-zero
+# value belongs in the environment (an operator's deliberate per-context choice),
+# never here.
+DEFAULT_SPEND_CEILING_USD = "0.00"
+
 
 def _resolve_provider_kind(ingest_model: str, echo=lambda _: None) -> str:
     """Which extraction backend to use: "openrouter" (metered vision, e.g. Luna),
@@ -697,7 +705,9 @@ def main():
         from anomalica_common.llm import spend_confirmed
 
         estimate = _estimate_vision_cost(page_count, ingest_model)
-        ceiling = float(os.environ.get("INGEST_SPEND_CEILING_USD", "0.00"))
+        ceiling = float(
+            os.environ.get("INGEST_SPEND_CEILING_USD", DEFAULT_SPEND_CEILING_USD)
+        )
         explicit = args.confirm_spend or os.environ.get("INGEST_SPEND_CONFIRMED") == "1"
         if not spend_confirmed(
             estimate,

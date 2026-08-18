@@ -14,7 +14,11 @@ import anomalica_common.llm.transport as transport
 from anomalica_common.llm import spend_confirmed
 
 from extraction.openrouter_vision import OpenRouterVisionProvider
-from ingest_pdf import _estimate_vision_cost, _resolve_provider_kind
+from ingest_pdf import (
+    DEFAULT_SPEND_CEILING_USD,
+    _estimate_vision_cost,
+    _resolve_provider_kind,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +110,13 @@ def test_missing_openrouter_key_downgrades_to_subscription(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("INGEST_USE_API", raising=False)
     assert _resolve_provider_kind("openai/gpt-5.6-luna") == "subscription"
+
+
+def test_ceiling_default_is_zero_nothing_auto_approves():
+    # The recorded operating rule states the default is 0.00 (nothing auto-approves).
+    # A non-zero default would silently make that written rule false, so pin it.
+    assert DEFAULT_SPEND_CEILING_USD == "0.00"
+    assert float(DEFAULT_SPEND_CEILING_USD) == 0.0
 
 
 def test_plain_model_uses_subscription_unless_use_api_1(monkeypatch):
