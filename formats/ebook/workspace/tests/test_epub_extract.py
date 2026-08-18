@@ -322,3 +322,29 @@ def test_extract_book_title_survives_the_chapter_loop(tmp_path):
     assert book.title == "My Book"
     numbered = [c for c in book.chapters if c.number]
     assert numbered and numbered[0].number == "1"
+
+
+# --- drop-cap rejoin -----------------------------------------------------------
+
+from extraction.epub_extract import rejoin_dropcaps  # noqa: E402
+
+
+def test_rejoin_dropcaps_joins_unambiguous_capitals():
+    # A decorative drop cap split onto its own line rejoins with no space.
+    assert rejoin_dropcaps("W\nhile exploring") == "While exploring"
+    assert rejoin_dropcaps("# Intro\n\nT\nhe cases") == "# Intro\n\nThe cases"
+    assert rejoin_dropcaps("P\nroponents say") == "Proponents say"
+
+
+def test_rejoin_dropcaps_leaves_A_and_I_for_the_inspection_layer():
+    # 'I'/'A' may be a whole word ('I was', 'A study') or a first letter ('In',
+    # 'After', 'Indridi') - a regex cannot tell, so it must not guess and produce
+    # 'Iwas'. These are deferred, not joined here.
+    assert rejoin_dropcaps("I\nwas afraid") == "I\nwas afraid"
+    assert rejoin_dropcaps("A\nfter the war") == "A\nfter the war"
+
+
+def test_rejoin_dropcaps_ignores_non_splits():
+    # A capital followed by an uppercase run (a byline) or a full line is untouched.
+    assert rejoin_dropcaps("L\nESLIE KEAN") == "L\nESLIE KEAN"
+    assert rejoin_dropcaps("The cat sat") == "The cat sat"
