@@ -510,6 +510,11 @@ def _resolve_provider_kind(ingest_model: str, echo=lambda _: None) -> str:
     return "subscription"
 
 
+# The model AnthropicProvider builds when --api is given with no --model. Kept
+# here so the pre-flight estimate prices exactly what the run will use.
+API_DEFAULT_MODEL = "claude-sonnet-5"
+
+
 def _estimate_vision_cost(page_count: int, model: str) -> dict:
     """A page-based estimate dict for the shared spend gate (format_estimate reads
     `pages`, `est_input_tokens`, `est_output_tokens`, `usd`, `usd_low/high`)."""
@@ -688,10 +693,17 @@ def main():
     page_count = get_page_count(args.input_file)
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
-    if using_openrouter:
+    if using_openrouter or using_api:
         # Pre-flight spend gate (hard, not a convention). A metered vision run
         # prints a dollar estimate and must be authorised BEFORE the provider is
         # built - authorising is the gate's job, never a constructor's.
+        #
+        # BOTH metered providers, not just OpenRouter. This block used to sit
+        # inside `if using_openrouter:`, so the native Anthropic path built its
+        # provider straight from `elif using_api:` with no estimate and no
+        # confirmation - reachable through the documented wrapper, which writes
+        # INGEST_USE_API=1 into .env on `--api` and already has ANTHROPIC_API_KEY
+        # there. A long PDF billed silently with no figure ever shown.
         #
         # Default is STRICT: every metered run needs an explicit yes
         # (--confirm-spend / INGEST_SPEND_CONFIRMED=1), matching the written rule
@@ -704,16 +716,25 @@ def main():
         # balance is the final hard cap.
         from anomalica_common.llm import spend_confirmed
 
-        estimate = _estimate_vision_cost(page_count, ingest_model)
+        # The API branch may carry no explicit --model; price the model it will
+        # actually construct so the estimate and the run cannot disagree.
+        metered_model = ingest_model or (API_DEFAULT_MODEL if using_api else "")
+        estimate = _estimate_vision_cost(page_count, metered_model)
         ceiling = float(
             os.environ.get("INGEST_SPEND_CEILING_USD", DEFAULT_SPEND_CEILING_USD)
         )
         explicit = args.confirm_spend or os.environ.get("INGEST_SPEND_CONFIRMED") == "1"
         if not spend_confirmed(
             estimate,
-            ingest_model,
+            metered_model,
             confirm=explicit or estimate["usd"] <= ceiling,
             echo=lambda m: print(m, file=sys.stderr),
+            # Pass the decision in. spend_confirmed's own fallback reads the
+            # GLOBAL ANOMALICA_USE_API, which the ingester never sets - it
+            # resolves its own INGEST_USE_API - so leaving this None makes the
+            # gate a no-op for a bare Anthropic model id and the run proceeds
+            # unpriced. OpenRouter ids were unaffected (always metered by id).
+            use_api=True,
         ):
             print(
                 f"Refusing: est. ~${estimate['usd']:.2f} exceeds the "
@@ -723,6 +744,7 @@ def main():
             )
             sys.exit(2)
 
+    if using_openrouter:
         from extraction.openrouter_vision import OpenRouterVisionProvider
 
         provider = OpenRouterVisionProvider(ingest_model)
@@ -734,7 +756,7 @@ def main():
     elif using_api:
         from extraction.anthropic_api import AnthropicProvider
 
-        provider = AnthropicProvider()
+        provider = AnthropicProvider(metered_model)
         max_single_pass = API_MAX_PAGES_SINGLE_PASS
         chunk_size = API_CHUNK_SIZE
         print("Using Anthropic API", file=sys.stderr)
