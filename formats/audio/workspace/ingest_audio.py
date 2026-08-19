@@ -225,6 +225,8 @@ def _build_frontmatter(
     date_accessed: str | None,
     language: str,
     source_audio: list[dict],
+    posted_by: str | None = None,
+    posted_date: str | None = None,
     word_timestamps: bool = False,
     copyright_status: str = "publicly_accessible",
 ) -> str:
@@ -235,14 +237,22 @@ def _build_frontmatter(
         "---",
         f"schema: {schema}",
         f'title: "{escaped_title}"',
-        f"date_published: {published_scalar(date_published)}",
-        f"source_type: {source_type}",
     ]
+    # Omitted when not evidenced. ingest-format: absent until someone identifies
+    # the work, the same not-evidenced convention as date precision.
+    if date_published:
+        lines.append(f"date_published: {published_scalar(date_published)}")
+    lines.append(f"source_type: {source_type}")
     if word_timestamps:
         lines.append("word_timestamps: true")
     if publisher:
         escaped_pub = publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')
+    if posted_by:
+        escaped_posted = posted_by.replace('"', '\\"')
+        lines.append(f'posted_by: "{escaped_posted}"')
+    if posted_date:
+        lines.append(f"posted_date: {published_scalar(posted_date)}")
     if creators:
         lines.append("creators:")
         for creator in creators:
@@ -503,20 +513,25 @@ def run(
     # so the record keeps its provenance instead of dropping it.
     source_url = manifest.get("source_url") or (source if is_url else None)
     title = _resolve_title(manifest, source_url, source_id, source_type)
+    # The channel that posted the copy, and when. NOT publisher/date_published:
+    # the fetcher sees a copy and cannot tell whether the channel produced the work.
+    posted_by = manifest.get("posted_by")
+    posted_date = normalise_published(manifest.get("posted_date", ""))
+    # An explicitly-identified work, when a caller supplies one. Absent otherwise -
+    # this used to fall back to today, which is how two 1972 Apollo debriefings came
+    # out dated 2026-07-11. A fabricated date is worse than none: it looks evidenced.
     publisher = manifest.get("publisher")
+    date_published = normalise_published(manifest.get("date_published", ""))
     creators = manifest.get("creators")
     description = manifest.get("description")
-    known_speakers = _extract_known_speakers(title, description, publisher)
-    date_published = normalise_published(
-        manifest.get("date", manifest.get("fetched_at", "")[:10])
-    )
-    if not date_published:
-        date_published = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    known_speakers = _extract_known_speakers(title, description, posted_by or publisher)
     date_accessed = manifest.get("fetched_at")
 
     frontmatter = _build_frontmatter(
         title=title,
         date_published=date_published,
+        posted_by=posted_by,
+        posted_date=posted_date,
         source_type=source_type,
         source_url=source_url,
         source_id=source_id,

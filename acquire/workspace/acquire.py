@@ -294,7 +294,11 @@ def acquire(url: str, staging_dir: Path) -> int:
                 manifest["title"] = fetcher_metadata["title"]
             upload_date = fetcher_metadata.get("upload_date")
             if upload_date and len(upload_date) == 8:
-                manifest["date"] = (
+                # posted_date, not date. This is when the CHANNEL posted the copy
+                # we fetched, which is all the fetcher can observe. The work's own
+                # date_published is left absent until someone identifies the work
+                # - see ingest-format's provenance section.
+                manifest["posted_date"] = (
                     f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
                 )
             if fetcher_metadata.get("duration"):
@@ -312,7 +316,10 @@ def acquire(url: str, staging_dir: Path) -> int:
             if fetcher_metadata.get("source_id"):
                 manifest["source_id"] = fetcher_metadata["source_id"]
             if fetcher_metadata.get("channel"):
-                manifest["publisher"] = fetcher_metadata["channel"]
+                # posted_by, not publisher. A YouTube channel is the source of the
+                # COPY; it is the publisher of the work only when it also produced
+                # it, which the fetcher cannot know.
+                manifest["posted_by"] = fetcher_metadata["channel"]
             creators = _ytdlp_creators(fetcher_metadata)
             if creators:
                 manifest["creators"] = creators

@@ -20,7 +20,16 @@ class ValidationResult:
     fixed: str | None = None
 
 
-REQUIRED_FRONTMATTER = ["schema", "title", "date_published", "source_type"]
+REQUIRED_FRONTMATTER = ["schema", "title", "source_type"]
+
+# A record must evidence WHEN, but either layer satisfies it: `date_published` is the
+# work's date, `posted_date` is when the channel posted the copy the fetcher saw.
+# date_published was unconditionally required until 2026-08-19, which is why the
+# audio handler fabricated one from today's date rather than fail validation - two
+# 1972 Apollo debriefings came out dated 2026-07-11. Requiring "one of" lets a fresh
+# video ingest record only what it observed and leave the work's date absent, per
+# ingest-format's not-evidenced convention.
+REQUIRED_ONE_OF = [("date_published", "posted_date")]
 CURRENT_SCHEMA = "anomalica/record/1"
 
 
@@ -116,6 +125,11 @@ def validate(
     for field_name in all_required:
         if field_name not in frontmatter:
             result.errors.append(f"Missing required frontmatter field: {field_name}")
+    for group in REQUIRED_ONE_OF:
+        if not any(name in frontmatter for name in group):
+            result.errors.append(
+                "Missing required frontmatter field: one of " + " / ".join(group)
+            )
 
     # Check schema version
     if frontmatter.get("schema") and frontmatter["schema"] != expected_schema:

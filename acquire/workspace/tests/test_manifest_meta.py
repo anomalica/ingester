@@ -15,12 +15,13 @@ SAMPLE_INFO = {
 
 def test_maps_the_canonical_record_fields():
     """The fields a reprocess must carry so its record matches a fresh URL ingest -
-    title, publisher, date, duration, source_id. This is the regression: a record
-    that came out titled with the raw URL, no publisher, dated the reprocess day."""
+    title, posted_by, posted_date, duration, source_id. This is the regression: a
+    record that came out titled with the raw URL, no channel, dated the reprocess
+    day."""
     fields = video_metadata_fields(SAMPLE_INFO)
     assert fields["title"].startswith("UFO Witness Reveals CHILLING")
-    assert fields["publisher"] == "Area52"
-    assert fields["date"] == "2025-10-17"  # YYYYMMDD -> ISO
+    assert fields["posted_by"] == "Area52"
+    assert fields["posted_date"] == "2025-10-17"  # YYYYMMDD -> ISO
     assert fields["duration"] == 8016
     assert fields["source_id"] == "youtube:wX3whEVHr3g"
     # the title must never be a bare URL
@@ -32,7 +33,7 @@ def test_omits_missing_fields_rather_than_writing_null():
     with empties - the caller stamps source_url/source_id itself."""
     fields = video_metadata_fields({"title": "Only a title"})
     assert fields == {"title": "Only a title"}
-    assert "publisher" not in fields and "date" not in fields
+    assert "posted_by" not in fields and "posted_date" not in fields
 
 
 def test_rejects_malformed_upload_date_and_zero_duration():
@@ -56,3 +57,13 @@ def test_source_id_needs_both_extractor_and_id():
         video_metadata_fields({"extractor": "vimeo", "id": "123"})["source_id"]
         == "vimeo:123"
     )
+
+
+def test_never_claims_the_channel_is_the_publisher():
+    """A YouTube channel is the source of the COPY. It is the publisher of the work
+    only when it also produced it, and yt-dlp cannot tell the difference - so the
+    mapper must not assert either. All 178 video records in the corpus carry a
+    channel as `publisher` because it did."""
+    fields = video_metadata_fields(SAMPLE_INFO)
+    assert "publisher" not in fields
+    assert "date_published" not in fields
