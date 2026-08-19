@@ -64,6 +64,14 @@ def capture_singlefile(url: str) -> bytes | None:
     output_path = Path(tmp_name)
     output_path.unlink(missing_ok=True)
 
+    # single-file's simple-cdp dependency references the `CloseEvent` global,
+    # which the container's Node predates; without this shim single-file
+    # crashes ("CloseEvent is not defined") and produces no snapshot. Injected
+    # via NODE_OPTIONS so it loads before single-file's own code runs.
+    polyfill = Path(__file__).resolve().parent / "closeevent_polyfill.js"
+    env = dict(os.environ)
+    env["NODE_OPTIONS"] = f"{env.get('NODE_OPTIONS', '')} --require {polyfill}".strip()
+
     try:
         result = subprocess.run(
             [
@@ -84,6 +92,7 @@ def capture_singlefile(url: str) -> bytes | None:
             ],
             timeout=TIMEOUT_SECONDS,
             capture_output=True,
+            env=env,
         )
         if result.returncode != 0:
             print(
