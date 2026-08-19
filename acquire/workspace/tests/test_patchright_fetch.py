@@ -65,6 +65,25 @@ def test_fetch_includes_singlefile_when_available(mock_ap, _mock_sf, mock_playwr
     assert "single_file" in roles
 
 
+@patch("fetch.patchright_fetch.capture_singlefile", return_value=None)
+@patch("fetch.patchright_fetch.async_playwright")
+def test_fetch_reveals_scroll_hidden_content_before_capture(
+    mock_ap, _mock_sf, mock_playwright
+):
+    manager, _browser, page = mock_playwright
+    mock_ap.return_value = manager
+    fetch("https://example.com")
+    # The reveal step forces scroll-hidden blocks (Squarespace .preFade etc.)
+    # visible via page.evaluate before the PDF is captured, otherwise the
+    # snapshot would truncate to the above-the-fold content.
+    reveal_js = [
+        c.args[0]
+        for c in page.evaluate.await_args_list
+        if c.args and isinstance(c.args[0], str)
+    ]
+    assert any(".preFade" in js and "fadeIn" in js for js in reveal_js)
+
+
 @patch("fetch.patchright_fetch.async_playwright")
 def test_fetch_returns_none_on_error(mock_ap):
     mock_ap.side_effect = Exception("Browser failed")
