@@ -25,6 +25,18 @@ def test_prompt_redaction_wants_char_extent_and_citation():
     assert "comma-separated" in prompt
 
 
+def test_prompt_struck_classification_banner_is_strikethrough_not_a_tag():
+    """A classification banner ruled through by a declassification stroke is a
+    strikethrough event, not a live marking. Rule 103 (strike -> ~~) and rule 109
+    (do not strike printed markings) collided on a genuinely-struck banner and
+    109 won, so the model emitted {{classification: ...}} and lost the strike.
+    The banner must be struck text, kept out of the frontmatter classification."""
+    prompt = build_extraction_prompt()
+    assert "struck banner" in prompt.lower()
+    assert "declassification stroke" in prompt
+    assert "REMOVED, not one in force" in prompt
+
+
 def test_prompt_mentions_image_description():
     prompt = build_extraction_prompt()
     assert "image" in prompt.lower()
