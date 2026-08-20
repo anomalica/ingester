@@ -116,7 +116,16 @@ def _auth_args() -> list[str]:
     The Node runtime lets yt-dlp solve the signature challenge; with the bgutil
     PO-token plugin installed it is used automatically, no flag needed.
     """
-    args = ["--js-runtimes", "node"]
+    args = [
+        "--js-runtimes",
+        "node",
+        # The signature/n-challenge solver. WITHOUT IT yt-dlp cannot sign media
+        # URLs and every format 403s - it warns "n challenge solving failed" and
+        # then presents the result as "requested format is not available", which
+        # reads like the video has no audio rather than like a broken toolchain.
+        "--remote-components",
+        "ejs:github",
+    ]
     cookies = os.environ.get("INGEST_YTDLP_COOKIES", "").strip()
     if cookies and Path(cookies).is_file():
         args += ["--cookies", cookies]
@@ -131,6 +140,18 @@ def _auth_args() -> list[str]:
             "--extractor-args",
             f"youtubepot-bgutilscript:script_path={pot_script}",
         ]
+    # THE CLIENT MATTERS, and only once a PO token is actually being minted.
+    # Measured 2026-08-20 against a video that had been failing for days: with the
+    # token working, `tv_simply` and `android` download while `web`, `mweb` and
+    # `web_safari` return no media formats at all (YouTube serves them SABR, which
+    # has no fetchable URL). Tested before the token was minting, every client
+    # looks equally dead - which is how "YouTube has blocked everything" gets
+    # concluded from a half-configured toolchain.
+    #
+    # `formats=missing_pot` keeps formats yt-dlp would otherwise drop for lacking
+    # a token. Combined with an actual token, they download.
+    client = os.environ.get("INGEST_YTDLP_CLIENT", "tv_simply").strip()
+    args += ["--extractor-args", f"youtube:player_client={client};formats=missing_pot"]
     return args
 
 
