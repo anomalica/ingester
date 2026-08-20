@@ -128,7 +128,19 @@ def restore_record(
 ) -> str:
     """Re-store a repaired record at its new content_hash, retiring the old to v1.
     Returns the new hash."""
+    import json
+
     frontmatter, _ = split_record(record_path.read_text())
+    # The old sidecar's source fields (the EPUB's sha256/size) describe the source,
+    # which has NOT changed - capture them BEFORE write_record retires the old
+    # sidecar to v1, then carry them onto the regenerated one. Only the cloze
+    # challenges (drawn from the body) need to change.
+    old_side = record_path.with_name(record_path.stem + ".verification.json")
+    source_fields = {}
+    if old_side.exists():
+        old = json.loads(old_side.read_text())
+        source_fields = {k: old[k] for k in ("sha256", "size_bytes") if k in old}
+
     new_hash = hash_string(new_body)
     frontmatter = re.sub(
         r"(?m)^content_hash:.*$",
@@ -140,5 +152,7 @@ def restore_record(
         store_dir, by_name_dir, new_hash, content, date, "ebook", title, force=True
     )
     if needs_sidecar(content):
-        write_sidecar(store_dir, new_hash, build_sidecar(new_body))
+        sidecar = build_sidecar(new_body)
+        sidecar.update(source_fields)
+        write_sidecar(store_dir, new_hash, sidecar)
     return new_hash

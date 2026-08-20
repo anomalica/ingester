@@ -71,19 +71,31 @@ def _clean_annotations(content: str) -> str:
 
 
 def _normalise_thematic_breaks(content: str) -> str:
-    """Convert a standalone `---` line in the BODY to `***`.
+    """Deprecated no-op. Kept so the call site and its tests stay honest.
 
-    The model sometimes emits a page's horizontal rule as `---`, which is
-    identical to the record's YAML frontmatter delimiter and truncates a naive
-    parser at the body (it once ate 98.8% of an ebook). `***` is an equivalent
-    thematic break that does not collide. The frontmatter's own delimiters are
-    left intact."""
-    m = re.match(r"^(---\n.*?\n---\n)(.*)$", content, re.DOTALL)
-    if not m:
-        return content
-    frontmatter, body = m.group(1), m.group(2)
-    body = re.sub(r"(?m)^---[ \t]*$", "***", body)
-    return frontmatter + body
+    This used to rewrite a standalone `---` in the BODY to `***`, on the grounds
+    that `---` is also the frontmatter delimiter and a reader could mistake one for
+    the other - it once ate 98.8% of an ebook.
+
+    Removed 2026-08-20 (Mark's call) because it fixes the document instead of the
+    reader, and the readers are correct. All ten frontmatter parsers in the
+    pipeline stop at the FIRST closing fence - six non-greedy regexes and four
+    `split("---", 2)` calls - so a `---` further down the body cannot be mistaken
+    for the header's end. A reader splits once at the top and never looks again.
+
+    The cost it was paying is the one that decided it: a book that printed a
+    horizontal rule had that character silently replaced in our copy of it, in a
+    corpus whose whole claim is faithful reproduction.
+
+    It also appears never to have fired on real data. Of the 36 standalone `***`
+    lines in the corpus, 35 are in the NASA proceedings and are the model's own
+    `***`-fenced pseudo-frontmatter (see ingest-format's "Never write frontmatter
+    vocabulary into a body"), and the remaining one is a genuine section break.
+
+    If a reader is ever found that DOES split naively, fix the reader - that is the
+    bug, and it is the one that cost the ebook.
+    """
+    return content
 
 
 _MATH_SPAN = re.compile(r"\\\[.*?\\\]|\\\(.*?\\\)", re.DOTALL)

@@ -15,17 +15,33 @@ from ingest_pdf import (
 )
 
 
-def test_normalise_thematic_breaks_converts_body_rule():
-    """A bare '---' in the body collides with the YAML delimiter and truncates a
-    naive parser; it must become '***', while the frontmatter delimiters stay."""
+def test_a_body_horizontal_rule_is_left_alone():
+    """The book's own characters survive. We no longer rewrite a `---` rule to
+    `***`: that fixed the document instead of the reader, and the readers are
+    correct."""
     content = "---\nschema: anomalica/record/1\nsource_type: pdf\n---\nfirst\n\n---\n\nsecond\n"
     out = _normalise_thematic_breaks(content)
-    # Frontmatter delimiters untouched.
-    assert out.startswith("---\nschema: anomalica/record/1\nsource_type: pdf\n---\n")
+    assert out == content
     body = out.split("\n---\n", 1)[1]
-    # No bare '---' survives in the body; the break became '***'.
-    assert not any(line.strip() == "---" for line in body.splitlines())
-    assert "***" in body
+    assert any(line.strip() == "---" for line in body.splitlines())
+
+
+def test_every_reader_still_splits_a_record_whose_body_holds_a_rule():
+    """The guarantee that replaced the rewrite. A reader splits ONCE at the top and
+    never looks again, so a `---` further down cannot be mistaken for the header's
+    end. This is the failure that ate 98.8% of an ebook; it is now asserted rather
+    than avoided by editing the source."""
+    content = "---\nschema: anomalica/record/1\ntitle: T\n---\nfirst\n\n---\n\nsecond\n"
+
+    # The two shapes used across the pipeline: non-greedy regex, and split(maxsplit=2).
+    m = re.match(r"^---\n(.*?)\n---\n(.*)$", content, re.DOTALL)
+    assert m and "title: T" in m.group(1)
+    assert m.group(2).startswith("first"), "the body must start after the FIRST fence"
+    assert "second" in m.group(2), "nothing after the body rule may be lost"
+
+    parts = content.split("---", 2)
+    assert "title: T" in parts[1]
+    assert "first" in parts[2] and "second" in parts[2]
 
 
 def test_normalise_thematic_breaks_noop_without_body_rule():
