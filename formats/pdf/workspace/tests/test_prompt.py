@@ -13,6 +13,18 @@ def test_prompt_mentions_redaction():
     assert "redacted" in prompt.lower()
 
 
+def test_prompt_redaction_wants_char_extent_and_citation():
+    """The value carries a CHARACTER estimate (judged off the box, never derived
+    from a word count) plus the printed exemption code - both in one
+    comma-separated value. line 80 taught the code as the identifying feature
+    while the old rule asked for a word count, and the model resolved the pull by
+    emitting the code alone: 160 of 271 corpus markers cited a code, not a size."""
+    prompt = build_extraction_prompt()
+    assert "~N chars" in prompt
+    assert "NEVER converted from a word count" in prompt
+    assert "comma-separated" in prompt
+
+
 def test_prompt_mentions_image_description():
     prompt = build_extraction_prompt()
     assert "image" in prompt.lower()

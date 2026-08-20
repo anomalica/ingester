@@ -28,7 +28,7 @@ release:
 
 First paragraph of text with a footnote reference.[^1]
 
-The programme was conducted at {{redacted: ~2 words}} Air Force Base.
+The programme was conducted at {{redacted: ~9 chars, (b)(1)}} Air Force Base.
 
 <!-- file_page: 2 -->
 <!-- printed_page: 8 -->
@@ -77,7 +77,7 @@ Rules:
 - FAITHFULNESS (most important): never add structure the source does not contain. No section headings, no category or grouping labels (e.g. "Majority Members:", "Attendees:", "Summary:", "Background:"), no tables, and no bold/italic emphasis unless that exact heading, label, table, or emphasis is printed in the document. Do not reorganise or re-lay-out the content; keep the source's own order and wording. When the source uses a visual layout you cannot reproduce (multi-column lists, side-by-side rosters), transcribe the text in natural reading order WITHOUT adding labels to explain the layout.
 - CONVEY MEANING, NOT PIXELS: the record must let a reader understand what the page said and meant. Prose is transcribed literally, as above. But where a literal copy of a STRUCTURED layout would lose the meaning - a form, a fielded layout, a table - interpret the layout just enough to make the relationships clear. This represents what is printed so it reads clearly; it never invents content or adds facts that are not on the page.
 - FORMS AND FIELDED LAYOUTS: render each printed field as `Label: value` - a colon separating the field's printed label from what was entered on it (e.g. `Rank: O-3`, `Date (mm/dd/yy): 09/04/20`), keeping any printed example hint inside the label (`Contact Altitude (Ex: 22000): 23819`). This is the one case where pairing a printed label with its value takes priority over reading-order literalism, because the pairing IS the meaning. A field left blank or unfilled is `Label:` with nothing after the colon - preserving both the question and that it was not answered. For a checkbox, put its state after the label (`Round: ☑`, `Square: ☐`).
-- REDACTION vs BLANK: a {{{{redacted}}}} marker is ONLY for content that has visibly been REMOVED - a bar over text, a box carrying an exemption code (e.g. (b)(1), (b)(6), 3.5c), or an obscured region. A field simply left empty or unfilled is NOT a redaction.
+- REDACTION vs BLANK: a {{{{redacted}}}} marker is ONLY for content that has visibly been REMOVED - a bar over text, a box carrying an exemption code (e.g. (b)(1), (b)(6), 3.5c), or an obscured region. When the box prints such a code, that code is part of the redaction record - carry it in the marker value (see Inline redactions). A field simply left empty or unfilled is NOT a redaction.
 - A declassification or release stamp repeated on every page is captured ONCE (in the `release:` block); do not reproduce it in the body on each page.
 - Start with YAML frontmatter: schema, title, date_published, creators, source_type, pages
 - ONE frontmatter block, at the very top, and nothing frontmatter-shaped anywhere below it. Never open a second metadata block mid-document, fenced or otherwise. `schema`, `source_type` and `pages` describe this record, not anything the document says, so they must never appear in the body. (A 416-page proceedings came back with 17 fenced metadata blocks mid-body, which put this vocabulary into the extracted evidence.)
@@ -98,7 +98,7 @@ Rules:
 - Skip decorative page furniture: page numbers, running headers, running footers, decorative watermarks. EXCEPTION: release/declassification provenance (declassification overlays, handling caveats, release-control footers) is NOT furniture even though it sits in footers and overlay stamps - capture it in the `release:` block (see below); never skip it.
 - Images/figures: single-line HTML comment with image field: <!-- image: Factual description -->
 - Block-level redactions: multi-line HTML comment with redacted.extent. Be specific about extent (~2 sentences, ~1 paragraph, most of the page). Only use block-level for sentence-sized or larger redactions.
-- Inline redactions: {{{{redacted: ~N words}}}} or {{{{redacted}}}} for small mid-sentence redactions
+- Inline redactions: {{{{redacted: ~N chars, CODE}}}} - the value carries two things, comma-separated, both optional: (1) the box's width estimated in CHARACTERS of the surrounding text, judged from the drawn box ITSELF and NEVER converted from a word count (a fabricated char count that is really a word guess times six is worse than the honest word count); and (2) any exemption or classification code printed in or beside the box, verbatim as printed (e.g. (b)(6), 1.4a, 3.5c), comma-separating several as the source lists them. Write {{{{redacted: ~8 chars}}}} when no code is printed, {{{{redacted: (b)(6)}}}} when the box width cannot be judged, and {{{{redacted}}}} for a bare small redaction.
 - Illegible text: {{{{illegible: best guess}}}} or {{{{illegible}}}}
 - Struck-out text: TRANSCRIBE text that is struck through (crossed out) in the source, wrapping it in ~~strikethrough~~. Do NOT omit it. A deletion is content, not an instruction to skip - what was struck and the fact that it was struck are both part of the record, and in an edited or declassified document the struck wording is often the point. Keep the struck text in its place in reading order; only the ~~ markers signal that it was crossed out.
 - Classification markings (for declassified government documents):
