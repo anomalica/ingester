@@ -439,7 +439,17 @@ fi
 if [[ -n "$QUALITY_TARGETS" ]]; then
 	while IFS= read -r REC; do
 		[[ -z "$REC" ]] && continue
-		python3 "${SCRIPT_DIR}/shared/bunny_storage.py" "${INGESTS_DIR}/${REC}" 2>/dev/null || true
+		# Non-fatal but NEVER silent: a push must not fail the ingest, but a wrong
+		# credential, an expired key or a network blip must not read as a successful
+		# no-op either - that indistinguishability is the exact failure that lost a
+		# third of the corpus. Surface the result; shout on a real failure.
+		PUSH_RESULT="$(python3 "${SCRIPT_DIR}/shared/bunny_storage.py" "${INGESTS_DIR}/${REC}" 2>&1 || true)"
+		echo "  backup: ${PUSH_RESULT}" >&2
+		case "$PUSH_RESULT" in
+		no-cred* | failed* | "")
+			echo "  WARNING: source NOT backed up to Bunny (${PUSH_RESULT:-error}) - fix and re-run shared/audit_sources.py --bunny" >&2
+			;;
+		esac
 	done <<<"$QUALITY_TARGETS"
 fi
 

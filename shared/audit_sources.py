@@ -110,10 +110,13 @@ def local_file(hash_: str | None, ext: str | None) -> Path | None:
 
 def _sops(key: str) -> str | None:
     try:
-        env = {
-            **os.environ,
-            "SOPS_AGE_KEY_FILE": os.path.expanduser("~/.config/sops/age/keys.txt"),
-        }
+        # Respect an explicitly-declared key file (the scheduler sets it); fall back
+        # to the default path only when the caller has not. Declaration over default
+        # so a HOME-less environment does not silently no-op every push.
+        env = {**os.environ}
+        env.setdefault(
+            "SOPS_AGE_KEY_FILE", os.path.expanduser("~/.config/sops/age/keys.txt")
+        )
         out = subprocess.run(
             [SOPS, "-d", "--extract", f'["{key}"]', SECRETS],
             capture_output=True,
