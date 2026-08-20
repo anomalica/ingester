@@ -173,14 +173,20 @@ def main() -> int:
             zone_keys[z] = _zone_keys(z)
         for f in files:
             fm = _fm(f.read_text(errors="replace"))
-            if not _field(fm, "content_hash"):
+            content_hash = _bare(_field(fm, "content_hash"))
+            if not content_hash:
                 continue
             h, ext = original_of(fm)
             lf = local_file(h, ext)
             if lf is None:
                 continue
+            # The remote key is content_hash + ext for EVERY type - the key the
+            # workbench edge signs - even though the local FILE for web/ebook sits
+            # under a different hash (single_file hash / source_hash). Keying the
+            # remote lookup on the local hash false-alarms "not backed up" on
+            # exactly web and ebook, in the dangerous direction.
             real_ext = lf.suffix.lstrip(".")
-            key = f"sources/{h}.{real_ext}"
+            key = f"sources/{content_hash}.{real_ext}"
             zone = zone_for(_status(fm), real_ext)
             if key not in zone_keys.get(zone, set()):
                 bunny_missing.append((f.relative_to(STORE), zone, key))

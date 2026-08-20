@@ -32,6 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from audit_sources import (  # noqa: E402  reuse resolution - no drift
     STORAGE_API,
     ZONE_ENV,
+    _bare,
+    _field,
     _fm,
     _sops,
     _status,
@@ -106,12 +108,15 @@ def push_record(md: Path, dry_run: bool = False) -> str:
     """Push the record's original if not already on Bunny; stamp `storage:`.
     Returns one of: pushed | exists | no-original | no-cred | failed."""
     fm = _fm(md.read_text(errors="replace"))
-    h, ext = original_of(fm)
-    lf = local_file(h, ext)
+    content_hash = _bare(_field(fm, "content_hash"))
+    h, ext = original_of(fm)  # locates the local file (web/ebook sit under a
+    lf = local_file(h, ext)  # different hash than content_hash)
     if lf is None:
         return "no-original"
     real_ext = lf.suffix.lstrip(".")
-    key = f"sources/{h}.{real_ext}"
+    # Remote key is content_hash + ext for EVERY type - the key the workbench edge
+    # signs - even where the local file's name is the single_file/source hash.
+    key = f"sources/{content_hash}.{real_ext}"
     zone = zone_for(_status(fm), real_ext)
     pw = _sops(ZONE_ENV[zone])
     if not pw:
