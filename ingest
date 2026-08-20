@@ -430,6 +430,19 @@ if [[ -n "$QUALITY_TARGETS" ]]; then
 	done <<<"$QUALITY_TARGETS"
 fi
 
+# Back up each new source to the Bunny storage zones and stamp a storage: pointer
+# (the push-at-archive contract). A sibling of the local archive step above, NOT a
+# gate: non-fatal by design - a push failure leaves the record without a storage:
+# block for `shared/audit_sources.py --bunny` to catch and retry, and the local
+# archive stays the source of truth. Routes open/gated by copyright.status; audio
+# and video are backed up too (a re-fetch can't reproduce the transcribed bytes).
+if [[ -n "$QUALITY_TARGETS" ]]; then
+	while IFS= read -r REC; do
+		[[ -z "$REC" ]] && continue
+		python3 "${SCRIPT_DIR}/shared/bunny_storage.py" "${INGESTS_DIR}/${REC}" 2>/dev/null || true
+	done <<<"$QUALITY_TARGETS"
+fi
+
 # Auto-commit any new records to ingests (unless --no-commit,
 # used for bulk corpus runs that want a single bundled commit at the end)
 if [[ "$NO_COMMIT" -eq 1 ]]; then
