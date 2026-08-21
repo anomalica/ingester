@@ -481,6 +481,26 @@ _EST_OUTPUT_TOK_PER_PAGE = 1800
 DEFAULT_SPEND_CEILING_USD = "0.00"
 
 
+# Selecting the subscription must announce that it is NOT free. The metered path is
+# guarded loudly (a printed estimate + a required yes), so a silent fall-through to
+# the subscription is the one place a run spends the scarcer resource - Mark's finite
+# flat-rate plan allowance - without saying so. "Unmetered" was read as free once and
+# cost two unasked runs. Every subscription selection now names the cost, and a
+# DOWNGRADE (you asked for a metered path, the key was missing) says so at the moment
+# it matters rather than proceeding on a different billing path in silence.
+_SUBSCRIPTION_NOTE = (
+    "Using the Claude subscription ({reason}). No per-token dollars, but this is NOT "
+    "free: it draws the flat-rate Claude plan allowance - a finite, shared resource "
+    "that needs permission the same as a metered run."
+)
+_SUBSCRIPTION_DOWNGRADE = (
+    "DOWNGRADED to the Claude subscription: you asked for {asked} but {why}. This is "
+    "NOT the metered path you chose, and it is NOT free - it draws the flat-rate Claude "
+    "plan allowance. Set the key to get the metered path, or pass INGEST_USE_API=0 if "
+    "you meant the subscription."
+)
+
+
 def _resolve_provider_kind(ingest_model: str, echo=lambda _: None) -> str:
     """Which extraction backend to use: "openrouter" (metered vision, e.g. Luna),
     "api" (metered Anthropic), or "subscription" (unmetered Claude Code).
@@ -501,24 +521,27 @@ def _resolve_provider_kind(ingest_model: str, echo=lambda _: None) -> str:
     """
     use_api_env = os.environ.get("INGEST_USE_API")
     if use_api_env == "0":
-        echo("INGEST_USE_API=0: forcing the unmetered Claude subscription path.")
+        echo(_SUBSCRIPTION_NOTE.format(reason="INGEST_USE_API=0 (metered path off)"))
         return "subscription"
     if "/" in ingest_model:
         if os.environ.get("OPENROUTER_API_KEY"):
             return "openrouter"
         echo(
-            f"INGEST_MODEL={ingest_model} but OPENROUTER_API_KEY is unset; "
-            "falling back to the Claude subscription"
+            _SUBSCRIPTION_DOWNGRADE.format(
+                asked=ingest_model, why="OPENROUTER_API_KEY is unset"
+            )
         )
         return "subscription"
     if use_api_env == "1":
         if os.environ.get("ANTHROPIC_API_KEY"):
             return "api"
         echo(
-            "INGEST_USE_API=1 but ANTHROPIC_API_KEY is unset; "
-            "falling back to the Claude subscription"
+            _SUBSCRIPTION_DOWNGRADE.format(
+                asked="the metered Anthropic API", why="ANTHROPIC_API_KEY is unset"
+            )
         )
         return "subscription"
+    echo(_SUBSCRIPTION_NOTE.format(reason="no metered model requested"))
     return "subscription"
 
 
