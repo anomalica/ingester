@@ -217,6 +217,14 @@ source_url = os.environ.get('SOURCE_URL', '')
 source_id = os.environ.get('SOURCE_ID', '')
 if source_url:
     manifest['source_url'] = source_url
+    # A video-platform URL IS a video, even when what we hand the handler is the
+    # audio-only file. acquire.py already applies this rule on the URL path; a
+    # LOCAL file with --source-url skipped it, so the type fell back to the
+    # artefact's MIME and a YouTube video was recorded as an audio source - how
+    # it was acquired, not what it is. archived_ext already describes the
+    # artefact, so naming the source medium here loses nothing.
+    if re.search(r'(?:youtube\.com|youtu\.be|vimeo\.com|twitch\.tv)/', source_url):
+        manifest['original_type'] = 'video'
     if not source_id:
         m = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})', source_url)
         source_id = f'youtube:{m.group(1)}' if m else 'url:' + hashlib.sha256(source_url.encode('utf-8')).hexdigest()[:12]
