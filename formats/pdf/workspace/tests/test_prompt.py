@@ -35,6 +35,13 @@ def test_prompt_struck_classification_banner_is_strikethrough_not_a_tag():
     assert "struck banner" in prompt.lower()
     assert "declassification stroke" in prompt
     assert "REMOVED, not one in force" in prompt
+    # The portion-marking rule (a section-header marking becomes a
+    # {{classification}} annotation) must also defer to the strike - its own
+    # example, a struck (S/RELIDO), is exactly what the model mis-tagged.
+    assert "strike wins over the portion-marking role" in prompt
+    assert (
+        "Only an UNSTRUCK portion marking becomes a classification annotation" in prompt
+    )
 
 
 def test_prompt_mentions_image_description():
