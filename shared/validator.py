@@ -61,6 +61,29 @@ def _fix_yaml_quoting(frontmatter: str) -> str:
     return "\n".join(fixed)
 
 
+_BODY_ANNOTATION = re.compile(r"\{\{.*?\}\}")
+
+
+def _annotation_leaks(value, path: str = "") -> list[str]:
+    """Field paths whose value carries {{...}} body-annotation syntax.
+
+    The {{redacted}}/{{illegible}}/{{classification}} grammar is defined for the
+    body only; a consumer reading a frontmatter value takes it as literal text, so
+    the syntax leaks (the same class of escape as a classification marker reaching
+    the digester). Walks nested mappings and lists to name the exact field."""
+    leaks: list[str] = []
+    if isinstance(value, str):
+        if _BODY_ANNOTATION.search(value):
+            leaks.append(path or "(root)")
+    elif isinstance(value, dict):
+        for key, sub in value.items():
+            leaks.extend(_annotation_leaks(sub, f"{path}.{key}" if path else str(key)))
+    elif isinstance(value, list):
+        for i, sub in enumerate(value):
+            leaks.extend(_annotation_leaks(sub, f"{path}[{i}]"))
+    return leaks
+
+
 def validate(
     content: str,
     extra_required: list[str] | None = None,
@@ -119,6 +142,19 @@ def validate(
     if not isinstance(frontmatter, dict):
         result.errors.append("Frontmatter YAML is not a mapping")
         return result
+
+    # A body-annotation ({{...}}) must never appear in a frontmatter value: the
+    # grammar is defined for the body, and a frontmatter consumer reads the value as
+    # literal text. Reject, never rewrite - {{redacted}} in creators should become
+    # [redacted] but {{illegible}} in a title should not become anything, and the
+    # validator cannot tell which; name the field and let a human fix it.
+    for field_path in _annotation_leaks(frontmatter):
+        result.errors.append(
+            "Body-annotation syntax ({{...}}) in frontmatter value: "
+            + field_path
+            + " - {{...}} is body-only; a described person is [bracketed], a "
+            "withheld one is [redacted]"
+        )
 
     # Check required fields
     all_required = REQUIRED_FRONTMATTER + (extra_required or [])
