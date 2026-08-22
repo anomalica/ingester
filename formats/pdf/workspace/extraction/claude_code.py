@@ -8,7 +8,10 @@ import tempfile
 from pathlib import Path
 
 from shared.validator import strip_code_fences
+from extraction.images import is_image, model_image
 from extraction.prompt import build_extraction_prompt
+
+_IMAGE_SUFFIX = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 
 
 # How long one chunk extraction may take before it is treated as failed. Chunks
@@ -48,13 +51,16 @@ class ClaudeCodeProvider:
     def __init__(self, model: str = "sonnet"):
         self.model = model
 
-    def _call_claude(self, prompt: str, pdf_path: Path) -> tuple[str, dict]:
+    def _call_claude(
+        self, prompt: str, pdf_path: Path, is_image_input: bool = False
+    ) -> tuple[str, dict]:
+        noun = "image" if is_image_input else "PDF"
         full_prompt = (
             f"{prompt}\n\n"
-            f"The PDF file to extract is: {pdf_path}\n\n"
-            f"IMPORTANT: Read the PDF file directly using the Read tool. "
+            f"The {noun} file to extract is: {pdf_path}\n\n"
+            f"IMPORTANT: Read the {noun} file directly using the Read tool. "
             f"Do not use Bash, do not use pdftotext or any other tool. "
-            f"Just read the file with the Read tool - it handles PDFs natively. "
+            f"Just read the file with the Read tool - it handles {noun}s natively. "
             f"Return ONLY the markdown output. No commentary, no summary, no preamble."
         )
 
@@ -115,6 +121,20 @@ class ClaudeCodeProvider:
         return content, meta
 
     def extract(self, pdf_path: Path) -> tuple[str, dict]:
+        if is_image(pdf_path):
+            # The Read tool reads common images, but hand it a normalised copy so a
+            # future oversized or non-native format still works, and so the model
+            # sees the same bounded image every provider does.
+            data, media_type = model_image(pdf_path)
+            suffix = _IMAGE_SUFFIX.get(media_type, ".png")
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                f.write(data)
+                tmp_path = Path(f.name)
+            try:
+                prompt = build_extraction_prompt(source_type="image")
+                return self._call_claude(prompt, tmp_path, is_image_input=True)
+            finally:
+                tmp_path.unlink(missing_ok=True)
         prompt = build_extraction_prompt()
         return self._call_claude(prompt, pdf_path)
 

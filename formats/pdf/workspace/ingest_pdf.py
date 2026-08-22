@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
+from extraction.images import is_image
 from shared.copyright import default_status
 from shared.dates import published_scalar
 from shared.hashing import content_hash_label, hash_file, store_exists
@@ -163,6 +164,7 @@ def _patch_frontmatter(
     source_id: str | None = None,
     fetched_url: str | None = None,
     source_file: str | None = None,
+    source_type: str | None = None,
 ) -> str:
     """Inject content_hash, provenance, processing block, and fix page count in the YAML frontmatter."""
     parts = content.split("---", 2)
@@ -170,6 +172,24 @@ def _patch_frontmatter(
         return content
 
     frontmatter = parts[1]
+
+    # Force source_type when the caller knows it (an image input): the extraction
+    # prompt is told "pdf" by default, and a record mislabelled source_type: pdf
+    # would route through original_of() to a hardcoded .pdf extension, so the
+    # archived .jpg source could never be resolved. The source arrived as an image
+    # so source_type is "image" - which original_of() resolves via content_hash +
+    # archived_ext, the correct file.
+    if source_type:
+        if re.search(r"^source_type:", frontmatter, re.MULTILINE):
+            frontmatter = re.sub(
+                r"^source_type:.*$",
+                f"source_type: {source_type}",
+                frontmatter,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            frontmatter = frontmatter.rstrip("\n") + f"\nsource_type: {source_type}\n"
 
     # Ensure title is always quoted, and strip leaked placeholder words
     # ("undefined", "null", "None") the model sometimes emits for a missing
@@ -726,6 +746,7 @@ def main():
     using_openrouter = kind == "openrouter"
     using_api = kind == "api"
     page_count = get_page_count(args.input_file)
+    record_source_type = "image" if is_image(args.input_file) else None
     print(f"Processing: {args.input_file} ({page_count} pages)", file=sys.stderr)
 
     if using_openrouter or using_api:
@@ -843,6 +864,7 @@ def main():
         source_id=source_id,
         fetched_url=fetched_url,
         source_file=source_file,
+        source_type=record_source_type,
     )
     content = _preserve_identity(content, preserved)
 
@@ -911,6 +933,7 @@ def main():
                 source_id=source_id,
                 fetched_url=fetched_url,
                 source_file=source_file,
+                source_type=record_source_type,
             )
 
             validation = validate(content)

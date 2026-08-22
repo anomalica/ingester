@@ -12,6 +12,7 @@ from pathlib import Path
 import anthropic
 
 from shared.validator import strip_code_fences
+from extraction.images import is_image, model_image
 from extraction.prompt import build_extraction_prompt
 
 
@@ -26,7 +27,35 @@ class AnthropicProvider:
 
     def _call_api(self, prompt: str, pdf_data: bytes) -> tuple[str, dict]:
         encoded = base64.standard_b64encode(pdf_data).decode("utf-8")
+        return self._call_source(
+            prompt,
+            {
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": encoded,
+                },
+            },
+        )
 
+    def _call_image(
+        self, prompt: str, data: bytes, media_type: str
+    ) -> tuple[str, dict]:
+        encoded = base64.standard_b64encode(data).decode("utf-8")
+        return self._call_source(
+            prompt,
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": encoded,
+                },
+            },
+        )
+
+    def _call_source(self, prompt: str, source_block: dict) -> tuple[str, dict]:
         try:
             with self.client.messages.stream(
                 model=self.model,
@@ -35,14 +64,7 @@ class AnthropicProvider:
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": encoded,
-                                },
-                            },
+                            source_block,
                             {
                                 "type": "text",
                                 "text": prompt,
@@ -82,6 +104,10 @@ class AnthropicProvider:
         return content, meta
 
     def extract(self, pdf_path: Path) -> tuple[str, dict]:
+        if is_image(pdf_path):
+            prompt = build_extraction_prompt(source_type="image")
+            data, media_type = model_image(pdf_path)
+            return self._call_image(prompt, data, media_type)
         prompt = build_extraction_prompt()
         pdf_data = pdf_path.read_bytes()
         return self._call_api(prompt, pdf_data)

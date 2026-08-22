@@ -10,6 +10,8 @@ MAGIC_SIGNATURES = [
     (b"<!doctype", "text/html"),
     (b"<html", "text/html"),
     (b"<HTML", "text/html"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
 ]
 
 EXTENSION_MAP = {
@@ -27,6 +29,10 @@ EXTENSION_MAP = {
     ".oga": "audio/ogg",
     ".epub": "application/epub+zip",
     ".mobi": "application/x-mobipocket-ebook",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
 }
 
 

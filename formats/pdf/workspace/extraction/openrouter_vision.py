@@ -32,6 +32,7 @@ import pymupdf
 from anomalica_common.llm import call_with_pages
 
 from shared.validator import strip_code_fences
+from extraction.images import data_uri, is_image
 from extraction.prompt import build_extraction_prompt
 
 # Government scans carry small print; render high enough to keep it legible. The
@@ -62,6 +63,9 @@ class OpenRouterVisionProvider:
         return strip_code_fences(text), meta
 
     def extract(self, pdf_path: Path) -> tuple[str, dict]:
+        if is_image(pdf_path):
+            prompt = build_extraction_prompt(source_type="image")
+            return self._call(prompt, [data_uri(pdf_path)])
         urls = self._render(pdf_path.read_bytes())
         return self._call(build_extraction_prompt(), urls)
 

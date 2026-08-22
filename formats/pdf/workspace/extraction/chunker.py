@@ -5,8 +5,12 @@ from pathlib import Path
 
 import pikepdf
 
+from extraction.images import is_image
+
 
 def get_page_count(pdf_path: Path) -> int:
+    if is_image(pdf_path):
+        return 1
     with pikepdf.Pdf.open(pdf_path) as pdf:
         return len(pdf.pages)
 

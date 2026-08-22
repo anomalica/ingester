@@ -53,8 +53,11 @@ Text continues after the redacted section.
 
 
 def build_extraction_prompt(
-    page_offset: int | None = None, page_count: int | None = None
+    page_offset: int | None = None,
+    page_count: int | None = None,
+    source_type: str = "pdf",
 ) -> str:
+    doc_noun = "image" if source_type == "image" else "PDF"
     page_context = ""
     if page_offset is not None and page_count is not None:
         page_end = page_offset + page_count - 1
@@ -67,7 +70,7 @@ def build_extraction_prompt(
             f"yourself would double-count it."
         )
 
-    return f"""Extract all content from this PDF into the Anomalica record format.
+    return f"""Extract all content from this {doc_noun} into the Anomalica record format.
 
 The format is markdown with YAML frontmatter and HTML comment annotations.
 
@@ -115,7 +118,7 @@ Rules:
 - Em-dashes written as --- must be converted to a single hyphen
 - Title: use the document's actual title or subject - the core title only. Do NOT append event metadata that sits near the title on a cover page but is not part of it: conference/meeting dates, venue, city, or location (e.g. drop trailing ", February 22-24, 2012. The Westin Tysons Corner, Falls Church, VA."). Keep any real subtitle. Never put the literal words "undefined", "null", or "None" in the title - if part of a title is missing or unreadable, omit that part rather than writing a placeholder word.
 - schema must be: anomalica/record/1
-- source_type must be: pdf{page_context}
+- source_type must be: {source_type}{page_context}
 
 Example:
 
