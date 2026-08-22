@@ -59,6 +59,17 @@ def test_prompt_source_type_image_for_a_photographed_document():
     assert "content from this image" in prompt
 
 
+def test_prompt_teaches_bracketed_and_redacted_creators():
+    """A person whose name isn't given gets the bracket notation, not an invented
+    or omitted value: a described author is [bracketed], a withheld one is
+    [redacted] (not omitted - it records a name was given and withheld), and the
+    {{redacted}} body marker must never reach a frontmatter field."""
+    prompt = build_extraction_prompt()
+    assert '["[senior US intelligence officer]"]' in prompt
+    assert '["[redacted]"]' in prompt
+    assert "for the body only" in prompt
+
+
 def test_prompt_mentions_image_description():
     prompt = build_extraction_prompt()
     assert "image" in prompt.lower()

@@ -39,6 +39,55 @@ def test_valid_record_no_errors():
     assert result.errors == []
 
 
+def test_body_annotation_in_frontmatter_value_is_rejected():
+    """{{...}} is body-only. A model that put the {{redacted}} marker in a creators
+    field leaked body-annotation syntax into frontmatter, where a consumer reads it
+    as literal text - the same class of escape as a classification marker reaching
+    the digester. It is rejected (not rewritten), naming the field."""
+    record = """---
+schema: anomalica/record/1
+title: Test Document
+date_published: 2023-07-26
+source_type: pdf
+creators:
+  - "{{redacted}}"
+---
+
+Body.
+"""
+    result = validate(record)
+    assert any("Body-annotation syntax" in e and "creators" in e for e in result.errors)
+
+
+def test_body_annotation_detected_at_any_nesting_and_bracketed_forms_pass():
+    """The scan walks nested mappings, and the sanctioned replacements - a
+    [bracketed] description and [redacted] - are not {{...}} and must pass clean."""
+    leaky = """---
+schema: anomalica/record/1
+title: "A {{illegible}} title"
+date_published: 2023-07-26
+source_type: pdf
+---
+
+Body.
+"""
+    assert any("title" in e and "Body-annotation" in e for e in validate(leaky).errors)
+
+    clean = """---
+schema: anomalica/record/1
+title: Test Document
+date_published: 2023-07-26
+source_type: pdf
+creators:
+  - "[senior US intelligence officer]"
+  - "[redacted]"
+---
+
+Body.
+"""
+    assert not any("Body-annotation" in e for e in validate(clean).errors)
+
+
 def test_missing_frontmatter():
     result = validate("No frontmatter here")
     assert any("No YAML frontmatter" in e for e in result.errors)
