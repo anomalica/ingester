@@ -68,6 +68,14 @@ def test_prompt_teaches_bracketed_and_redacted_creators():
     assert '["[senior US intelligence officer]"]' in prompt
     assert '["[redacted]"]' in prompt
     assert "for the body only" in prompt
+    # The inverse failure of the leak, equally bad: over-bracketing a real name so
+    # a person becomes a record-scoped description nothing may merge (~20 corpus
+    # people in Name-plus-qualifier form). A pseudonym or lone given name is a name,
+    # and a name WITH a parenthetical qualifier is a name; only an ENTIRELY-
+    # descriptive value with no name/pseudonym gets brackets.
+    assert "ENTIRELY a description" in prompt
+    assert "Sally (Budd Hopkins abductee)" in prompt
+    assert "pseudonym or a lone given name IS a name" in prompt
 
 
 def test_prompt_mentions_image_description():
