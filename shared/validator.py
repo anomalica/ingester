@@ -148,6 +148,14 @@ def validate(
     # literal text. Reject, never rewrite - {{redacted}} in creators should become
     # [redacted] but {{illegible}} in a title should not become anything, and the
     # validator cannot tell which; name the field and let a human fix it.
+    #
+    # This check is deliberately LEXICAL and must stay so. Do NOT grow it into a
+    # name test (e.g. rejecting an unbracketed creators value that "looks like a
+    # description"): name-vs-description is decided at the MINTING layer - the
+    # extraction prompt, with the page in front of the model - not re-litigated at
+    # validation. A regex would misfire on a pseudonym like "Dr. X" and second-guess
+    # a reviewer who deliberately wrote a description. Same rule applied once, at
+    # minting, not at every consumer.
     for field_path in _annotation_leaks(frontmatter):
         result.errors.append(
             "Body-annotation syntax ({{...}}) in frontmatter value: "
