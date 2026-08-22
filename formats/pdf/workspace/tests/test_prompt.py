@@ -44,6 +44,21 @@ def test_prompt_struck_classification_banner_is_strikethrough_not_a_tag():
     )
 
 
+def test_prompt_source_type_defaults_to_pdf():
+    prompt = build_extraction_prompt()
+    assert "source_type must be: pdf" in prompt
+    assert "content from this PDF" in prompt
+
+
+def test_prompt_source_type_image_for_a_photographed_document():
+    """A bare image routes through this handler as a photographed document. The
+    prompt must tell the model source_type is image (not the default pdf), or the
+    record is mislabelled and its archived .jpg source cannot be resolved."""
+    prompt = build_extraction_prompt(source_type="image")
+    assert "source_type must be: image" in prompt
+    assert "content from this image" in prompt
+
+
 def test_prompt_mentions_image_description():
     prompt = build_extraction_prompt()
     assert "image" in prompt.lower()

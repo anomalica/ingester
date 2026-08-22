@@ -2,6 +2,7 @@ from pathlib import Path
 import io
 
 import pikepdf
+import pymupdf
 
 from extraction.chunker import get_page_count, split_pdf
 
@@ -10,6 +11,17 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def test_get_page_count_simple():
     assert get_page_count(FIXTURES / "simple.pdf") == 1
+
+
+def test_get_page_count_image_is_one(tmp_path):
+    """An image is a single-page document; get_page_count must not open it with
+    pikepdf (which would raise), because every page-related assumption in the
+    handler is written against multi-page PDFs."""
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 60, 60))
+    pix.clear_with(255)
+    img = tmp_path / "scan.jpg"
+    pix.save(str(img))
+    assert get_page_count(img) == 1
 
 
 def test_get_page_count_multipage():

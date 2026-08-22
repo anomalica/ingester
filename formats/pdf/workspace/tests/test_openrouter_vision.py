@@ -62,6 +62,26 @@ def test_extract_routes_through_the_gateway(tmp_path):
     assert content.strip() == "---\nschema: test\n---\n\nBody."  # fences stripped
 
 
+def test_extract_image_sends_one_data_uri_and_tells_the_model_it_is_an_image(tmp_path):
+    import pymupdf
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 80, 80))
+    pix.clear_with(210)
+    img = tmp_path / "slide.jpg"
+    pix.save(str(img))
+
+    provider = OpenRouterVisionProvider("openai/gpt-5.6-luna")
+    with patch(
+        "extraction.openrouter_vision.call_with_pages",
+        return_value=("---\nschema: test\n---\n\nBody.", {"cost_usd": 0.0}),
+    ) as gw:
+        provider.extract(img)
+    prompt_arg = gw.call_args[0][0]
+    pages_arg = gw.call_args[0][3]
+    assert len(pages_arg) == 1 and pages_arg[0].startswith("data:image/")
+    assert "source_type must be: image" in prompt_arg
+
+
 def test_estimate_is_page_based_and_errs_high():
     small = _estimate_vision_cost(10, "openai/gpt-5.6-luna")
     big = _estimate_vision_cost(400, "openai/gpt-5.6-luna")

@@ -49,6 +49,26 @@ def test_normalise_thematic_breaks_noop_without_body_rule():
     assert _normalise_thematic_breaks(content) == content
 
 
+def test_patch_frontmatter_forces_source_type_image():
+    """An image input must be recorded as source_type: image. The prompt defaults
+    the model to 'pdf', and a record mislabelled pdf routes through original_of() to
+    a hardcoded .pdf extension - so the archived .jpg source could never be
+    resolved. Forcing it here is the safety net that keeps that from depending on
+    the model."""
+    content = "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 1\n---\nbody\n"
+    out = _patch_frontmatter(content, "a" * 64, 1, source_type="image")
+    fm = out.split("---", 2)[1]
+    assert "source_type: image" in fm
+    assert "source_type: pdf" not in fm
+
+
+def test_patch_frontmatter_leaves_source_type_when_not_given():
+    content = "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 1\n---\nbody\n"
+    out = _patch_frontmatter(content, "a" * 64, 1)
+    fm = out.split("---", 2)[1]
+    assert "source_type: pdf" in fm
+
+
 def test_injects_content_hash():
     content = (
         "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 3\n---\n\nBody text."

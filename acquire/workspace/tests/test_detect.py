@@ -49,6 +49,24 @@ def test_detect_from_extension_unknown():
     assert detect_from_extension("file.xyz") is None
 
 
+def test_detect_from_extension_image():
+    """A photographed/scanned document arrives as an image and routes to the PDF
+    (document) handler. A local reprocess detects by extension with no HTTP header,
+    so each accepted image extension must resolve to its image MIME type."""
+    assert detect_from_extension("slide.jpg") == "image/jpeg"
+    assert detect_from_extension("a.jpeg") == "image/jpeg"
+    assert detect_from_extension("shot.PNG") == "image/png"  # case-insensitive
+    assert detect_from_extension("x.webp") == "image/webp"
+
+
+def test_detect_from_bytes_jpeg():
+    assert detect_from_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00") == "image/jpeg"
+
+
+def test_detect_from_bytes_png():
+    assert detect_from_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR") == "image/png"
+
+
 def test_detect_from_extension_archived_audio():
     """Every extension the pipeline archives media under must detect as audio/video,
     not fall through to octet-stream. yt-dlp writes .opus by default, so a local
