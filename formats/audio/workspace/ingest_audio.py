@@ -493,10 +493,14 @@ def run(
         source_type = detect_source_type(detected_type)
     speakers_unordered = _unique_speakers(turns)
 
-    # Renumber speaker IDs by order of first appearance
+    # Renumber speaker IDs by order of first appearance. Bracketed + lower-case:
+    # a diarisation cluster id is an anonymous speaker (a cluster number, not a
+    # person), and the square-bracket notation says "this is a description, not a
+    # name" - record-scoped, never merged into a person downstream. Same notation
+    # as the reserved [narrator] token (ingest-format.md, Speaker change).
     remap = {}
     for i, old_id in enumerate(speakers_unordered):
-        remap[old_id] = f"Speaker {i + 1}"
+        remap[old_id] = f"[speaker {i + 1}]"
     turns = [Turn(speaker=remap[t.speaker], sentences=t.sentences) for t in turns]
 
     # The FILE's length, not the transcript's. `segments[-1].end` is where the last
