@@ -138,7 +138,13 @@ def _preserve_identity(content: str, preserved: dict) -> str:
     fm = parts[1]
     if "title" in preserved:
         title = str(preserved["title"]).replace('"', '\\"')
-        fm = re.sub(r"(?m)^title:.*$", f'title: "{title}"', fm, count=1)
+        if re.search(r"(?m)^title:", fm):
+            fm = re.sub(r"(?m)^title:.*$", f'title: "{title}"', fm, count=1)
+        else:
+            # The re-extraction dropped the field entirely. Restore it rather than
+            # let a stored value vanish silently - a substitute-only rule loses any
+            # field the new extraction omits (a data-loss mode with no error).
+            fm = fm.rstrip("\n") + f'\ntitle: "{title}"\n'
     if "date_published" in preserved:
         # A stored date parses back as a date/datetime (or an int, for a bare year);
         # published_scalar renders whichever it is at its own precision.
@@ -149,6 +155,8 @@ def _preserve_identity(content: str, preserved: dict) -> str:
             )
         elif re.search(r"(?m)^date:", fm):
             fm = re.sub(r"(?m)^date:.*$", f"date_published: {date}", fm, count=1)
+        else:
+            fm = fm.rstrip("\n") + f"\ndate_published: {date}\n"
     return f"---{fm}---{parts[2]}"
 
 
@@ -707,6 +715,7 @@ def main():
     # _patch_frontmatter default of restricted.
     existing_copyright = manifest_copyright
     preserved: dict = {}
+    existing_fm: dict | None = None
     existing_record = store_dir / f"{input_hash}.md"
     if existing_record.exists():
         existing_fm = _extract_frontmatter(existing_record.read_text())
@@ -867,6 +876,22 @@ def main():
         source_type=record_source_type,
     )
     content = _preserve_identity(content, preserved)
+
+    # Surface any model-emitted frontmatter field the re-extraction silently dropped
+    # that the prior version had. Identity fields (title, date_published) are restored
+    # above; the rest (creators, classification, release, ...) are re-derived by the
+    # model and CAN legitimately change, but a field vanishing with no error is the
+    # data-loss mode that lost Barrett-2008's date, so name it for a human to check.
+    if existing_fm:
+        new_fm = _extract_frontmatter(content) or {}
+        dropped = [k for k in existing_fm if k not in new_fm]
+        if dropped:
+            print(
+                "WARNING: re-extraction dropped frontmatter field(s) the prior "
+                f"version had: {', '.join(sorted(dropped))} - verify against the "
+                "retired version in store/v1 before relying on this record",
+                file=sys.stderr,
+            )
 
     # Validate, auto-fix, and repair missing pages
     repair_provider = provider

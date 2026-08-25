@@ -69,6 +69,29 @@ def test_patch_frontmatter_leaves_source_type_when_not_given():
     assert "source_type: pdf" in fm
 
 
+def test_preserve_identity_restores_a_dropped_field():
+    """A --force re-extraction that OMITS date_published/title entirely must not lose
+    the stored value. The old substitute-only rule matched neither date_published:
+    nor date: and silently dropped it - this is what lost Barrett-2008's '2008'."""
+    content = "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 1\n---\nbody\n"
+    out = _preserve_identity(content, {"date_published": "2008", "title": "Kept"})
+    fm = out.split("---", 2)[1]
+    assert re.search(r"(?m)^date_published:.*2008", fm), "dropped date must be restored"
+    assert re.search(r'(?m)^title: "Kept"', fm), "dropped title must be restored"
+
+
+def test_preserve_identity_still_substitutes_when_present():
+    content = (
+        "---\nschema: anomalica/record/1\ntitle: Wrong\ndate_published: 1999\n"
+        "---\nbody\n"
+    )
+    out = _preserve_identity(content, {"title": "Right", "date_published": "2008"})
+    fm = out.split("---", 2)[1]
+    assert re.search(r'(?m)^title: "Right"', fm)
+    assert re.search(r"(?m)^date_published:.*2008", fm)
+    assert "1999" not in fm and "Wrong" not in fm
+
+
 def test_injects_content_hash():
     content = (
         "---\nschema: anomalica/record/1\nsource_type: pdf\npages: 3\n---\n\nBody text."
