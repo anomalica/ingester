@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from alignment.align import align
+from casing import default_caser
 from copyright import status_or
 from dates import normalise_published, published_scalar
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
@@ -318,6 +320,24 @@ def _sentence_text_with_word_markers(sentence: TimedSentence) -> str:
     return " ".join(f"{{{{t:{w.start:.2f}}}}}{w.text}" for w in sentence.words)
 
 
+def _apply_casing_to_turns(turns: list[Turn], caser) -> None:
+    """Restore canonical casing of curated terms on the transcribed prose, in place.
+
+    Applies to each sentence's text and, for word-level records, to the per-word
+    text too, keeping the two representations consistent. Casing is a case-only
+    transform, so the cased line re-splits into exactly as many tokens as there are
+    words and maps straight back onto their timestamps; on the rare token-count
+    mismatch the words are left unchanged rather than risk misaligning a marker."""
+    for turn in turns:
+        for sentence in turn.sentences:
+            sentence.text = caser(sentence.text)
+            if sentence.words:
+                cased = caser(" ".join(w.text for w in sentence.words)).split(" ")
+                if len(cased) == len(sentence.words):
+                    for word, text in zip(sentence.words, cased):
+                        word.text = text
+
+
 def _build_content(turns: list[Turn], word_timestamps: bool = False) -> str:
     """Build the record body with speaker turn annotations and sentence-level timestamps.
 
@@ -483,6 +503,13 @@ def run(
     if not turns:
         print("Error: alignment produced no speaker turns", file=sys.stderr)
         return 1
+
+    # Restore canonical casing of curated terms in the transcribed prose - whisper
+    # lower-cases proper nouns, acronyms and the pronoun "I" ("i saw a ufo" ->
+    # "I saw a UFO"). Whole-word, curated-list only, so it never corrupts prose.
+    # Disable with INGEST_CASING=0.
+    if os.environ.get("INGEST_CASING", "1") != "0":
+        _apply_casing_to_turns(turns, default_caser())
 
     # Prefer original source type from fetcher metadata (e.g. yt-dlp reports
     # "video" for YouTube even though only the audio track was downloaded).

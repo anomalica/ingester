@@ -1,0 +1,118 @@
+# Post-transcription casing terms (audio/video handler).
+#
+# Whisper lower-cases proper nouns, acronyms and the pronoun "I". Each entry below
+# is the EXACT canonical casing. It is matched case-insensitively as a WHOLE WORD
+# (word boundaries) and replaced with exactly this - a case-only change that never
+# edits a substring inside another word ("ufology" is left untouched) and never
+# alters the word count.
+#
+# ADDING A TERM - the one safety rule: only put a term under `terms:` if it is
+# ALWAYS this form in the corpus. NEVER add a term that is also a common lower-case
+# word: there is no way to tell "the US" from the pronoun "us", or the month "May"
+# from "it may be", by pattern alone, so those would corrupt ordinary prose. Park
+# anything ambiguous under `candidates:` (which is NOT loaded) until you have
+# decided it is safe in this corpus, then move it up.
+#
+# Category names are for humans only; every value under `terms:` is applied.
+
+terms:
+  pronoun:
+    - I
+
+  acronyms:
+    - UFO
+    - UFOs
+    - UAP
+    - UAPs
+    - USA
+    - USAF
+    - USSR
+    - UK
+    - NASA
+    - NORAD
+    - FAA
+    - RAF
+    - CIA
+    - FBI
+    - NSA
+    - DIA
+    - NRO
+    - ONI
+    - DARPA
+    - JPL
+    - ESA
+    - KGB
+    - AARO
+    - AATIP
+    - UAPTF
+    - MUFON
+    - NICAP
+    - CUFOS
+    - NUFORC
+    - SETI
+    - GPS
+
+  organisations:
+    - Air Force
+    - Space Force
+    - Royal Air Force
+    - Strategic Air Command
+    - Department of Defense
+    - Ministry of Defence
+    - White House
+    - Blue Book
+    - Project Blue Book
+    - Men in Black
+    - Close Encounters
+    - Cold War
+    - World War
+    - Pentagon
+
+  nations:
+    - United States
+    - United Kingdom
+    - Soviet Union
+
+  places:
+    - Roswell
+    - Area 51
+    - Groom Lake
+    - Wright-Patterson
+    - Los Alamos
+    - Cape Canaveral
+    - Nellis
+    - Nimitz
+    - Nevada
+    - Antarctica
+
+# NOT loaded. These are also common lower-case words (or context-dependent), so
+# applying them blindly would damage ordinary prose. Verify a term is unambiguous
+# in THIS corpus, then move it up into `terms:`. Kept here so the risk is recorded
+# rather than silently included.
+candidates:
+  - US  # the pronoun "us"
+  - EU
+  - IT  # the pronoun "it"
+  - MoD  # "mod"
+  - SAC  # "sac"
+  - Navy  # "navy" (the colour)
+  - Army  # "an army of"
+  - Congress
+  - Senate
+  - President  # "a president" vs "President X"
+  - General  # a rank vs "in general"
+  - Colonel
+  - Major  # "a major issue"
+  - Mars  # "it mars the surface"
+  - Venus
+  - Jupiter
+  - Saturn
+  - Moon  # "the moon"
+  - Earth  # "the earth"
+  - Sun
+  - May  # the month vs "it may be"
+  - March  # the month vs "to march"
+  - August  # the month vs "an august body"
+  - Apollo
+  - Mercury
+  - Titan
