@@ -403,6 +403,62 @@ def test_build_content_emits_word_markers():
     assert re.search(r"(?m)^\d{2}:\d{2}:\d{2}\.\d Hi there\.$", default_body)
 
 
+def test_casing_applied_to_sentence_and_per_word_text():
+    """Casing must reach BOTH representations: sentence.text (record/1) and the
+    per-word text (record/2 word markers), consistently, so a word-level body
+    doesn't show 'ufo' where the sentence shows 'UFO'."""
+    import ingest_audio
+    from casing import build_caser
+    from models import TimedSentence, Turn, Word
+
+    turn = Turn(
+        speaker="[speaker 1]",
+        sentences=[
+            TimedSentence(
+                time=1.0,
+                text="i saw a ufo",
+                words=[
+                    Word("i", 1.0, 1.1),
+                    Word("saw", 1.2, 1.4),
+                    Word("a", 1.5, 1.6),
+                    Word("ufo", 1.7, 2.0),
+                ],
+            )
+        ],
+    )
+    ingest_audio._apply_casing_to_turns([turn], build_caser({"i": "I", "ufo": "UFO"}))
+    assert turn.sentences[0].text == "I saw a UFO"
+    assert [w.text for w in turn.sentences[0].words] == ["I", "saw", "a", "UFO"]
+    body = ingest_audio._build_content([turn], word_timestamps=True)
+    assert "{{t:1.00}}I " in body and "{{t:1.70}}UFO" in body
+
+
+def test_casing_multiword_term_across_two_words():
+    """A multi-word term spans two Word objects; the case-only re-split maps the
+    cased phrase back onto the timestamps without changing the word count."""
+    import ingest_audio
+    from casing import build_caser
+    from models import TimedSentence, Turn, Word
+
+    turn = Turn(
+        speaker="[speaker 1]",
+        sentences=[
+            TimedSentence(
+                time=1.0,
+                text="the air force",
+                words=[
+                    Word("the", 1.0, 1.1),
+                    Word("air", 1.2, 1.4),
+                    Word("force", 1.5, 2.0),
+                ],
+            )
+        ],
+    )
+    ingest_audio._apply_casing_to_turns([turn], build_caser({"air force": "Air Force"}))
+    assert turn.sentences[0].text == "the Air Force"
+    assert [w.text for w in turn.sentences[0].words] == ["the", "Air", "Force"]
+
+
 def test_build_content_wordless_segment_keeps_prefix():
     import ingest_audio
     from models import TimedSentence, Turn
