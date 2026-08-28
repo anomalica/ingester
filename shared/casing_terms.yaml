@@ -51,6 +51,40 @@ terms:
     - NUFORC
     - SETI
     - GPS
+    - AI
+    - TV
+    - PC
+    - DNA
+    - JFK
+    - MIT
+    - CERN
+    - COVID
+    - PTSD
+    - DMT
+    - DoD
+    - ODNI
+    - FOIA
+    - SCIF
+    - AAWSAP
+    - ATIP
+    - NHI
+    - SRI
+    - OSI
+
+  demonyms:
+    - American
+    - Russian
+    - British
+    - Soviet
+    - Chinese
+    - Japanese
+    - German
+    - French
+    - European
+    - South African
+    - Mexican
+    - Canadian
+    - Australian
 
   organisations:
     - Air Force
@@ -67,6 +101,11 @@ terms:
     - Cold War
     - World War
     - Pentagon
+    - Lockheed Martin
+    - Manhattan Project
+    - Monroe Institute
+    - United Nations
+    - Immaculate Constellation
 
   nations:
     - United States
@@ -84,6 +123,11 @@ terms:
     - Nimitz
     - Nevada
     - Antarctica
+    - New York
+    - New Mexico
+    - Skinwalker Ranch
+    - Las Vegas
+    - Washington
 
 # NOT loaded. These are also common lower-case words (or context-dependent), so
 # applying them blindly would damage ordinary prose. Verify a term is unambiguous
