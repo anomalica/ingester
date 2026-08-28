@@ -1,0 +1,27 @@
+# Whisper custom vocabulary (initial_prompt) for ingestion transcription.
+#
+# This text is fed to the Whisper model as its `initial_prompt`, biasing it to spell
+# and CASE these corpus terms correctly AT SOURCE - before the post-hoc caser or the
+# name-fix housekeeping ever run. Whisper copies the prompt's casing into its output,
+# so every term here is written exactly as it should appear.
+#
+# HOW TO EDIT: lines starting with `#` are comments and are NOT sent to the model;
+# everything else is joined into the prompt. Keep it to the highest-value, most-
+# frequent terms - Whisper's initial_prompt is capped at ~224 tokens (the loader
+# prints a [WARNING] if this file goes over), and the long tail is handled post-hoc,
+# not here. Disable entirely with INGEST_WHISPER_PROMPT=0.
+#
+# NAMES use the best-known canonical spelling - REVIEW them: a wrong spelling here
+# biases the model toward the wrong spelling. A soft bias, not a guarantee.
+
+# --- phenomena & acronyms ---
+UAP, UAPs, UFO, UFOs, AARO, AATIP, UAPTF, NHI, SCIF, NASA, CIA, FBI, NSA, DIA, DoD, ODNI, NORAD, FOIA, SETI, MUFON, NICAP, CUFOS, DARPA, JPL, NRO
+
+# --- people ---
+Bob Lazar, Lue Elizondo, David Grusch, Jacques Vallée, Hal Puthoff, George Knapp, J. Allen Hynek, Travis Walton, Jesse Marcel, Chris Mellon, Steven Greer, Jeremy Corbell, Ross Coulthart, Garry Nolan, Harry Reid, Eric Davis, John Mack
+
+# --- places ---
+Roswell, Area 51, Skinwalker Ranch, Groom Lake, Wright-Patterson, Los Alamos, Nimitz, Nellis, Nevada, Cape Canaveral, Rendlesham
+
+# --- programs, craft & events ---
+Project Blue Book, Tic Tac, Gimbal, GoFast, Immaculate Constellation, Manhattan Project

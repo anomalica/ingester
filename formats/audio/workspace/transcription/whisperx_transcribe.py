@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from models import Segment, Word
+from whisper_prompt import load_prompt
 
 WHISPER_MODEL = "large-v3-turbo"
 BATCH_SIZE = int(os.environ.get("WHISPER_BATCH", "8"))
@@ -46,8 +48,23 @@ def transcribe(
         "float16" if device == "cuda" else "int8"
     )
 
+    # Custom vocabulary: bias the model toward the corpus's names, acronyms and
+    # places (spelled and cased correctly at source) via Whisper's initial_prompt.
+    # Reviewable list at shared/whisper_prompt.txt; disable with INGEST_WHISPER_PROMPT=0.
+    initial_prompt = load_prompt()
+    asr_options = {"initial_prompt": initial_prompt} if initial_prompt else None
+    if initial_prompt:
+        print(
+            f"[whisper] initial_prompt bias on ({len(initial_prompt.split())} terms)",
+            file=sys.stderr,
+        )
+
     model = whisperx.load_model(
-        WHISPER_MODEL, device, compute_type=compute_type, language=language
+        WHISPER_MODEL,
+        device,
+        compute_type=compute_type,
+        language=language,
+        asr_options=asr_options,
     )
     transcribe_result = model.transcribe(str(audio_path), batch_size=BATCH_SIZE)
 
