@@ -34,8 +34,20 @@ stages:
             - libasound2
             - libpango-1.0-0
             - libcairo2
-            - nodejs
-            - npm
+            - git
+            # nodesource (Node 22, required by the bgutil PO-token server) prereqs
+            - curl
+            - ca-certificates
+            - gnupg
+            # build toolchain + libs for the bgutil server's native `canvas` dep
+            # (BotGuard fingerprinting) - node-gyp compiles it from source
+            - build-essential
+            - pkg-config
+            - libcairo2-dev
+            - libpango1.0-dev
+            - libjpeg-dev
+            - libgif-dev
+            - librsvg2-dev
       - pip:
           install:
             - requests
@@ -43,14 +55,27 @@ stages:
             - patchright
             - playwright
             - yt-dlp
-            # PO-token provider plugin: yt-dlp uses it automatically to get past
-            # YouTube's download gating when a bgutil provider is reachable.
-            - bgutil-ytdlp-pot-provider
+            # PO-token provider plugin (yt-dlp uses it automatically to get past
+            # YouTube's download gating). PINNED and version-MATCHED to the Node
+            # server built below - bgutil requires the plugin and provider to be
+            # the same version. Bump both together.
+            - bgutil-ytdlp-pot-provider==1.3.2
       - run:
+          # Node 22 (bgutil server requires >=22; Debian's apt nodejs is 20). Also
+          # provides npm for single-file-cli and the bgutil build below.
+          - curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
           - mkdir -p /opt/playwright && chmod 777 /opt/playwright
           - playwright install chromium
           - patchright install chromium
           - npm install -g single-file-cli
+          # PO-token provider in SCRIPT mode: build the bgutil Node server so
+          # generate_once.js exists at the path fetch/ytdlp.py looks for
+          # (/opt/bgutil/server/build/generate_once.js). Without it yt-dlp cannot
+          # sign media URLs and every YouTube fetch fails as "no downloadable audio
+          # format". Version MUST match the pip plugin above. Needs Node 20+ (have
+          # 20.x) and git (added above).
+          - git clone --single-branch --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil
+            && cd /opt/bgutil/server && npm ci && npx tsc
 
   development:
     from: base

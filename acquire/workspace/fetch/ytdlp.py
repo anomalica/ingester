@@ -47,6 +47,15 @@ last_error: str | None = None
 # yt-dlp's own stderr, mapped to a plain reason. Ordered most-specific first.
 _ERROR_REASONS = [
     (
+        re.compile(
+            r"n challenge solving failed|pot:bgutil|youtubepot-bgutil|127\.0\.0\.1:4416",
+            re.I,
+        ),
+        "PO-token provider unreachable - yt-dlp couldn't sign the media URLs, so "
+        "YouTube offered no fetchable formats. A toolchain fault, NOT the video: "
+        "check the bgutil script at /opt/bgutil/server/build/generate_once.js",
+    ),
+    (
         re.compile(r"confirm you.?re not a bot|not a bot", re.I),
         "YouTube bot check - needs cookies from a signed-in session",
     ),
