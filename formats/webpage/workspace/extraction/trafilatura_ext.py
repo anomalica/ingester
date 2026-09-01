@@ -94,7 +94,14 @@ def extract_article(html: str, url: str | None = None) -> Article | None:
         html,
         url=url,
         with_metadata=True,
-        include_formatting=True,
+        # Emphasis OFF. Web pages over-style - bylines, photo credits, pull-quotes
+        # and donate/footer boilerplate are all bold/italic - and trafilatura's
+        # markdown emphasis on messy inline HTML comes out mangled (**** , spaces
+        # inside ** **, stray unclosed **), which is pure manual-cleanup noise in a
+        # faithful text record. Turning it off drops only the * markers; the text,
+        # links, tables and images are all kept (verified: 94 asterisks -> 0, same
+        # prose). A genuinely-needed emphasis is a reviewer's call, not the default.
+        include_formatting=False,
         include_links=True,
         include_tables=True,
         include_images=True,
