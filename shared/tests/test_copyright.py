@@ -1,4 +1,11 @@
-from copyright import default_status, is_us_government_host, status_or
+from copyright import (
+    MISSING_PROVENANCE_DETAIL,
+    default_status,
+    has_provenance,
+    is_us_government_host,
+    resolve,
+    status_or,
+)
 
 
 def test_us_government_hosts_are_public_domain():
@@ -78,3 +85,36 @@ def test_status_or_supplies_the_handler_default():
         status_or({"source": "https://www.defense.gov/a"}, "publicly_accessible")
         == "public_domain"
     )
+
+
+# --- missing-provenance resolution (silent-gating fix) -----------------------
+
+
+def test_resolve_missing_provenance_gets_the_detail():
+    status, detail = resolve({}, fallback="restricted")
+    assert status == "restricted"
+    assert detail == MISSING_PROVENANCE_DETAIL
+
+
+def test_resolve_public_url_has_no_detail():
+    status, detail = resolve({"source": "https://example.com/x.pdf"})
+    assert status == "publicly_accessible" and detail is None
+
+
+def test_resolve_gov_url_public_domain():
+    status, detail = resolve({"source_url": "https://www.congress.gov/x"})
+    assert status == "public_domain" and detail is None
+
+
+def test_resolve_declared_source_id_is_not_missing_provenance():
+    # A declared origin means it's restricted for a real reason, not an unknown file.
+    status, detail = resolve({"source_id": "youtube:ABC"}, fallback="restricted")
+    assert status == "restricted" and detail is None
+
+
+def test_has_provenance():
+    assert has_provenance({"source_url": "https://x"})
+    assert has_provenance({"source_id": "youtube:x"})
+    assert has_provenance({"source": "http://x"})
+    assert not has_provenance({"source": "/local/file.pdf"})
+    assert not has_provenance({})

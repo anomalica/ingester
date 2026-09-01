@@ -48,13 +48,21 @@ def test_url_fetched_pdf_is_publicly_accessible():
 
 
 def test_local_file_stays_conservative():
-    """A local drop has unknown provenance, so it keeps the restricted default
-    (None here -> _patch_frontmatter writes `restricted`)."""
-    assert (
-        default_copyright({"source": "/home/mark/some.pdf", "fetch_method": "local"})
-        is None
+    """A local drop has unknown provenance, so it keeps the restricted default - but
+    now EXPLICITLY, carrying the missing-provenance detail rather than a silent None,
+    so the gating is visible and the record is findable."""
+    from shared.copyright import MISSING_PROVENANCE_DETAIL
+
+    block = default_copyright(
+        {"source": "/home/mark/some.pdf", "fetch_method": "local"}
     )
-    assert default_copyright({}) is None
+    assert block["status"] == "restricted"
+    assert block["detail"] == MISSING_PROVENANCE_DETAIL
+    # an empty manifest is the same case - restricted, with the detail
+    assert default_copyright({}) == {
+        "status": "restricted",
+        "detail": MISSING_PROVENANCE_DETAIL,
+    }
 
 
 def test_explicit_status_wins():
@@ -94,9 +102,11 @@ def test_a_declared_government_origin_is_still_public_domain():
 
 
 def test_a_local_file_with_no_declared_origin_stays_restricted():
-    """No URL, no evidence: the conservative default has to survive this change,
-    or every hand-fed file silently becomes servable."""
-    assert default_copyright({"source": "/home/x/records/unknown.pdf"}) is None
+    """No URL, no evidence: it stays gated (never silently servable), and now says so
+    - restricted WITH the missing-provenance detail, not a bare None."""
+    block = default_copyright({"source": "/home/x/records/unknown.pdf"})
+    assert block["status"] == "restricted"
+    assert "detail" in block
 
 
 def test_an_explicit_status_still_wins():
