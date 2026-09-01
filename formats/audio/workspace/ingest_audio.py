@@ -29,6 +29,24 @@ from verification import build_sidecar, needs_sidecar, write_sidecar
 import yaml
 
 
+def _read_existing_frontmatter(record_path: Path) -> dict | None:
+    """Parse a record's YAML frontmatter, or None if absent/unparseable.
+
+    Carries provenance forward on a re-ingest: an archived source (e.g. re-rendering
+    to apply new post-processing) has no manifest, so without this the title, source
+    URL, channel and video/audio type the original run captured would be dropped."""
+    if not record_path.exists():
+        return None
+    parts = record_path.read_text().split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return None
+    return fm if isinstance(fm, dict) else None
+
+
 def _read_existing_source_audio(record_path: Path) -> list[dict]:
     """Read the existing processing.source.audio list from a record file.
 
@@ -465,6 +483,12 @@ def run(
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
+    # Re-ingest of an archived source carries no manifest, so fall back to the
+    # stored record's provenance rather than dropping it. Manifest wins when present.
+    existing_fm = _read_existing_frontmatter(existing_record_path)
+    if existing_fm and not source_id:
+        source_id = existing_fm.get("source_id")
+
     apath = archive_path(records_dir, hex_hash)
     if use_cache and apath.exists():
         print(
@@ -516,6 +540,10 @@ def run(
     # Falls back to MIME type detection for direct audio/video file inputs.
     if original_type in ("video", "audio"):
         source_type = original_type
+    elif existing_fm and existing_fm.get("source_type"):
+        # Re-ingest: keep the stored type. A YouTube video re-ingested from its
+        # archived .opus would otherwise detect as "audio" and lose the "video".
+        source_type = existing_fm["source_type"]
     else:
         source_type = detect_source_type(detected_type)
     speakers_unordered = _unique_speakers(turns)
@@ -539,24 +567,44 @@ def run(
     language = "en"
 
     is_url = source.startswith("http://") or source.startswith("https://")
+
     # Prefer an explicit source_url from the manifest: re-processing an archived
     # local source (source is a path, not a URL) supplies the known origin there,
     # so the record keeps its provenance instead of dropping it.
-    source_url = manifest.get("source_url") or (source if is_url else None)
-    title = _resolve_title(manifest, source_url, source_id, source_type)
+    # Provenance: manifest wins, else carry it forward from the stored record on a
+    # re-ingest (an archived source has no manifest), else the sane default.
+    def _ex(key):
+        return existing_fm.get(key) if existing_fm else None
+
+    source_url = (
+        manifest.get("source_url") or (source if is_url else None) or _ex("source_url")
+    )
+    title = (
+        manifest.get("title")
+        or _ex("title")
+        or _resolve_title(manifest, source_url, source_id, source_type)
+    )
     # The channel that posted the copy, and when. NOT publisher/date_published:
     # the fetcher sees a copy and cannot tell whether the channel produced the work.
-    posted_by = manifest.get("posted_by")
-    posted_date = normalise_published(manifest.get("posted_date", ""))
+    posted_by = manifest.get("posted_by") or _ex("posted_by")
+    posted_date = normalise_published(manifest.get("posted_date", "")) or _ex(
+        "posted_date"
+    )
     # An explicitly-identified work, when a caller supplies one. Absent otherwise -
     # this used to fall back to today, which is how two 1972 Apollo debriefings came
     # out dated 2026-07-11. A fabricated date is worse than none: it looks evidenced.
-    publisher = manifest.get("publisher")
-    date_published = normalise_published(manifest.get("date_published", ""))
-    creators = manifest.get("creators")
+    publisher = manifest.get("publisher") or _ex("publisher")
+    date_published = normalise_published(manifest.get("date_published", "")) or _ex(
+        "date_published"
+    )
+    creators = manifest.get("creators") or _ex("creators")
     description = manifest.get("description")
-    known_speakers = _extract_known_speakers(title, description, posted_by or publisher)
-    date_accessed = manifest.get("fetched_at")
+    known_speakers = _extract_known_speakers(
+        title, description, posted_by or publisher
+    ) or _ex("speakers")
+    # A re-render does not re-fetch the source, so keep the original access time
+    # (the re-ingest manifest's fetched_at is "now", which would falsely re-date it).
+    date_accessed = _ex("date_accessed") or manifest.get("fetched_at")
 
     frontmatter = _build_frontmatter(
         title=title,

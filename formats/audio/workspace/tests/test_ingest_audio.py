@@ -144,6 +144,66 @@ def test_run_stamps_source_url_from_manifest_for_local_source(
 
 @patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
 @patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_reingest_preserves_provenance_when_manifest_lacks_it(
+    mock_transcribe, mock_diarise, tmp_path
+):
+    """A re-ingest of an ARCHIVED source (e.g. re-rendering to apply new post-
+    processing) has no manifest metadata. The handler must carry the stored
+    record's provenance forward, not drop the title, URL, channel, date and
+    video/audio type - the 're-render loses my work' failure."""
+    import ingest_audio
+
+    output = tmp_path / "output"
+    s1 = tmp_path / "s1"
+    s1.mkdir()
+    (s1 / "asset.opus").write_bytes(b"fake audio data")
+    (s1 / "manifest.json").write_text(
+        json.dumps(
+            {
+                "source": "https://www.youtube.com/watch?v=ABC",
+                "asset": "asset.opus",
+                "detected_type": "audio/opus",
+                "original_type": "video",
+                "fetched_at": "2026-08-16T07:00:00Z",
+                "source_url": "https://www.youtube.com/watch?v=ABC",
+                "source_id": "youtube:ABC",
+                "title": "Victor Interview 1/8",
+                "posted_by": "chan",
+                "posted_date": "2011-04-14",
+            }
+        )
+    )
+    ingest_audio.run(s1, output, force=False)
+
+    # re-ingest the same bytes (same hash) with a bare manifest - no provenance
+    s2 = tmp_path / "s2"
+    s2.mkdir()
+    (s2 / "asset.opus").write_bytes(b"fake audio data")
+    (s2 / "manifest.json").write_text(
+        json.dumps(
+            {
+                "source": "/archive/asset.opus",
+                "asset": "asset.opus",
+                "detected_type": "audio/opus",
+                "fetched_at": "2026-09-01T00:00:00Z",
+            }
+        )
+    )
+    ingest_audio.run(s2, output, force=True)
+
+    content = list((output / "store").glob("*.md"))[0].read_text()
+    assert 'title: "Victor Interview 1/8"' in content
+    assert "source_url: https://www.youtube.com/watch?v=ABC" in content
+    assert "source_id: youtube:ABC" in content
+    assert "source_type: video" in content  # NOT flipped to audio
+    assert 'posted_by: "chan"' in content
+    assert "posted_date: 2011-04-14" in content
+    assert "date_accessed: 2026-08-16" in content  # original, not re-dated to now
+    assert 'title: "Untitled audio"' not in content
+
+
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
 def test_run_includes_processing_in_frontmatter(
     mock_transcribe, mock_diarise, tmp_path
 ):
