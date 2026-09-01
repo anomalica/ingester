@@ -13,7 +13,7 @@ from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from extraction.images import is_image
-from shared.copyright import default_status
+from shared.copyright import MISSING_PROVENANCE_DETAIL, resolve
 from shared.dates import published_scalar
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
@@ -46,14 +46,19 @@ MAX_RETRIES = 2
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
 
 
-def default_copyright(manifest: dict) -> dict | None:
-    """The copyright block for a PDF when no existing record and no explicit
-    --copyright status apply, or None to leave _patch_frontmatter's `restricted`
-    for a local file of unknown provenance. Judgement lives in shared/copyright.py
-    so web and audio/video reach the same answer for the same source.
+def default_copyright(manifest: dict) -> dict:
+    """The copyright block for a PDF. Always a dict now: the source's implied status
+    when it has one, else the conservative `restricted` - carrying a `detail` that
+    says WHY when it is restricted only because the source had no provenance. That
+    distinguishes a gated 'we don't know where this came from' (a queue item) from a
+    gated known copyrighted work. Judgement lives in shared/copyright.py so web and
+    audio/video reach the same answer for the same source.
     """
-    status = default_status(manifest)
-    return {"status": status} if status else None
+    status, detail = resolve(manifest, fallback="restricted")
+    block = {"status": status}
+    if detail:
+        block["detail"] = detail
+    return block
 
 
 def _check_record(content: str, min_chars: int = 500) -> tuple[bool, str]:
@@ -717,6 +722,20 @@ def main():
     preserved: dict = {}
     existing_fm: dict | None = None
     existing_record = store_dir / f"{input_hash}.md"
+    # Loud at ingest, not silent forever: a fresh drop with no provenance is gated
+    # and nobody is told. Say so, naming the file and what it needs.
+    if (
+        not existing_record.exists()
+        and isinstance(manifest_copyright, dict)
+        and manifest_copyright.get("detail") == MISSING_PROVENANCE_DETAIL
+    ):
+        name = getattr(args.input_file, "name", args.input_file)
+        print(
+            f"WARNING: no source URL or ID for {name} - this record will be GATED "
+            "(copyright.status: restricted) until a source URL is supplied. List all "
+            "such records with: python3 shared/find_missing_provenance.py",
+            file=sys.stderr,
+        )
     if existing_record.exists():
         existing_fm = _extract_frontmatter(existing_record.read_text())
         if existing_fm:

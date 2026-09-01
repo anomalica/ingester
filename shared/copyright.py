@@ -73,3 +73,43 @@ def default_status(manifest: dict) -> str | None:
 def status_or(manifest: dict, fallback: str) -> str:
     """`default_status`, falling back to the handler's own conservative default."""
     return default_status(manifest) or fallback
+
+
+# The reason string for the ONE restricted case that is not a judgement about the
+# work itself: we simply do not know where it came from. Kept as a stable sentence
+# so the set is greppable, and distinct from "restricted because it is a commercial
+# book" - a different fact needing a different action (supply a URL, vs accept the
+# licence). A record carrying this detail is a queue item, not a settled status.
+MISSING_PROVENANCE_DETAIL = (
+    "No source URL or source ID was supplied at ingest, so the origin could not be "
+    "established and the status defaulted to restricted. Supply a source URL (a public "
+    "or government one may make it publicly accessible or public domain), or confirm "
+    "the licence, to take it out of this queue."
+)
+
+
+def has_provenance(manifest: dict) -> bool:
+    """True if the manifest states WHERE the source came from - a URL or a source id.
+
+    A local file dropped in the inbox with neither has unknown provenance; a local
+    file whose origin the operator declared with --source-url/--source-id does not."""
+    if manifest.get("source_url") or manifest.get("source_id"):
+        return True
+    return str(manifest.get("source", "")).startswith(("http://", "https://"))
+
+
+def resolve(manifest: dict, fallback: str = "restricted") -> tuple[str, str | None]:
+    """Copyright (status, detail).
+
+    status is `default_status` or the handler's conservative fallback. `detail` is
+    the missing-provenance sentence ONLY when the fallback is used *because* the
+    source had no provenance at all - so a record can distinguish "gated because we
+    do not know what this is" from "gated because it is a known copyrighted work".
+    A caller that gets that detail should also warn loudly at ingest time; the
+    consequence (gated forever until someone supplies a URL) must not be silent."""
+    status = default_status(manifest)
+    if status:
+        return status, None
+    if fallback == "restricted" and not has_provenance(manifest):
+        return fallback, MISSING_PROVENANCE_DETAIL
+    return fallback, None
