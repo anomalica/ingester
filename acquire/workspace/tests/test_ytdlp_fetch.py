@@ -1,7 +1,34 @@
 import json
 from unittest.mock import MagicMock, patch
 
-from fetch.ytdlp import _download, _is_supported, fetch, is_video_platform
+from fetch.ytdlp import (
+    _classify_error,
+    _download,
+    _is_supported,
+    fetch,
+    is_video_platform,
+)
+
+
+def test_classify_token_provider_failure_points_at_the_toolchain():
+    """A missing/unreachable PO-token provider makes yt-dlp warn 'n challenge
+    solving failed' and then fail 'Requested format is not available' - which reads
+    as a YouTube refusal. It must instead be classified as a toolchain fault, so the
+    token-failure signature is matched BEFORE the generic format-gating message."""
+    stderr = (
+        "WARNING: [youtube] n challenge solving failed: Some formats may be missing\n"
+        "WARNING: Only images are available for download\n"
+        "ERROR: Requested format is not available\n"
+    )
+    reason = _classify_error(stderr)
+    assert "provider unreachable" in reason.lower()
+    assert "toolchain" in reason.lower()
+    assert "format gating" not in reason.lower()
+
+
+def test_classify_genuine_format_gate_without_token_failure_is_unchanged():
+    reason = _classify_error("ERROR: Requested format is not available\n")
+    assert "PO-token / format gating" in reason
 
 
 def _failed_run(stderr: bytes = b"ERROR: unable to download video data"):
