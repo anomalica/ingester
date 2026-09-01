@@ -145,10 +145,12 @@ def _build_frontmatter(
         f'title: "{escaped_title}"',
         f"date_published: {published_scalar(date_published)}",
         "source_type: web",
+        "file_format: html",
     ]
     # document_type is WHAT the record is; source_type is HOW it was acquired.
-    # Set only when the whole record is one message - never for a container that
-    # merely holds correspondence (those get body-level `message:` annotations).
+    # Set only when the whole record is one message - the email headers are the
+    # artefact stating its form, which is derivation. A generic web page states no
+    # form, so it is left absent rather than defaulted to `article`.
     if email_headers is not None:
         lines.append("document_type: email")
     lines.append(f"source_url: {url}")

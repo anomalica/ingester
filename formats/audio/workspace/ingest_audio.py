@@ -14,6 +14,7 @@ from pathlib import Path
 from alignment.align import align
 from casing import default_caser
 from copyright import status_or
+from document_type import classify_av, normalise_file_format
 from dates import normalise_published, published_scalar
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
@@ -263,6 +264,18 @@ def _build_frontmatter(
     if date_published:
         lines.append(f"date_published: {published_scalar(date_published)}")
     lines.append(f"source_type: {source_type}")
+    # We keep only the extracted audio, so file_format names that (opus), not the
+    # video the source may have been. Always present, derived from the track.
+    audio_fmt = (
+        (source_audio[0].get("codec") or source_audio[0].get("container"))
+        if source_audio
+        else None
+    )
+    lines.append(f"file_format: {normalise_file_format(audio_fmt) or 'opus'}")
+    # document_type only where the title states the form; absent otherwise.
+    document_type = classify_av(title)
+    if document_type:
+        lines.append(f"document_type: {document_type}")
     if word_timestamps:
         lines.append("word_timestamps: true")
     if publisher:

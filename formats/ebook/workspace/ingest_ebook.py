@@ -108,7 +108,11 @@ def _build_frontmatter(
         f'title: "{escaped_title}"',
         f"date_published: {date_published}",
         "source_type: ebook",
+        "file_format: epub",
     ]
+    # No document_type: an EPUB is a delivery container and states nothing about
+    # what it holds, so `book` would be an assumption, not a derivation. A reviewer
+    # sets it in the workbench.
     if book.publisher:
         escaped_pub = book.publisher.replace('"', '\\"')
         lines.append(f'publisher: "{escaped_pub}"')

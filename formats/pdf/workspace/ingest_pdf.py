@@ -15,6 +15,7 @@ from extraction.chunker import extract_page, get_page_count, split_pdf
 from extraction.images import is_image
 from shared.copyright import MISSING_PROVENANCE_DETAIL, resolve
 from shared.dates import published_scalar
+from shared.document_type import derive_document_type, normalise_file_format
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
 from shared.record import (
@@ -221,6 +222,26 @@ def _patch_frontmatter(
                 frontmatter = frontmatter.replace(
                     f'title: "{raw_title}"', f'title: "{cleaned}"'
                 )
+
+    # file_format (what we hold) and document_type (what it is) - the two facts
+    # source_type used to conflate. file_format is always set and derived from the
+    # input file; document_type only where the title states the form, absent
+    # otherwise (a PDF is not presumptively a report). See shared/document_type.py.
+    effective_source_type = source_type
+    if not effective_source_type:
+        st_match = re.search(r"(?m)^source_type:\s*(\S+)", frontmatter)
+        effective_source_type = st_match.group(1) if st_match else "pdf"
+    file_format = (
+        normalise_file_format(Path(source_file).suffix if source_file else None)
+        or "pdf"
+    )
+    if "\nfile_format:" not in f"\n{frontmatter}":
+        frontmatter = frontmatter.rstrip("\n") + f"\nfile_format: {file_format}\n"
+    title_match = re.search(r'(?m)^title:\s*"?(.*?)"?\s*$', frontmatter)
+    title_now = title_match.group(1).replace('\\"', '"') if title_match else ""
+    document_type = derive_document_type(effective_source_type, title_now)
+    if document_type and "\ndocument_type:" not in f"\n{frontmatter}":
+        frontmatter = frontmatter.rstrip("\n") + f"\ndocument_type: {document_type}\n"
 
     # Provenance the extraction model cannot know (it never sees the URL). The
     # acquire manifest carries these; without them ./ingest's URL dedup cannot
