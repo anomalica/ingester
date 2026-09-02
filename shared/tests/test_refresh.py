@@ -328,3 +328,17 @@ def test_a_field_the_stored_record_already_lacked_does_not_refuse_the_refresh(tm
     assert outcome.written, outcome.reason
     assert any("pre-existing" in n for n in outcome.notes)
     assert "date_published" not in record.read_text()
+
+
+def test_a_refresh_that_moves_no_content_line_leaves_the_review_standing(tmp_path):
+    store, record, source = _store(tmp_path, reviewed=True)
+    refresh_record(record, store, FRESH_BODY, source, media_type="web")
+    text = record.read_text()
+    assert "review_carryover:" in text
+    record.write_text(text.replace("review_carryover:", "review_carryover_old:"))
+    # Only a link target changes: every content line keeps its text and place.
+    retouched = FRESH_BODY.replace("https://unsplash.com/x", "https://unsplash.com/y")
+    outcome = refresh_record(record, store, retouched, source, media_type="web")
+    assert outcome.written, outcome.reason
+    assert "review_carryover:\n" not in record.read_text()
+    assert any("left standing" in n for n in outcome.notes)

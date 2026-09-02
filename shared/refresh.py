@@ -611,6 +611,28 @@ class Carry:
     refused: str | None
     notes: list[str]
     prose_moved: bool
+    # True when any content line changed position or text - the case where
+    # line-addressed review coverage no longer lines up and a reviewer must
+    # look again. False when only annotation contents or whitespace changed.
+    layout_moved: bool = True
+
+
+def _layout(body: str) -> list[tuple[int, str]]:
+    """Each content line's index and letters, comment lines excluded."""
+    out = []
+    inside = False
+    for i, line in enumerate(body.split("\n")):
+        stripped = line.strip()
+        if inside:
+            if "-->" in stripped:
+                inside = False
+            continue
+        if stripped.startswith("<!--"):
+            inside = "-->" not in stripped
+            continue
+        if stripped:
+            out.append((i, _squash(stripped)))
+    return out
 
 
 def carry_review_work(
@@ -672,7 +694,8 @@ def carry_review_work(
     prose_moved = _squash(_without_irrelevant(old_body)) != _squash(
         _without_irrelevant(new_body)
     )
-    return Carry(new_body, None, notes, prose_moved)
+    layout_moved = _layout(old_body) != _layout(new_body)
+    return Carry(new_body, None, notes, prose_moved, layout_moved)
 
 
 def refresh_record(
@@ -714,10 +737,13 @@ def refresh_record(
         write_manifest(store_dir)
         return Outcome(True, "body unchanged, stamps brought up to date", notes)
 
+    # A reviewed record is flagged for another look only when what the reviewer
+    # read moved - a content line changed text or position. A refresh that only
+    # touched annotation contents leaves the review standing.
     stamped = restamp(
         frontmatter,
         content_hash,
-        carry.prose_moved if reviewed else None,
+        carry.prose_moved if reviewed and carry.layout_moved else None,
         media_type,
         tool_version,
     )
@@ -746,9 +772,11 @@ def refresh_record(
         sidecar = build_sidecar(content, source_path=source_path)
         write_sidecar(store_dir, content_hash, sidecar)
         notes.append("verification sidecar regenerated")
-    if reviewed:
+    if reviewed and carry.layout_moved:
         notes.append(
             "reviewed record: review_carryover stamped"
             + (" (prose moved - verify)" if carry.prose_moved else "")
         )
+    elif reviewed:
+        notes.append("reviewed record: no content line moved, review left standing")
     return Outcome(True, "refreshed in place", notes)
