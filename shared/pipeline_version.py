@@ -36,7 +36,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
     # v3: chapter numbers are the printed ones, not the spine index; drop-cap
     # first letters rejoined to their word; footnotes resolved to markers.
-    "ebook": 3,
+    # v4: a dedicated notes document is dropped only once its notes were pulled
+    # into the citing chapters; v3 dropped it on the strength of a few links.
+    "ebook": 4,
     "audio": 1,
     "video": 1,
 }
