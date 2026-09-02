@@ -115,10 +115,13 @@ class HarvestedImage:
     url: str
     alt: str | None
     caption: str | None
-    # The nearest run of text BEFORE the image in the page, so an image the
-    # extractor dropped can be put back after the paragraph it followed. None
-    # for an image that precedes all text - the article's lead picture.
+    # The nearest runs of text BEFORE and AFTER the image in the page, so an
+    # image the extractor dropped can be put back where it was. The text after
+    # (its caption, the next paragraph) is the surer guide: page headers repeat
+    # the author's name above a lead picture, and that would pull it down to
+    # the byline. None before = nothing preceded it, the article's lead picture.
     anchor: str | None = None
+    anchor_after: str | None = None
     width: int | None = None
     height: int | None = None
 
@@ -242,14 +245,19 @@ def _is_tiny(width: int | None, height: int | None) -> bool:
     return any(v is not None and v < _MIN_CONTENT_PX for v in (width, height))
 
 
-def _anchor_text(img_tag) -> str | None:
-    """The nearest text before the image in document order that is long enough
-    to be found again in the extracted body; None when nothing precedes it."""
-    for node in img_tag.find_all_previous(string=True):
+def _anchor_text(img_tag, after: bool = False) -> str | None:
+    """The nearest text before (or after) the image in document order that is
+    long enough to be found again in the extracted body; None when there is
+    none. The page title is not in the body (it lives in frontmatter), so an
+    h1 cannot place anything: a lead picture under the title has, for
+    placement, nothing before it."""
+    nodes = (
+        img_tag.find_all_next(string=True)
+        if after
+        else img_tag.find_all_previous(string=True)
+    )
+    for node in nodes:
         parent = getattr(node, "parent", None)
-        # The page title is not in the body (it lives in frontmatter), so text
-        # in an h1 cannot place anything; a lead picture under the title has,
-        # for placement, nothing before it.
         if parent is not None and parent.name in (
             "script",
             "style",
@@ -289,6 +297,7 @@ def harvest_images(html: str) -> list[HarvestedImage]:
                 alt=alt,
                 caption=caption,
                 anchor=_anchor_text(img),
+                anchor_after=_anchor_text(img, after=True),
                 width=width,
                 height=height,
             )
@@ -503,13 +512,25 @@ def render_images(
     for img in images:
         if img.url in emitted_urls:
             continue
-        at = _anchor_position(output, img.anchor)
+        at = _anchor_position(output, img.anchor, img.anchor_after)
         if at is None:
             continue
         mi = resolve(img.url)
         file = f"{mi.img_hash}.{mi.ext}" if mi else None
         if not (file or img.alt or img.caption):
             continue
+        # The caption trafilatura kept as loose prose right where the image goes
+        # moves into the annotation, as it does for an image trafilatura emitted.
+        if img.caption:
+            nxt = at
+            while nxt < len(output) and not output[nxt].strip():
+                nxt += 1
+            if nxt < len(output) and _norm(
+                _ITALIC_LINE_RE.sub(r"\1", output[nxt]).strip()
+            ) == _norm(img.caption):
+                del output[at : nxt + 1]
+                while at < len(output) and not output[at].strip():
+                    del output[at]
         output[at:at] = [_format_image_annotation(file, img.alt, img.caption), ""]
         emitted_urls.add(img.url)
 
@@ -521,17 +542,49 @@ def _squash(text: str) -> str:
     return re.sub(r"[\W_]+", "", re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)).lower()
 
 
-def _anchor_position(lines: list[str], anchor: str | None) -> int | None:
-    """Where in `lines` a dropped image goes: right after the first line that
-    carries its anchor text; at the very top when it had no text before it;
-    nowhere (None) when the body does not carry the anchor."""
-    if anchor is None:
-        return 0
-    key = _squash(anchor)
-    if key:
-        for i, line in enumerate(lines):
-            if line.startswith("<!--"):
-                continue
-            if key in _squash(line):
-                return i + 1 if i + 1 >= len(lines) or lines[i + 1].strip() else i + 2
+# An anchor is a strong match for a body line when it covers at least half of
+# the line's letters or is a long run in its own right; a short name inside a
+# long byline is not evidence the image sat there.
+_STRONG_ANCHOR_CHARS = 40
+# A picture whose text-after sits this early in the body is a lead picture;
+# what preceded it in the page was the header, which the body never carries.
+_LEAD_WINDOW_LINES = 2
+
+
+def _line_with(lines: list[str], text: str | None) -> int | None:
+    """Index of the first body line the anchor text strongly matches."""
+    key = _squash(text) if text else ""
+    if not key:
+        return None
+    for i, line in enumerate(lines):
+        if line.startswith("<!--"):
+            continue
+        line_key = _squash(line)
+        if key in line_key and (
+            len(key) >= _STRONG_ANCHOR_CHARS or 2 * len(key) >= len(line_key)
+        ):
+            return i
     return None
+
+
+def _anchor_position(
+    lines: list[str], before: str | None, after: str | None
+) -> int | None:
+    """Where in `lines` a dropped image goes: just before the line carrying the
+    text that followed it in the page, when the text before it is also in the
+    body (or there was none, or the image leads the body); failing that, just
+    after the line carrying the text that preceded it; nowhere (None) when the
+    body carries neither - the image followed something the extractor rejected."""
+    nxt = _line_with(lines, after)
+    prev = _line_with(lines, before)
+    if nxt is not None:
+        content_before = sum(
+            1 for line in lines[:nxt] if line.strip() and not line.startswith("<!--")
+        )
+        if before is None or prev is not None or content_before <= _LEAD_WINDOW_LINES:
+            return nxt
+    if before is None:
+        return 0
+    if prev is None:
+        return None
+    return prev + 1 if prev + 1 >= len(lines) or lines[prev + 1].strip() else prev + 2

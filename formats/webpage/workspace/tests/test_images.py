@@ -200,3 +200,43 @@ def test_image_after_text_the_extractor_rejected_is_rejected_with_it():
     md = "Real article prose that is long enough to anchor.\n"
     text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
     assert "image:" not in text and media == []
+
+
+def test_lead_picture_is_placed_by_the_caption_that_follows_it_not_the_header_author_link():
+    # Squarespace repeats the author above the title; the byline is body text
+    # below the picture. The picture goes before its caption, and the caption
+    # trafilatura left as loose prose folds into the annotation.
+    html = """<html><body><article>
+    <a href="/author">Christopher Sharp</a>
+    <h1>Newly Released Records Reveal Drone Incursions</h1>
+    <figure><img src="https://cdn.example/columbia.png" alt="" data-image-dimensions="1726x883">
+    <figcaption><em>Above: Columbia Generating Station, Washington</em></figcaption></figure>
+    <p>Written by <a href="/x">Kyle Warfel</a> and <a href="/y">Christopher Sharp</a> - 8 April 2026</p>
+    <p>Liberation Times has obtained records detailing drone incidents.</p>
+    </article></body></html>"""
+    md = (
+        "Above: Columbia Generating Station, Washington\n\n"
+        "Written by [Kyle Warfel](/x) and [Christopher Sharp](/y) - 8 April 2026\n\n"
+        "Liberation Times has obtained records detailing drone incidents.\n"
+    )
+    text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
+    assert text.startswith("<!--\nimage:\n  file: ")
+    assert '  caption: "Above: Columbia Generating Station, Washington"' in text
+    assert text.count("Above: Columbia Generating Station") == 1
+    assert text.index("-->") < text.index("Written by")
+
+
+def test_a_banner_whose_only_anchor_is_a_name_in_the_byline_is_left_out():
+    html = """<html><body><article>
+    <p>Written by <a href="/y">Christopher Sharp</a> - 8 April 2026</p>
+    <p>Liberation Times has obtained records detailing drone incidents.</p>
+    <p>Love our content and wish to support the website? donate through PayPal</p>
+    <img src="https://cdn.example/banner.jpg" width="1200" height="400">
+    <a href="/author"><strong>Christopher Sharp</strong></a>
+    </article></body></html>"""
+    md = (
+        "Written by [Christopher Sharp](/y) - 8 April 2026\n\n"
+        "Liberation Times has obtained records detailing drone incidents.\n"
+    )
+    text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
+    assert "image:" not in text and media == []

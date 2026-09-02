@@ -27,9 +27,14 @@ CURRENT_VERSIONS: dict[str, int] = {
     # v3: inline emphasis is unwrapped from the DOM before extraction. v2 bodies
     # carry trafilatura's mangled emphasis markers and, around every bold or
     # italic span, split paragraphs, re-ordered fragments and dropped clauses.
-    "web": 3,
+    # v4: an image the extractor dropped is placed by the text that follows it
+    # (its caption), and that caption folds into the annotation. v3 put a lead
+    # picture after the byline when the page header repeated the author's name.
+    "web": 4,
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
-    "ebook": 2,
+    # v3: chapter numbers are the printed ones, not the spine index; drop-cap
+    # first letters rejoined to their word; footnotes resolved to markers.
+    "ebook": 3,
     "audio": 1,
     "video": 1,
 }
