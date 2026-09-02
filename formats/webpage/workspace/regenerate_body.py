@@ -232,6 +232,12 @@ def _marker_replacement(m: re.Match) -> str:
     return ""
 
 
+def _tidy(text: str) -> str:
+    """Trailing whitespace off every line (the ingests commit hook trims it, so
+    the body written here must already match what lands in the repository)."""
+    return "\n".join(line.rstrip() for line in text.rstrip("\n").split("\n")) + "\n"
+
+
 def _write(record: Record, frontmatter: str, body: str) -> list[str]:
     content = f"---\n{frontmatter}\n---\n{body}"
     if not content.endswith("\n"):
@@ -290,7 +296,7 @@ def regenerate(
     )
     if article is None:
         return "SKIP extraction returned nothing"
-    new_body = article.text.rstrip("\n") + "\n"
+    new_body = _tidy(article.text)
     image_note = ""
     if not fetch_images:
         new_body, image_note = transplant_image_files(record.body, new_body)
