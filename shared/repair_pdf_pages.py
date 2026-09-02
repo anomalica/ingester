@@ -98,10 +98,10 @@ def main() -> int:
                 excluded.append(hexname)
                 continue
 
+            # Only the body's file_page digits change; the frontmatter (and so
+            # content_hash) is written back verbatim, so identity is preserved by
+            # construction.
             new_body = _renumber(body, page_count)
-            hash_before = _field(fm, "content_hash")
-            if _field(fm, "content_hash") != hash_before:  # frontmatter untouched
-                continue
             fixable.append((hexname, page_count))
             if args.apply:
                 path.write_text(f"---{fm}---{new_body}")
