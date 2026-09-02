@@ -34,3 +34,40 @@ def test_resequence_then_the_gate_is_clean():
     fixed, changed = _resequence_pages_sequential(misnumbered, 3)
     assert changed
     assert _impossible_page_sequence(fixed, 3) is None
+
+
+# Markers come in two notations: inline `<!-- file_page: 12 -->` and a block form
+# with file_page on its own line beside printed_page. A matcher keyed on the inline
+# punctuation is blind to the block form - the same confident-wrong-answer shape as
+# the bug itself - so the page logic must key on `file_page: N`, not the comment.
+
+_BLOCK = """<!--
+file_page: 1
+printed_page: 4
+-->
+one
+<!--
+file_page: 2
+printed_page: 5
+-->
+two"""
+
+
+def test_block_notation_is_seen_by_the_gate():
+    assert _impossible_page_sequence(_BLOCK, 2) is None
+    assert _impossible_page_sequence(_BLOCK.replace("file_page: 2", "file_page: 99"), 2)
+
+
+def test_mixed_notation_resequences_and_leaves_printed_page_alone():
+    mixed = (
+        "<!-- file_page: 76 -->\nA\n"
+        "<!--\nfile_page: 77\nprinted_page: 5\n-->\nB\n"
+        "<!-- file_page: 63 -->\nC"
+    )
+    fixed, changed = _resequence_pages_sequential(mixed, 3)
+    assert changed
+    import re
+
+    assert re.findall(r"file_page: (\d+)", fixed) == ["1", "2", "3"]
+    assert "printed_page: 5" in fixed  # printed_page is not a file_page marker
+    assert _impossible_page_sequence(fixed, 3) is None
