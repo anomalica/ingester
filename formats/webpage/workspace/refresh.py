@@ -176,7 +176,7 @@ def carried_words(frontmatter: str) -> str:
         m = re.search(rf"^{key}:\s*(.+)$", frontmatter, re.M)
         if m:
             parts.append(m.group(1))
-    block = re.search(r"^creators:\n((?:\s+-.*\n?)+)", frontmatter, re.M)
+    block = re.search(r"^creators:\n((?:\s*-.*\n?)+)", frontmatter, re.M)
     if block:
         parts.append(block.group(1))
     date = re.search(

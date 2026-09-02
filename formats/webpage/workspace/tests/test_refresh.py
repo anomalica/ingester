@@ -329,7 +329,7 @@ def test_a_refusal_is_stamped_on_the_record_and_a_later_success_clears_it(tmp_pa
 def test_a_dateline_or_byline_the_frontmatter_carries_is_not_lost(tmp_path):
     from refresh import carried_words
 
-    fm = FRONTMATTER.format(h="a" * 64, sh="b" * 64) + "\ncreators:\n  - Keith Kloor\n"
+    fm = FRONTMATTER.format(h="a" * 64, sh="b" * 64) + "\ncreators:\n- Keith Kloor\n"
     carried = carried_words(fm)
     old = "Keith Kloor\n\nApril 24, 2026\n\nThe article prose that stays.\n"
     new = "The article prose that stays.\n"
