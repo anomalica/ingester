@@ -10,10 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
-from dedup import find_by_source_id
+from dedup import find_by_source_hash, find_by_source_id
 from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
 from record import get_version, write_record
+from refresh import refresh_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
@@ -212,6 +213,43 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     )
 
     body = _render_body(book)
+
+    # The same EPUB bytes already have a live record: this is a re-extraction
+    # of one book, not a second record of it. With --force the record is
+    # refreshed IN PLACE under its existing identity (decision 0040); without,
+    # there is nothing to do.
+    existing = find_by_source_hash(store_dir, source_hash)
+    if existing is not None:
+        if not force:
+            print(
+                f"Skipping: this EPUB is already ingested as {existing.stem[:12]}... "
+                "(use --force to re-extract in place)",
+                file=sys.stderr,
+            )
+            return 0
+        outcome = refresh_record(
+            existing,
+            store_dir,
+            body,
+            asset_path,
+            media_type="ebook",
+            tool_version=_ebooklib_version(),
+        )
+        print(f"Refresh {existing.stem[:12]}...: {outcome.reason}", file=sys.stderr)
+        for note in outcome.notes:
+            print(f"  {note}", file=sys.stderr)
+        if outcome.reason.startswith("refused"):
+            return 1
+        if outcome.written and book.images:
+            refreshed = existing.read_text(encoding="utf-8")
+            media_dir = output_dir / "media" / existing.stem
+            media_dir.mkdir(parents=True, exist_ok=True)
+            for img in book.images:
+                name = f"{img.hash}.{img.ext}"
+                if f"  file: {name}" in refreshed:
+                    (media_dir / name).write_bytes(img.bytes)
+        return 0
+
     hex_hash = hash_string(body)
 
     if not force and store_exists(store_dir, hex_hash):
