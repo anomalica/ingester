@@ -129,9 +129,16 @@ def _annotation_words(m: re.Match) -> str:
     )
 
 
+# The lines of an annotation block that carry no prose - so a block whose
+# closing --> an edit lost is still not counted as words of the body.
+_ANNOTATION_LINE_RE = re.compile(r"^(?:<!--|-->|[a-z_]+:|  file: .*)\s*$", re.M)
+
+
 def word_bag(text: str) -> Counter:
     text = _LEADING_HEADING_RE.sub("", text, count=1)
     text = _ANNOTATION_RE.sub(_annotation_words, text)
+    text = _ANNOTATION_LINE_RE.sub("", text)
+    text = re.sub(r"^  (?:alt|caption): ", "", text, flags=re.M)
     text = _INLINE_MARKER_RE.sub("", text)
     text = _LINK_RE.sub(r"\1", text)
     return Counter(re.findall(r"[^\W_]+", text.lower()))

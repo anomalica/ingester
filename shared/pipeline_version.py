@@ -30,7 +30,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # v4: an image the extractor dropped is placed by the text that follows it
     # (its caption), and that caption folds into the annotation. v3 put a lead
     # picture after the byline when the page header repeated the author's name.
-    "web": 4,
+    # v5: anchors are whole blocks of text (a caption of short link fragments
+    # is one line), so a lead picture is placed by its caption, not dropped.
+    "web": 5,
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
     # v3: chapter numbers are the printed ones, not the spine index; drop-cap
     # first letters rejoined to their word; footnotes resolved to markers.

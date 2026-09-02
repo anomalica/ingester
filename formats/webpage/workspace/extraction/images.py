@@ -245,28 +245,56 @@ def _is_tiny(width: int | None, height: int | None) -> bool:
     return any(v is not None and v < _MIN_CONTENT_PX for v in (width, height))
 
 
+_BLOCK_TAGS = (
+    "p",
+    "figcaption",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+    "blockquote",
+    "td",
+    "dt",
+    "dd",
+    "pre",
+    "div",
+)
+
+
 def _anchor_text(img_tag, after: bool = False) -> str | None:
-    """The nearest text before (or after) the image in document order that is
-    long enough to be found again in the extracted body; None when there is
-    none. The page title is not in the body (it lives in frontmatter), so an
-    h1 cannot place anything: a lead picture under the title has, for
-    placement, nothing before it."""
+    """The text of the nearest block before (or after) the image in document
+    order that is long enough to be found again in the extracted body; None
+    when there is none. Whole blocks, not text nodes: a caption written as
+    "Photo by <a>Heidi Kaden</a> on <a>Unsplash</a>" is four short fragments
+    and one twelve-word line. The page title is not in the body (it lives in
+    frontmatter), so an h1 cannot place anything: a lead picture under the
+    title has, for placement, nothing before it."""
     nodes = (
         img_tag.find_all_next(string=True)
         if after
         else img_tag.find_all_previous(string=True)
     )
+    seen: set[int] = set()
     for node in nodes:
         parent = getattr(node, "parent", None)
-        if parent is not None and parent.name in (
-            "script",
-            "style",
-            "noscript",
-            "h1",
-            "title",
-        ):
+        if parent is None or parent.name in ("script", "style", "noscript"):
             continue
-        text = " ".join(str(node).split())
+        if not str(node).strip():
+            continue  # whitespace between blocks would elect its wrapper div
+        block = (
+            parent if parent.name in _BLOCK_TAGS else parent.find_parent(_BLOCK_TAGS)
+        )
+        if block is None or id(block) in seen:
+            continue
+        seen.add(id(block))
+        if block.name in ("h1", "title") or block.find("h1") is not None:
+            continue
+        if img_tag in block.descendants:
+            continue  # the figure the image sits in is not text beside it
+        text = " ".join(block.get_text(" ", strip=True).split())
         if len(text) >= _MIN_ANCHOR_CHARS:
             return text
     return None

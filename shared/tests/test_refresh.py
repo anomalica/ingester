@@ -101,7 +101,7 @@ def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     assert "**" not in text
     assert "“grave concerns” that the death appears “suspicious”" in text
     assert "date_extracted: 2026-08-13" not in text
-    assert "  pipeline_version: 4" in text
+    assert "  pipeline_version: 5" in text
     assert "  version: d4f18fe" not in text
 
 
@@ -198,7 +198,7 @@ def test_port_markers_wraps_the_merged_paragraph():
 def test_restamp_inserts_pipeline_version_when_absent():
     fm = 'processing:\n  handler: webpage\n  version: abc\n  tools:\n    - name: trafilatura\n      version: "2.1.0"'
     out = restamp(fm, "a" * 64, None, media_type="web", tool_version="2.2.0")
-    assert "processing:\n  pipeline_version: 4\n  handler: webpage" in out
+    assert "processing:\n  pipeline_version: 5\n  handler: webpage" in out
     assert 'version: "2.2.0"' in out
     assert "review_carryover" not in out
 
@@ -309,3 +309,12 @@ def test_carry_review_work_returns_the_carried_body_or_a_refusal():
         OLD_BODY, "Written by Christopher Sharp.\n", "", reviewed=True
     )
     assert carry.refused and carry.refused.startswith("refused")
+
+
+def test_a_broken_image_comment_is_not_counted_as_prose():
+    old = (
+        "Prose that stays here.\n\n<!--\nimage:\n  file: fe7450b10949.gif\n"
+        '  alt: "Video player loading"\n<!-- irrelevant: start -->\n\nFooter\n\n<!-- irrelevant: end -->\n'
+    )
+    new = 'Prose that stays here.\n\n<!--\nimage:\n  file: abc.gif\n  alt: "Video player loading"\n-->\n'
+    assert words_gone(old, new) == {}

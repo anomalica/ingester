@@ -240,3 +240,23 @@ def test_a_banner_whose_only_anchor_is_a_name_in_the_byline_is_left_out():
     )
     text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
     assert "image:" not in text and media == []
+
+
+def test_a_caption_of_short_link_fragments_still_anchors_the_lead_picture():
+    html = """<html><body><article>
+    <div class="meta"><a href="/author">Christopher Sharp</a> <time>Apr 24</time></div>
+    <h1>Late Air Force Officer Linked To Alleged Legacy UFO Program</h1>
+    <figure><img src="https://cdn.example/hero.jpg" alt="" data-image-dimensions="1500x1000">
+    <figcaption>Photo by <a href="/hk">Heidi Kaden</a> on <a href="/u">Unsplash</a></figcaption></figure>
+    <p>Written by <a href="/cs">Christopher Sharp</a> - 24 April 2026</p>
+    <p>The late U.S. Air Force intelligence officer Matthew Sullivan died in 2024.</p>
+    </article></body></html>"""
+    md = (
+        "Photo by [Heidi Kaden](/hk) on [Unsplash](/u)\n\n"
+        "Written by [Christopher Sharp](/cs) - 24 April 2026\n\n"
+        "The late U.S. Air Force intelligence officer Matthew Sullivan died in 2024.\n"
+    )
+    text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
+    assert text.startswith("<!--\nimage:\n  file: ")
+    assert '  caption: "Photo by Heidi Kaden on Unsplash"' in text
+    assert text.index("-->") < text.index("Written by")
