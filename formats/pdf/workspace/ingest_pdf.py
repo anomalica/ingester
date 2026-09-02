@@ -132,6 +132,48 @@ def _separate_braces_in_math(content: str) -> str:
     return _MATH_SPAN.sub(fix, content)
 
 
+def _carry_review_work(existing_record: Path, content: str) -> str:
+    """A --force re-extraction rewrites the record in place (its path is the
+    source hash). Carry everything a human added to the stored body onto the
+    fresh one - irrelevant regions, inline markers, media files - and refuse,
+    stamping the record and exiting 1, rather than lose a reviewer's work or
+    the record's prose. A reviewed record is flagged review_carryover."""
+    from shared.refresh import (
+        carried_words,
+        carry_review_work,
+        review_carryover_block,
+        split_record,
+        stamp_refusal,
+    )
+
+    old_split = split_record(existing_record.read_text(encoding="utf-8"))
+    new_split = split_record(content)
+    if old_split is None or new_split is None:
+        return content
+    old_frontmatter, old_body = old_split
+    new_frontmatter, new_body = new_split
+    reviewed = existing_record.with_suffix(".review.json").exists()
+    carry = carry_review_work(
+        old_body, new_body, carried_words(old_frontmatter), reviewed
+    )
+    print(f"Refresh {existing_record.stem[:12]}...: ", file=sys.stderr, end="")
+    if carry.refused:
+        print(carry.refused, file=sys.stderr)
+        for note in carry.notes:
+            print(f"  {note}", file=sys.stderr)
+        stamp_refusal(existing_record, carry.refused)
+        sys.exit(1)
+    print("re-extracted in place", file=sys.stderr)
+    for note in carry.notes:
+        print(f"  {note}", file=sys.stderr)
+    if reviewed:
+        new_frontmatter += "\n" + "\n".join(
+            review_carryover_block(existing_record.stem, carry.prose_moved)
+        )
+        print("  reviewed record: review_carryover stamped", file=sys.stderr)
+    return f"---\n{new_frontmatter}\n---\n{carry.body}"
+
+
 def _preserve_identity(content: str, preserved: dict) -> str:
     """Override the model's re-derived title/date_published with the values already
     stored for this record, on a re-ingest. A re-extraction must not rename or
@@ -938,6 +980,8 @@ def main():
         source_type=record_source_type,
     )
     content = _preserve_identity(content, preserved)
+    if existing_record.exists():
+        content = _carry_review_work(existing_record, content)
 
     # Surface any model-emitted frontmatter field the re-extraction silently dropped
     # that the prior version had. Identity fields (title, date_published) are restored
