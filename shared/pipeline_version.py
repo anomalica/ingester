@@ -40,7 +40,10 @@ CURRENT_VERSIONS: dict[str, int] = {
     # first letters rejoined to their word; footnotes resolved to markers.
     # v4: a dedicated notes document is dropped only once its notes were pulled
     # into the citing chapters; v3 dropped it on the strength of a few links.
-    "ebook": 4,
+    # v5: a document nothing was pulled from is never dropped as spent, and a
+    # notes document under a Text/ prefix is found by its bare name (v4 dropped
+    # six chapters of one book on a failed lookup).
+    "ebook": 5,
     "audio": 1,
     "video": 1,
 }
