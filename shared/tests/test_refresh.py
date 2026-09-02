@@ -342,3 +342,10 @@ def test_a_refresh_that_moves_no_content_line_leaves_the_review_standing(tmp_pat
     assert outcome.written, outcome.reason
     assert "review_carryover:\n" not in record.read_text()
     assert any("left standing" in n for n in outcome.notes)
+
+
+def test_renumbered_footnotes_and_roman_page_numbers_are_not_lost_words():
+    old = "As Vallee2 argued, iii\n\nand Lucas3 agreed. xiv\n"
+    new = "As Vallee[^37] argued,\n\nand Lucas[^38] agreed.\n"
+    assert words_gone(old, new) == {}
+    assert words_gone("As Vallee2 argued.\n", "As argued.\n") == {"vallee2": 1}

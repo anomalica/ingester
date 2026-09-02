@@ -73,6 +73,8 @@ _PAIRED_MARKER_RE = re.compile(
 # A stored token at least this long whose letters run unbroken through the
 # fresh prose is a jam of words, not a word that vanished.
 _JAM_MIN_CHARS = 5
+_FUSED_NOTE_RE = re.compile(r"^([a-z]{3,})\d{1,3}$")
+_ROMAN_RE = re.compile(r"^[ivxlcdm]{1,8}$")
 # Squashed characters of context used to find where a marker sat.
 _CONTEXT_CHARS = (24, 16, 8)
 
@@ -222,13 +224,22 @@ def words_gone(old_body: str, new_body: str, carried: str = "") -> Counter:
     old = word_bag(_without_irrelevant(old_body))
     new = word_bag(new_body) + word_bag(carried)
     new_letters = _squash(_ANNOTATION_RE.sub(_annotation_words, new_body))
-    return Counter(
-        {
-            w: n
-            for w, n in old.items()
-            if w not in new and not (len(w) >= _JAM_MIN_CHARS and w in new_letters)
-        }
-    )
+
+    def present(w: str) -> bool:
+        if w in new:
+            return True
+        if len(w) >= _JAM_MIN_CHARS and w in new_letters:
+            return True
+        # A word with a note number fused on ("vallee2") whose note the fresh
+        # extraction numbered afresh ("Vallee[^37]"): the word is still there.
+        stem = _FUSED_NOTE_RE.match(w)
+        if stem and stem.group(1) in new:
+            return True
+        # Bare roman numerals: front-matter page numbers the fresh extraction
+        # now writes as printed_page markers rather than text.
+        return bool(_ROMAN_RE.fullmatch(w))
+
+    return Counter({w: n for w, n in old.items() if not present(w)})
 
 
 # --- what carries over --------------------------------------------------------

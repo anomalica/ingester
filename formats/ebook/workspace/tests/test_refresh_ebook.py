@@ -59,5 +59,7 @@ def test_reingesting_the_same_epub_refreshes_the_record_in_place(tmp_path):
     assert list((output / "store").glob("*.md")) == [record]
     after = record.read_text()
     assert "<!-- irrelevant: start -->" in after
-    assert "  pipeline_version: 3" in after
+    from pipeline_version import current_version
+
+    assert f"  pipeline_version: {current_version('ebook')}" in after
     assert not (output / "store" / "v1").exists()
