@@ -166,3 +166,66 @@ def test_extract_article_keeps_non_title_leading_heading(mock_extract):
 
     result = extract_article("<html></html>", "https://example.com")
     assert result.text.lstrip().startswith("# Section One")
+
+
+EMPHASIS_HTML = """
+<html>
+<head>
+    <meta property="og:title" content="Late Officer Linked To Program">
+    <meta property="og:site_name" content="Liberation Times | Reimagining Old News">
+</head>
+<body>
+<article>
+<h1>Late Officer Linked To Program</h1>
+<p>Burlison <strong>has said</strong> he has <em>“grave concerns”</em> that the death appears <b>“suspicious”</b>, suggesting the officer may have been silenced before he could reveal what he knew.</p>
+<p><strong>“There are not many people you can share that with,”</strong> he said. <strong>“But those who carry that weight know it and understand it.”</strong></p>
+<h2>Background to the case</h2>
+<p>He served at a number of high-level institutions and deployed twice, and his obituary states that he earned a decoration for valour during the campaign.</p>
+</article>
+</body>
+</html>
+"""
+
+
+def test_extract_article_carries_no_emphasis_markers():
+    result = extract_article(EMPHASIS_HTML, "https://www.liberationtimes.com/home/x")
+    assert "*" not in result.text
+    assert "_" not in result.text
+
+
+def test_extract_article_keeps_prose_order_and_spacing_around_emphasis():
+    result = extract_article(EMPHASIS_HTML, "https://www.liberationtimes.com/home/x")
+    assert (
+        "Burlison has said he has “grave concerns” that the death appears "
+        "“suspicious”, suggesting the officer" in result.text
+    )
+    assert (
+        "“There are not many people you can share that with,” he said. "
+        "“But those who carry that weight know it and understand it.”" in result.text
+    )
+
+
+def test_extract_article_keeps_headings_and_paragraph_breaks():
+    result = extract_article(EMPHASIS_HTML, "https://www.liberationtimes.com/home/x")
+    assert "## Background to the case" in result.text
+    paragraphs = [p for p in result.text.split("\n\n") if p.strip()]
+    assert len(paragraphs) >= 4
+
+
+def test_extract_article_drops_title_heading_carrying_site_suffix():
+    # The page title arrives with the site's chrome appended; the body's first
+    # heading is the bare title. Both name the same thing - the heading goes.
+    html = EMPHASIS_HTML.replace(
+        'content="Late Officer Linked To Program"',
+        'content="Late Officer Linked To Program — Liberation Times | Reimagining Old News"',
+    )
+    result = extract_article(html, "https://www.liberationtimes.com/home/x")
+    assert not result.text.lstrip().startswith("# Late Officer")
+
+
+def test_unwrap_emphasis_keeps_text_and_tails():
+    from extraction.trafilatura_ext import unwrap_emphasis
+
+    out = unwrap_emphasis("<p>He <strong>said</strong> hi <em>there</em>.</p>")
+    assert "<strong>" not in out and "<em>" not in out
+    assert "He said hi there." in out
