@@ -157,9 +157,9 @@ def test_reviewed_record_tolerates_no_loss_outside_irrelevant_regions(tmp_path):
     outcome = refresh_record(record, store, FRESH_BODY, source)
     assert outcome.written, outcome.reason
     store, record, source = _store(tmp_path / "second", reviewed=True)
-    trimmed = FRESH_BODY.replace(" - 24 April 2026", "")
+    trimmed = FRESH_BODY.replace(" may have been silenced", "")
     outcome = refresh_record(record, store, trimmed, source)
-    assert not outcome.written and "april" in outcome.reason
+    assert not outcome.written and "silenced" in outcome.reason
 
 
 def test_words_gone_ignores_reordering_captions_and_irrelevant_regions():
@@ -314,13 +314,24 @@ def test_a_jammed_token_is_not_a_lost_word():
 
 def test_a_refusal_is_stamped_on_the_record_and_a_later_success_clears_it(tmp_path):
     store, record, source = _store(tmp_path, reviewed=True)
-    trimmed = FRESH_BODY.replace(" - 24 April 2026", "")
+    trimmed = FRESH_BODY.replace(" may have been silenced", "")
     outcome = refresh_record(record, store, trimmed, source)
     assert not outcome.written
     text = record.read_text()
     assert "refresh_refused:\n  at: " in text
-    assert '  reason: "refused: ' in text and "april" in text
+    assert '  reason: "refused: ' in text and "silenced" in text
     assert text.endswith(OLD_BODY)  # body untouched
     outcome = refresh_record(record, store, FRESH_BODY, source)
     assert outcome.written, outcome.reason
     assert "refresh_refused" not in record.read_text()
+
+
+def test_a_dateline_or_byline_the_frontmatter_carries_is_not_lost(tmp_path):
+    from refresh import carried_words
+
+    fm = FRONTMATTER.format(h="a" * 64, sh="b" * 64) + "\ncreators:\n  - Keith Kloor\n"
+    carried = carried_words(fm)
+    old = "Keith Kloor\n\nApril 24, 2026\n\nThe article prose that stays.\n"
+    new = "The article prose that stays.\n"
+    assert words_gone(old, new, carried) == {}
+    assert words_gone(old, new) != {}
