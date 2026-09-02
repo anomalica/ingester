@@ -30,7 +30,7 @@ from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
 from extraction.trafilatura_ext import extract_article
-from refresh import refresh_record, trafilatura_version
+from refresh import installed_version, refresh_record
 
 
 _WAYBACK_RE = re.compile(r"web\.archive\.org/web/(\d{4})(\d{2})(\d{2})\d*/", re.I)
@@ -189,7 +189,7 @@ def _build_frontmatter(
     lines.append(f"  pipeline_version: {current_version('web')}")
     lines.append("  tools:")
     lines.append("    - name: trafilatura")
-    lines.append(f'      version: "{trafilatura_version()}"')
+    lines.append(f'      version: "{installed_version("trafilatura")}"')
     lines.append("      role: extraction")
     lines.append("      provider: local")
     lines.append("---")
@@ -277,7 +277,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
                 file=sys.stderr,
             )
             return 0
-        outcome = refresh_record(existing, store_dir, body_text, asset_path)
+        outcome = refresh_record(
+            existing,
+            store_dir,
+            body_text,
+            asset_path,
+            media_type="web",
+            tool_version=installed_version("trafilatura"),
+            extra_required=["source_url"],
+        )
         print(f"Refresh {existing.stem[:12]}...: {outcome.reason}", file=sys.stderr)
         for note in outcome.notes:
             print(f"  {note}", file=sys.stderr)

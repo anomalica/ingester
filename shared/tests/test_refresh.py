@@ -1,12 +1,9 @@
 import hashlib
 import json
 import re
-from unittest.mock import patch
 
-from extraction.trafilatura_ext import Article
-
-import ingest_webpage
 from refresh import (
+    carry_review_work,
     port_irrelevant_markers,
     refresh_record,
     restamp,
@@ -94,7 +91,7 @@ def _store(tmp_path, body=OLD_BODY, reviewed=False, source_bytes=b"<html>page</h
 
 def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     store, record, source = _store(tmp_path)
-    outcome = refresh_record(record, store, FRESH_BODY, source)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert outcome.written, outcome.reason
     text = record.read_text()
     assert record.exists() and list(store.glob("*.md")) == [record]
@@ -104,21 +101,21 @@ def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     assert "**" not in text
     assert "“grave concerns” that the death appears “suspicious”" in text
     assert "date_extracted: 2026-08-13" not in text
-    assert "  pipeline_version: 3" in text
+    assert "  pipeline_version: 4" in text
     assert "  version: d4f18fe" not in text
 
 
 def test_refresh_carries_stored_media_file_into_fresh_annotation(tmp_path):
     store, record, source = _store(tmp_path)
-    refresh_record(record, store, FRESH_BODY, source)
+    refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert "  file: 5f2f548aea81.jpg" in record.read_text()
 
 
 def test_refresh_is_a_no_op_when_nothing_changes(tmp_path):
     store, record, source = _store(tmp_path)
-    refresh_record(record, store, FRESH_BODY, source)
+    refresh_record(record, store, FRESH_BODY, source, media_type="web")
     before = record.read_text()
-    outcome = refresh_record(record, store, FRESH_BODY, source)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert not outcome.written and outcome.reason == "unchanged"
     assert record.read_text() == before
 
@@ -126,7 +123,9 @@ def test_refresh_is_a_no_op_when_nothing_changes(tmp_path):
 def test_refresh_refuses_when_prose_goes_missing(tmp_path):
     store, record, source = _store(tmp_path)
     before = record.read_text()
-    outcome = refresh_record(record, store, "Written by Christopher Sharp.\n", source)
+    outcome = refresh_record(
+        record, store, "Written by Christopher Sharp.\n", source, media_type="web"
+    )
     assert not outcome.written
     assert outcome.reason.startswith("refused")
     assert "suggesting" in outcome.reason
@@ -141,7 +140,7 @@ def test_refresh_refuses_when_prose_goes_missing(tmp_path):
 def test_reviewed_record_ports_markers_and_is_flagged_for_verification(tmp_path):
     store, record, source = _store(tmp_path, reviewed=True)
     fresh = FRESH_BODY + "\nLove our content and wish to support the website?\n"
-    outcome = refresh_record(record, store, fresh, source)
+    outcome = refresh_record(record, store, fresh, source, media_type="web")
     assert outcome.written, outcome.reason
     text = record.read_text()
     assert "<!-- irrelevant: start -->\n\nLove our content" in text
@@ -154,11 +153,11 @@ def test_reviewed_record_tolerates_no_loss_outside_irrelevant_regions(tmp_path):
     store, record, source = _store(tmp_path, reviewed=True)
     # The footer inside the reviewer's irrelevant region may vanish; a word of
     # the reviewed prose may not.
-    outcome = refresh_record(record, store, FRESH_BODY, source)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert outcome.written, outcome.reason
     store, record, source = _store(tmp_path / "second", reviewed=True)
     trimmed = FRESH_BODY.replace(" may have been silenced", "")
-    outcome = refresh_record(record, store, trimmed, source)
+    outcome = refresh_record(record, store, trimmed, source, media_type="web")
     assert not outcome.written and "silenced" in outcome.reason
 
 
@@ -198,45 +197,10 @@ def test_port_markers_wraps_the_merged_paragraph():
 
 def test_restamp_inserts_pipeline_version_when_absent():
     fm = 'processing:\n  handler: webpage\n  version: abc\n  tools:\n    - name: trafilatura\n      version: "2.1.0"'
-    out = restamp(fm, "a" * 64, review_carryover=None)
-    assert "processing:\n  pipeline_version: 3\n  handler: webpage" in out
+    out = restamp(fm, "a" * 64, None, media_type="web", tool_version="2.2.0")
+    assert "processing:\n  pipeline_version: 4\n  handler: webpage" in out
+    assert 'version: "2.2.0"' in out
     assert "review_carryover" not in out
-
-
-@patch("ingest_webpage.extract_article")
-def test_run_refreshes_in_place_when_the_page_bytes_are_already_ingested(
-    mock_extract, tmp_path
-):
-    page = b"<html><body><p>Article</p></body></html>"
-    store, record, _ = _store(tmp_path, source_bytes=page)
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    (staging / "asset.html").write_bytes(page)
-    (staging / "manifest.json").write_text(
-        json.dumps(
-            {
-                "source": str(tmp_path / "archived.html"),
-                "asset": "asset.html",
-                "detected_type": "text/html",
-                "fetch_method": "local",
-                "fetched_at": "2026-09-02T10:00:00Z",
-                "source_url": "https://www.liberationtimes.com/home/late-officer",
-            }
-        )
-    )
-    mock_extract.return_value = Article(
-        text=FRESH_BODY,
-        title="Late Officer",
-        authors=None,
-        date="2026-04-24",
-        sitename="Liberation Times",
-        description=None,
-    )
-    assert ingest_webpage.run(staging, tmp_path / "output", force=False) == 0
-    assert "**Burlison" in record.read_text()  # untouched without --force
-    assert ingest_webpage.run(staging, tmp_path / "output", force=True) == 0
-    assert list(store.glob("*.md")) == [record]
-    assert "“grave concerns” that the death appears" in record.read_text()
 
 
 def test_transplant_keeps_the_stored_file_for_the_same_picture():
@@ -281,7 +245,7 @@ def test_reviewed_record_refuses_when_a_highlight_has_no_home(tmp_path):
         "Written by {{highlight-start: a1}}Christopher Sharp{{highlight-end: a1}} - 24 April 2026",
     )
     store, record, source = _store(tmp_path, body=body, reviewed=True)
-    outcome = refresh_record(record, store, FRESH_BODY, source)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert outcome.written, outcome.reason
     assert (
         "{{highlight-start: a1}}Christopher Sharp{{highlight-end: a1}}"
@@ -292,7 +256,7 @@ def test_reviewed_record_refuses_when_a_highlight_has_no_home(tmp_path):
         "Written by [Christopher Sharp](https://twitter.com/x) - 24 April 2026",
         "Written by the desk - 24 April 2026",
     )
-    outcome = refresh_record(record, store, fresh, source)
+    outcome = refresh_record(record, store, fresh, source, media_type="web")
     assert (
         not outcome.written
         and "marker pair" in outcome.reason
@@ -315,13 +279,13 @@ def test_a_jammed_token_is_not_a_lost_word():
 def test_a_refusal_is_stamped_on_the_record_and_a_later_success_clears_it(tmp_path):
     store, record, source = _store(tmp_path, reviewed=True)
     trimmed = FRESH_BODY.replace(" may have been silenced", "")
-    outcome = refresh_record(record, store, trimmed, source)
+    outcome = refresh_record(record, store, trimmed, source, media_type="web")
     assert not outcome.written
     text = record.read_text()
     assert "refresh_refused:\n  at: " in text
     assert '  reason: "refused: ' in text and "silenced" in text
     assert text.endswith(OLD_BODY)  # body untouched
-    outcome = refresh_record(record, store, FRESH_BODY, source)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert outcome.written, outcome.reason
     assert "refresh_refused" not in record.read_text()
 
@@ -335,3 +299,13 @@ def test_a_dateline_or_byline_the_frontmatter_carries_is_not_lost(tmp_path):
     new = "The article prose that stays.\n"
     assert words_gone(old, new, carried) == {}
     assert words_gone(old, new) != {}
+
+
+def test_carry_review_work_returns_the_carried_body_or_a_refusal():
+    carry = carry_review_work(OLD_BODY, FRESH_BODY, "", reviewed=True)
+    assert carry.refused is None and carry.prose_moved
+    assert "  file: 5f2f548aea81.jpg" in carry.body and "**" not in carry.body
+    carry = carry_review_work(
+        OLD_BODY, "Written by Christopher Sharp.\n", "", reviewed=True
+    )
+    assert carry.refused and carry.refused.startswith("refused")

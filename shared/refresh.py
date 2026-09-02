@@ -1,12 +1,15 @@
-"""In-place refresh of a live web record from its own archived page.
+"""In-place refresh of a live record from its own archived source.
 
-A web record's `content_hash` is a frozen ingest-time identity (the filename),
-not a live body hash, so a body re-extracted from the SAME source bytes keeps
-its identity: `by-name/` symlinks, digests, review and verification sidecars
-all still resolve (decision 0040, "supersession vs in-place re-extraction").
-This is how an extractor improvement reaches records already in the store: the
-scheduler hands `./ingest --force --source-url URL records/{source_hash}.html`
-to the handler, which lands here instead of minting a second record.
+A record's `content_hash` is a frozen ingest-time identity (the filename), so a
+body re-extracted from the SAME source bytes keeps its identity: `by-name/`
+symlinks, digests, review and verification sidecars all still resolve
+(decision 0040, "supersession vs in-place re-extraction"). This is how an
+extractor improvement reaches records already in the store: the scheduler
+hands `./ingest --force --source-url URL records/{source_hash}.{ext}` to the
+handler, which lands here instead of minting a second record. Web and ebook
+records (body-hashed, found by `source_hash`) use `refresh_record`; the PDF
+handler, whose record path already IS the source hash, uses `carry_review_work`
+on the body it re-extracted and builds its own frontmatter.
 
 What survives a refresh, and how:
 - the frontmatter, apart from the extraction stamps (`date_extracted`,
@@ -38,13 +41,21 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from pipeline_version import current_version, write_manifest
-from quality import stamp_record
-from record import get_version
-from validator import validate
-from verification import build_sidecar, needs_sidecar, write_sidecar
-
-MEDIA_TYPE = "web"
+# Both import conventions in this repo: flat (`pipeline_version`, shared/ on
+# PYTHONPATH - web, ebook, audio) and `shared.pipeline_version` (the pdf
+# handler, via a shared/ symlink in its workspace).
+try:
+    from pipeline_version import current_version, write_manifest
+    from quality import stamp_record
+    from record import get_version
+    from validator import validate
+    from verification import build_sidecar, needs_sidecar, write_sidecar
+except ModuleNotFoundError:
+    from shared.pipeline_version import current_version, write_manifest
+    from shared.quality import stamp_record
+    from shared.record import get_version
+    from shared.validator import validate
+    from shared.verification import build_sidecar, needs_sidecar, write_sidecar
 
 _ANNOTATION_RE = re.compile(r"<!--.*?-->", re.S)
 _IMAGE_BLOCK_RE = re.compile(r"<!--\nimage:\n(.*?)-->", re.S)
@@ -83,9 +94,9 @@ class Outcome:
     notes: list[str] = field(default_factory=list)
 
 
-def trafilatura_version() -> str:
+def installed_version(package: str) -> str:
     try:
-        return version("trafilatura")
+        return version(package)
     except PackageNotFoundError:
         return "unknown"
 
@@ -513,11 +524,28 @@ def stamp_refusal(record_path: Path, reason: str) -> None:
     record_path.write_text(f"---\n{frontmatter}\n---\n{body}", encoding="utf-8")
 
 
-def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) -> str:
+def review_carryover_block(content_hash: str, had_text_edits: bool) -> list[str]:
+    """The frontmatter lines that tell the workbench a review was carried onto
+    re-processed text and needs another look."""
+    return [
+        "review_carryover:",
+        f"  at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"  from: {content_hash}",
+        f"  had_text_edits: {'true' if had_text_edits else 'false'}",
+    ]
+
+
+def restamp(
+    frontmatter: str,
+    content_hash: str,
+    review_carryover: bool | None,
+    media_type: str,
+    tool_version: str | None = None,
+) -> str:
     """The stored frontmatter with the extraction stamps brought up to date:
-    date_extracted, processing (version, pipeline_version, tool version) and,
-    when `review_carryover` is not None, a review_carryover block whose
-    had_text_edits is that value."""
+    date_extracted, processing (version, pipeline_version, the tool's version
+    when given) and, when `review_carryover` is not None, a review_carryover
+    block whose had_text_edits is that value."""
     now = datetime.now(timezone.utc)
     lines = frontmatter.split("\n")
     in_processing = False
@@ -532,15 +560,15 @@ def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) 
         elif in_processing and line.startswith("  version:"):
             lines[i] = f"  version: {get_version()}"
         elif in_processing and line.startswith("  pipeline_version:"):
-            lines[i] = f"  pipeline_version: {current_version(MEDIA_TYPE)}"
+            lines[i] = f"  pipeline_version: {current_version(media_type)}"
             has_pipeline_version = True
-        elif in_processing and line.startswith("      version:"):
-            lines[i] = f'      version: "{trafilatura_version()}"'
+        elif in_processing and tool_version and line.startswith("      version:"):
+            lines[i] = f'      version: "{tool_version}"'
     if not has_pipeline_version:
         for i, line in enumerate(lines):
             if line.startswith("processing:"):
                 lines.insert(
-                    i + 1, f"  pipeline_version: {current_version(MEDIA_TYPE)}"
+                    i + 1, f"  pipeline_version: {current_version(media_type)}"
                 )
                 break
     frontmatter = _drop_block("\n".join(lines), "refresh_refused")
@@ -548,12 +576,7 @@ def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) 
         frontmatter = _replace_block(
             frontmatter,
             "review_carryover",
-            [
-                "review_carryover:",
-                f"  at: {now.strftime('%Y-%m-%dT%H:%M:%SZ')}",
-                f"  from: {content_hash}",
-                f"  had_text_edits: {'true' if review_carryover else 'false'}",
-            ],
+            review_carryover_block(content_hash, review_carryover),
         )
     return frontmatter
 
@@ -575,21 +598,23 @@ def _reviewed(record_path: Path) -> bool:
     return record_path.with_suffix(".review.json").exists()
 
 
-def refresh_record(
-    record_path: Path, store_dir: Path, fresh_body: str, source_path: Path
-) -> Outcome:
-    """Replace the body of the live record at `record_path` with `fresh_body`,
-    keeping its identity and everything a human added. See the module doc for
-    what carries over and what refuses."""
-    text = record_path.read_text(encoding="utf-8")
-    split = split_record(text)
-    if split is None:
-        return Outcome(False, f"refused: {record_path.name} has no frontmatter")
-    frontmatter, old_body = split
-    content_hash = record_path.stem
-    reviewed = _reviewed(record_path)
-    notes: list[str] = []
+@dataclass
+class Carry:
+    body: str
+    refused: str | None
+    notes: list[str]
+    prose_moved: bool
 
+
+def carry_review_work(
+    old_body: str, fresh_body: str, carried: str, reviewed: bool
+) -> Carry:
+    """The fresh body with everything a human added to the stored one carried
+    onto it - stored media files, irrelevant regions, inline markers - or a
+    refusal when carrying it would lose the reviewer's work or the record's
+    prose. `carried` is text the record holds outside its body (see
+    carried_words) that does not count as lost."""
+    notes: list[str] = []
     new_body, image_note = transplant_image_files(old_body, tidy(fresh_body))
     if image_note:
         notes.append(image_note)
@@ -605,16 +630,17 @@ def refresh_record(
             f"inline markers: {placed} re-placed"
             + (f", {dropped_pairs} pair(s) without a home" if dropped_pairs else "")
         )
+    new_body = tidy(new_body)
     if dropped_pairs and reviewed:
-        return _refuse(
-            record_path,
+        return Carry(
+            new_body,
             f"refused: {dropped_pairs} of the reviewer's marker pair(s) have no home "
             "in the fresh extraction",
             notes,
+            True,
         )
-    new_body = tidy(new_body)
 
-    gone = words_gone(old_body, new_body, carried_words(frontmatter))
+    gone = words_gone(old_body, new_body, carried)
     lost = sum(gone.values())
     if reviewed:
         allowed = 0
@@ -627,33 +653,69 @@ def refresh_record(
     if lost > allowed:
         sample = " ".join(list(gone.elements())[:40])
         who = "a reviewed record keeps every word" if reviewed else f"bound {allowed}"
-        return _refuse(
-            record_path,
+        return Carry(
+            new_body,
             f"refused: {lost} word(s) of the stored body are absent from the fresh "
             f"extraction ({who}): {sample}",
             notes,
+            True,
         )
     if lost:
         notes.append(f"words no longer extracted: {lost} ({' '.join(gone.elements())})")
+    prose_moved = _squash(_without_irrelevant(old_body)) != _squash(
+        _without_irrelevant(new_body)
+    )
+    return Carry(new_body, None, notes, prose_moved)
+
+
+def refresh_record(
+    record_path: Path,
+    store_dir: Path,
+    fresh_body: str,
+    source_path: Path,
+    media_type: str,
+    tool_version: str | None = None,
+    extra_required: list[str] | None = None,
+) -> Outcome:
+    """Replace the body of the live record at `record_path` with `fresh_body`,
+    keeping its identity, its frontmatter and everything a human added. See
+    the module doc for what carries over and what refuses."""
+    text = record_path.read_text(encoding="utf-8")
+    split = split_record(text)
+    if split is None:
+        return Outcome(False, f"refused: {record_path.name} has no frontmatter")
+    frontmatter, old_body = split
+    content_hash = record_path.stem
+    reviewed = _reviewed(record_path)
+
+    carry = carry_review_work(
+        old_body, fresh_body, carried_words(frontmatter), reviewed
+    )
+    if carry.refused:
+        return _refuse(record_path, carry.refused, carry.notes)
+    new_body, notes = carry.body, carry.notes
 
     if new_body == old_body:
-        if _declared_pipeline_version(frontmatter) == current_version(MEDIA_TYPE):
+        if _declared_pipeline_version(frontmatter) == current_version(media_type):
             return Outcome(False, "unchanged", notes)
         # The body already matches; only the record's declared generation is
         # behind - bring the stamps up to date so it stops reading as stale.
-        stamped = restamp(frontmatter, content_hash, review_carryover=None)
+        stamped = restamp(frontmatter, content_hash, None, media_type, tool_version)
         record_path.write_text(
             stamp_record(f"---\n{stamped}\n---\n{new_body}"), encoding="utf-8"
         )
         write_manifest(store_dir)
         return Outcome(True, "body unchanged, stamps brought up to date", notes)
 
-    prose_moved = _squash(_without_irrelevant(old_body)) != _squash(new_body)
     stamped = restamp(
-        frontmatter, content_hash, review_carryover=prose_moved if reviewed else None
+        frontmatter,
+        content_hash,
+        carry.prose_moved if reviewed else None,
+        media_type,
+        tool_version,
     )
     content = stamp_record(f"---\n{stamped}\n---\n{new_body}")
-    result = validate(content, extra_required=["source_url"])
+    result = validate(content, extra_required=extra_required)
     if result.fixed:
         content = result.fixed
     notes.extend(f"validation: {w}" for w in result.warnings)
@@ -673,6 +735,6 @@ def refresh_record(
     if reviewed:
         notes.append(
             "reviewed record: review_carryover stamped"
-            + (" (prose moved - verify)" if prose_moved else "")
+            + (" (prose moved - verify)" if carry.prose_moved else "")
         )
     return Outcome(True, "refreshed in place", notes)
