@@ -13,9 +13,10 @@ ingester/
     ebook/            - ebook text extraction (planned)
   shared/             - utilities shared across format handlers
   staging/            - transient staging directories (gitignored)
-  output/             - extraction output (gitignored)
-    store/            - hash-named record files (source of truth)
-    records/          - human-readable symlinks
+  (records land in the sibling ../ingests/ repo, not here)
+    ingests/store/    - hash-named record files (source of truth)
+    ingests/by-name/  - human-readable symlinks
+    ../records/       - archived original source files
   test-corpus/        - test input files (gitignored, downloaded via justfile)
   docs/
     specs/            - format handler design specifications
@@ -31,7 +32,7 @@ ingester/
 ./ingest --force https://example.com/article    # re-process even if already in store
 ```
 
-The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in `output/store/` with a human-readable symlink in `output/records/`.
+The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in the sibling `ingests/` repo: record files in `ingests/store/` (the source of truth) and a human-readable symlink in `ingests/by-name/`; the original source file is archived in `../records/`.
 
 ## Record format
 
