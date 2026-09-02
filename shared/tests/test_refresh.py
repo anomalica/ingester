@@ -101,7 +101,7 @@ def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     assert "**" not in text
     assert "“grave concerns” that the death appears “suspicious”" in text
     assert "date_extracted: 2026-08-13" not in text
-    assert "  pipeline_version: 6" in text
+    assert "  pipeline_version: 7" in text
     assert "  version: d4f18fe" not in text
 
 
@@ -198,7 +198,7 @@ def test_port_markers_wraps_the_merged_paragraph():
 def test_restamp_inserts_pipeline_version_when_absent():
     fm = 'processing:\n  handler: webpage\n  version: abc\n  tools:\n    - name: trafilatura\n      version: "2.1.0"'
     out = restamp(fm, "a" * 64, None, media_type="web", tool_version="2.2.0")
-    assert "processing:\n  pipeline_version: 6\n  handler: webpage" in out
+    assert "processing:\n  pipeline_version: 7\n  handler: webpage" in out
     assert 'version: "2.2.0"' in out
     assert "review_carryover" not in out
 
@@ -349,3 +349,14 @@ def test_renumbered_footnotes_and_roman_page_numbers_are_not_lost_words():
     new = "As Vallee[^37] argued,\n\nand Lucas[^38] agreed.\n"
     assert words_gone(old, new) == {}
     assert words_gone("As Vallee2 argued.\n", "As argued.\n") == {"vallee2": 1}
+
+
+def test_uncaptioned_stored_annotations_with_no_fresh_counterpart_are_dropped():
+    old = "Prose.\n\n<!--\nimage:\n  file: thumb1.jpg\n-->\n\n<!--\nimage:\n  file: thumb2.jpg\n-->\n"
+    body, note = transplant_image_files(old, "Prose.\n")
+    assert "thumb" not in body and "2 uncaptioned dropped" in note
+    old2 = (
+        'Prose.\n\n<!--\nimage:\n  file: lead.jpg\n  caption: "Above: the plant"\n-->\n'
+    )
+    body, _ = transplant_image_files(old2, "Prose.\n")
+    assert "lead.jpg" in body

@@ -272,10 +272,12 @@ def transplant_image_files(old_body: str, new_body: str) -> tuple[str, str]:
     if not old_blocks:
         return new_body, ""
     if not new_matches:
-        return _append_blocks(new_body, old_blocks), (
-            f"images: {len(old_blocks)} stored annotation(s) appended - the fresh "
-            "extraction found none"
+        kept = [b for b in old_blocks if _image_key(b) != ("", "")]
+        note = (
+            f"images: the fresh extraction found none; {len(kept)} captioned stored "
+            f"annotation(s) appended, {len(old_blocks) - len(kept)} uncaptioned dropped"
         )
+        return (_append_blocks(new_body, kept) if kept else new_body), note
     keyed = [(_image_key(b), b) for b in old_blocks if _image_key(b) != ("", "")]
     keyless = [b for b in old_blocks if _image_key(b) == ("", "")]
     pairing: list[tuple[str | None, re.Match]] = []
@@ -289,11 +291,15 @@ def transplant_image_files(old_body: str, new_body: str) -> tuple[str, str]:
         elif keyless:
             hit = keyless.pop(0)
         pairing.append((hit, m))
-    remaining = [b for _, b in keyed] + keyless
+    # A stored annotation the fresh extraction has no counterpart for is kept
+    # only when it says something (an alt or a caption): a file-only block is
+    # the shape of furniture the extractor has since learned to reject, and
+    # nothing anchors it to any prose.
+    remaining = [b for _, b in keyed]
     dropped = sum(1 for b, m in pairing if b is None and not _image_file(m.group(1)))
     note = (
         f"images: {sum(1 for b, _ in pairing if b)} paired, {dropped} fresh dropped, "
-        f"{len(remaining)} stored appended"
+        f"{len(remaining)} stored appended, {len(keyless)} uncaptioned stored dropped"
     )
     out = []
     last = 0

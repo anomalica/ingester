@@ -36,3 +36,16 @@ def test_write_manifest_idempotent(tmp_path):
     first = (store / MANIFEST_NAME).read_text()
     write_manifest(store)
     assert (store / MANIFEST_NAME).read_text() == first
+
+
+def test_manifest_never_regresses_a_type(tmp_path):
+    from pipeline_version import CURRENT_VERSIONS, write_manifest
+
+    store = tmp_path / "store"
+    store.mkdir()
+    ahead = dict(CURRENT_VERSIONS)
+    ahead["web"] = CURRENT_VERSIONS["web"] + 3
+    (store / "_pipeline_versions.yaml").write_text(yaml.safe_dump(ahead))
+    written = yaml.safe_load(write_manifest(store).read_text())
+    assert written["web"] == CURRENT_VERSIONS["web"] + 3
+    assert written["ebook"] == CURRENT_VERSIONS["ebook"]

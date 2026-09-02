@@ -34,7 +34,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # is one line), so a lead picture is placed by its caption, not dropped.
     # v6: recirculation widgets ("Recommended Stories" with thumbnails) are
     # stripped before extraction.
-    "web": 6,
+    # v7: a file-only image annotation carried from an earlier generation with
+    # no counterpart in the fresh extraction is dropped, not appended.
+    "web": 7,
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
     # v3: chapter numbers are the printed ones, not the spine index; drop-cap
     # first letters rejoined to their word; footnotes resolved to markers.
@@ -66,5 +68,15 @@ def write_manifest(store_dir: Path) -> Path:
     """
     store_dir.mkdir(parents=True, exist_ok=True)
     path = store_dir / MANIFEST_NAME
-    path.write_text(yaml.safe_dump(CURRENT_VERSIONS, sort_keys=True))
+    # Never regress a type: a container that started before a bump still holds
+    # the old registry and would otherwise write it back over the new one.
+    versions = dict(CURRENT_VERSIONS)
+    try:
+        existing = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        existing = {}
+    for media_type, version in existing.items():
+        if isinstance(version, int) and version > versions.get(media_type, 0):
+            versions[media_type] = version
+    path.write_text(yaml.safe_dump(versions, sort_keys=True))
     return path
