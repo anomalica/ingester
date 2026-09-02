@@ -304,3 +304,17 @@ def test_a_jammed_token_is_not_a_lost_word():
         "The report came with executive approval.\n", "The report came with approval.\n"
     )
     assert gone == {"executive": 1}
+
+
+def test_a_refusal_is_stamped_on_the_record_and_a_later_success_clears_it(tmp_path):
+    store, record, source = _store(tmp_path, reviewed=True)
+    trimmed = FRESH_BODY.replace(" - 24 April 2026", "")
+    outcome = refresh_record(record, store, trimmed, source)
+    assert not outcome.written
+    text = record.read_text()
+    assert "refresh_refused:\n  at: " in text
+    assert '  reason: "refused: ' in text and "april" in text
+    assert text.endswith(OLD_BODY)  # body untouched
+    outcome = refresh_record(record, store, FRESH_BODY, source)
+    assert outcome.written, outcome.reason
+    assert "refresh_refused" not in record.read_text()
