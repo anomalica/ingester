@@ -101,7 +101,7 @@ def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     assert "**" not in text
     assert "“grave concerns” that the death appears “suspicious”" in text
     assert "date_extracted: 2026-08-13" not in text
-    assert "  pipeline_version: 5" in text
+    assert "  pipeline_version: 6" in text
     assert "  version: d4f18fe" not in text
 
 
@@ -198,7 +198,7 @@ def test_port_markers_wraps_the_merged_paragraph():
 def test_restamp_inserts_pipeline_version_when_absent():
     fm = 'processing:\n  handler: webpage\n  version: abc\n  tools:\n    - name: trafilatura\n      version: "2.1.0"'
     out = restamp(fm, "a" * 64, None, media_type="web", tool_version="2.2.0")
-    assert "processing:\n  pipeline_version: 5\n  handler: webpage" in out
+    assert "processing:\n  pipeline_version: 6\n  handler: webpage" in out
     assert 'version: "2.2.0"' in out
     assert "review_carryover" not in out
 

@@ -37,6 +37,11 @@ CHROME_XPATHS = [
     '//*[contains(@class, "latest-stories")]',
     '//*[contains(@class, "third-party--")]',
     '//*[contains(@class, "print:hidden")]',
+    # Recirculation widgets ("Recommended Stories" and its thumbnails) dropped
+    # into the article column, e.g. Marfeel's inline-recirc block on TIME.
+    '//*[contains(@class, "recirc")]',
+    '//*[contains(@class, "recommended-stories")]',
+    "//*[@data-mrf-recirculation]",
 ]
 
 

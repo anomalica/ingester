@@ -229,3 +229,17 @@ def test_unwrap_emphasis_keeps_text_and_tails():
     out = unwrap_emphasis("<p>He <strong>said</strong> hi <em>there</em>.</p>")
     assert "<strong>" not in out and "<em>" not in out
     assert "He said hi there." in out
+
+
+def test_strip_chrome_removes_a_recirculation_widget():
+    html = """<html><body><article>
+    <p>Article prose that stays, long enough to be extracted properly.</p>
+    <section class="mrf-irc" data-mrf-recirculation="inline-recirc-breaker" aria-label="Recommended Stories">
+    <p class="mrf-irc__title">Recommended Stories</p>
+    <ul><li><a href="/x"><img src="https://cdn.example/thumb.jpg" width="300" height="200">A story</a></li></ul>
+    </section>
+    <p>More article prose after the widget, also long enough.</p>
+    </article></body></html>"""
+    out = strip_chrome(html)
+    assert "Recommended Stories" not in out and "thumb.jpg" not in out
+    assert "Article prose that stays" in out and "More article prose" in out

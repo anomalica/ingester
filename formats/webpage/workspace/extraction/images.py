@@ -33,6 +33,9 @@ _NON_CONTENT_TAGS = ("nav", "aside", "footer", "script", "style", "noscript")
 # content wrapper from filtering out everything inside it.
 _NON_CONTENT_CLASS_WORDS = frozenset(
     {
+        "recirc",
+        "recirculation",
+        "recommended",
         "nav",
         "navigation",
         "menu",
