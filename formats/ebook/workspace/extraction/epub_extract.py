@@ -538,18 +538,30 @@ class _FootnoteResolver:
         only repeat them. A book whose references are plain superscripts, with
         only a few linked, still needs its notes section - dropping it on the
         strength of those few lost 170 endnotes from one book."""
-        soup = self._soup(filename)
+        pulled = self.pulled.get(filename, set())
+        if not pulled:
+            return False  # nothing was taken from it, so nothing would repeat
+        soup = self._soup_by_name(filename)
         if soup is None:
-            return True
+            return False  # a document that cannot be read is never dropped
         anchors = {
             el.get("id")
             for el in soup.find_all(id=True)
             if el.get_text(" ", strip=True)
         }
         if not anchors:
-            return True
-        covered = len(anchors & self.pulled.get(filename, set()))
-        return covered >= _NOTES_SPENT_SHARE * len(anchors)
+            return False
+        return len(anchors & pulled) >= _NOTES_SPENT_SHARE * len(anchors)
+
+    def _soup_by_name(self, filename: str) -> BeautifulSoup | None:
+        """The document whose file name (any directory prefix aside) is
+        `filename` - note_documents holds bare names, while items in the
+        package can sit under a prefix such as Text/."""
+        for item in self.book.get_items():
+            name = getattr(item, "file_name", "") or ""
+            if posixpath.basename(name) == filename:
+                return self._soup(name)
+        return None
 
 
 def _collect_footnotes(

@@ -401,3 +401,29 @@ def test_notes_document_is_dropped_once_its_notes_are_pulled_in(tmp_path):
     assert "Notes" not in titles
     text = "\n".join(c.markdown for c in book.chapters)
     assert text.count("Third source, an archive.") == 1
+
+
+def test_a_chapter_under_a_directory_prefix_that_notes_point_into_is_kept(tmp_path):
+    # Chapters cross-reference each other with note-shaped links; a document
+    # nothing was pulled from is never a spent notes document, and a bare
+    # file name must still find an item stored under Text/.
+    from ebooklib import epub
+    from extraction.epub_extract import extract
+
+    book = epub.EpubBook()
+    book.set_title("Prefixed")
+    book.add_author("A. Writer")
+    a = epub.EpubHtml(title="One", file_name="Text/a.xhtml")
+    a.content = '<html><body><h1>One</h1><p>See<sup><a href="b.xhtml#p2" epub:type="noteref">1</a></sup> the next chapter, which is long enough to matter.</p></body></html>'
+    b = epub.EpubHtml(title="Two", file_name="Text/b.xhtml")
+    b.content = '<html><body><h1>Two</h1><p id="p1">Real chapter prose that must survive the extraction.</p><p id="p2">A second paragraph, also real.</p></body></html>'
+    for item in (a, b):
+        book.add_item(item)
+    book.toc = (a, b)
+    book.spine = [a, b]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(tmp_path / "p.epub"), book)
+    out = extract(str(tmp_path / "p.epub"))
+    text = "\n".join(c.markdown for c in out.chapters)
+    assert "Real chapter prose that must survive" in text
