@@ -30,6 +30,7 @@ A refused refresh leaves the record untouched and fails the ingest loudly.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -441,6 +442,43 @@ def _replace_block(frontmatter: str, key: str, block: list[str]) -> str:
     return "\n".join(out)
 
 
+def _drop_block(frontmatter: str, key: str) -> str:
+    lines = frontmatter.split("\n")
+    out: list[str] = []
+    skipping = False
+    for line in lines:
+        if line.startswith(f"{key}:"):
+            skipping = True
+            continue
+        if skipping:
+            if line.startswith((" ", "\t")):
+                continue
+            skipping = False
+        out.append(line)
+    return "\n".join(out)
+
+
+def stamp_refusal(record_path: Path, reason: str) -> None:
+    """Write a `refresh_refused` block into the record's frontmatter - the body
+    is untouched - so the refusal is visible where a reviewer looks, not only
+    in a job log. A later successful refresh removes it."""
+    text = record_path.read_text(encoding="utf-8")
+    split = split_record(text)
+    if split is None:
+        return
+    frontmatter, body = split
+    frontmatter = _replace_block(
+        frontmatter,
+        "refresh_refused",
+        [
+            "refresh_refused:",
+            f"  at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            f"  reason: {json.dumps(reason, ensure_ascii=False)}",
+        ],
+    )
+    record_path.write_text(f"---\n{frontmatter}\n---\n{body}", encoding="utf-8")
+
+
 def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) -> str:
     """The stored frontmatter with the extraction stamps brought up to date:
     date_extracted, processing (version, pipeline_version, tool version) and,
@@ -471,7 +509,7 @@ def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) 
                     i + 1, f"  pipeline_version: {current_version(MEDIA_TYPE)}"
                 )
                 break
-    frontmatter = "\n".join(lines)
+    frontmatter = _drop_block("\n".join(lines), "refresh_refused")
     if review_carryover is not None:
         frontmatter = _replace_block(
             frontmatter,
@@ -492,6 +530,11 @@ def restamp(frontmatter: str, content_hash: str, review_carryover: bool | None) 
 def _declared_pipeline_version(frontmatter: str) -> int | None:
     m = re.search(r"^  pipeline_version:\s*(\d+)", frontmatter, re.M)
     return int(m.group(1)) if m else None
+
+
+def _refuse(record_path: Path, reason: str, notes: list[str]) -> Outcome:
+    stamp_refusal(record_path, reason)
+    return Outcome(False, reason, notes)
 
 
 def _reviewed(record_path: Path) -> bool:
@@ -529,8 +572,8 @@ def refresh_record(
             + (f", {dropped_pairs} pair(s) without a home" if dropped_pairs else "")
         )
     if dropped_pairs and reviewed:
-        return Outcome(
-            False,
+        return _refuse(
+            record_path,
             f"refused: {dropped_pairs} of the reviewer's marker pair(s) have no home "
             "in the fresh extraction",
             notes,
@@ -550,8 +593,8 @@ def refresh_record(
     if lost > allowed:
         sample = " ".join(list(gone.elements())[:40])
         who = "a reviewed record keeps every word" if reviewed else f"bound {allowed}"
-        return Outcome(
-            False,
+        return _refuse(
+            record_path,
             f"refused: {lost} word(s) of the stored body are absent from the fresh "
             f"extraction ({who}): {sample}",
             notes,
@@ -581,8 +624,8 @@ def refresh_record(
         content = result.fixed
     notes.extend(f"validation: {w}" for w in result.warnings)
     if result.errors:
-        return Outcome(
-            False,
+        return _refuse(
+            record_path,
             "refused: the refreshed record does not validate: "
             + "; ".join(result.errors),
             notes,
