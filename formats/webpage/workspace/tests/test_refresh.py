@@ -238,3 +238,69 @@ def test_transplant_keeps_the_stored_file_for_the_same_picture():
     new = '<!--\nimage:\n  file: fresh.webp\n  caption: "Photo"\n-->\n'
     body, _ = transplant_image_files(old, new)
     assert "file: stored.jpg" in body and "fresh.webp" not in body
+
+
+def test_inline_highlight_is_re_placed_around_the_same_prose():
+    from refresh import port_inline_markers
+
+    old = (
+        "Burlison has said he has\n\n"
+        "“grave concerns”, suggesting the {{highlight-start: h7}}officer may have been "
+        "silenced{{highlight-end: h7}} before he could speak.\n"
+    )
+    new = (
+        "Burlison has said he has “grave concerns” that the death appears “suspicious”, "
+        "suggesting the officer may have been silenced before he could speak.\n"
+    )
+    body, placed, dropped = port_inline_markers(old, new)
+    assert (placed, dropped) == (2, 0)
+    assert (
+        "suggesting the {{highlight-start: h7}}officer may have been silenced"
+        "{{highlight-end: h7}} before he could speak." in body
+    )
+
+
+def test_inline_pair_without_a_home_is_dropped_whole():
+    from refresh import port_inline_markers
+
+    old = 'Kept prose stays here. {{note-start: [n1, "a note"]}}Vanished prose{{note-end: n1}} was here.\n'
+    new = "Kept prose stays here. was here.\n"
+    body, placed, dropped = port_inline_markers(old, new)
+    assert dropped == 1 and "{{" not in body
+
+
+def test_reviewed_record_refuses_when_a_highlight_has_no_home(tmp_path):
+    body = OLD_BODY.replace(
+        "Written by Christopher Sharp - 24 April 2026",
+        "Written by {{highlight-start: a1}}Christopher Sharp{{highlight-end: a1}} - 24 April 2026",
+    )
+    store, record, source = _store(tmp_path, body=body, reviewed=True)
+    outcome = refresh_record(record, store, FRESH_BODY, source)
+    assert outcome.written, outcome.reason
+    assert (
+        "{{highlight-start: a1}}Christopher Sharp{{highlight-end: a1}}"
+        in record.read_text()
+    )
+    store, record, source = _store(tmp_path / "second", body=body, reviewed=True)
+    fresh = FRESH_BODY.replace(
+        "Written by [Christopher Sharp](https://twitter.com/x) - 24 April 2026",
+        "Written by the desk - 24 April 2026",
+    )
+    outcome = refresh_record(record, store, fresh, source)
+    assert (
+        not outcome.written
+        and "marker pair" in outcome.reason
+        or "absent" in outcome.reason
+    )
+
+
+def test_a_jammed_token_is_not_a_lost_word():
+    gone = words_gone(
+        "The report came withexecutive approval.\n",
+        "The report came with executive approval.\n",
+    )
+    assert gone == {}
+    gone = words_gone(
+        "The report came with executive approval.\n", "The report came with approval.\n"
+    )
+    assert gone == {"executive": 1}
