@@ -479,6 +479,11 @@ def _note_content(element) -> str:
     return re.sub(r"^(?:[-*]\s+)?(?:fn\s*)?\d+[.\s]*", "", text).strip()
 
 
+# A notes document is spent - safe to drop - when this share of its anchored
+# entries were pulled into citing chapters.
+_NOTES_SPENT_SHARE = 0.8
+
+
 class _FootnoteResolver:
     """Resolves note references to their definitions across the whole book.
 
@@ -493,6 +498,9 @@ class _FootnoteResolver:
         self.book = book
         self.counter = 0
         self.note_documents: set[str] = set()
+        # Per notes document, the anchors whose definitions were pulled into a
+        # citing chapter - what decides whether the document is spent.
+        self.pulled: dict[str, set[str]] = {}
         self._soups: dict[str, BeautifulSoup | None] = {}
 
     def _soup(self, filename: str) -> BeautifulSoup | None:
@@ -518,8 +526,30 @@ class _FootnoteResolver:
         if soup is not None and (element := soup.find(id=fragment)) is not None:
             content = _note_content(element)
         if posixpath.basename(target_file) != posixpath.basename(base_file):
-            self.note_documents.add(posixpath.basename(target_file))
+            name = posixpath.basename(target_file)
+            self.note_documents.add(name)
+            if content:
+                self.pulled.setdefault(name, set()).add(fragment)
         return label, content
+
+    def spent(self, filename: str) -> bool:
+        """True when the notes document's definitions have (nearly) all been
+        pulled into the chapters that cite them, so keeping the document would
+        only repeat them. A book whose references are plain superscripts, with
+        only a few linked, still needs its notes section - dropping it on the
+        strength of those few lost 170 endnotes from one book."""
+        soup = self._soup(filename)
+        if soup is None:
+            return True
+        anchors = {
+            el.get("id")
+            for el in soup.find_all(id=True)
+            if el.get_text(" ", strip=True)
+        }
+        if not anchors:
+            return True
+        covered = len(anchors & self.pulled.get(filename, set()))
+        return covered >= _NOTES_SPENT_SHARE * len(anchors)
 
 
 def _collect_footnotes(
@@ -844,12 +874,13 @@ def extract(epub_path: str) -> ExtractedBook:
         )
         chapter_files.append(posixpath.basename(item.file_name))
 
-    # Drop dedicated notes documents: their definitions have been pulled into the
-    # chapters that cite them, so keeping the raw section would duplicate them.
+    # Drop a dedicated notes document once its definitions have been pulled into
+    # the chapters that cite them, so the raw section does not repeat them. One
+    # that is mostly unreferenced stays: its notes exist nowhere else.
     chapters = [
         chapter
         for chapter, filename in zip(chapters, chapter_files)
-        if filename not in resolver.note_documents
+        if filename not in resolver.note_documents or not resolver.spent(filename)
     ]
 
     return ExtractedBook(

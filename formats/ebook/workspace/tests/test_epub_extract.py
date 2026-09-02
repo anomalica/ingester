@@ -348,3 +348,56 @@ def test_rejoin_dropcaps_ignores_non_splits():
     # A capital followed by an uppercase run (a byline) or a full line is untouched.
     assert rejoin_dropcaps("L\nESLIE KEAN") == "L\nESLIE KEAN"
     assert rejoin_dropcaps("The cat sat") == "The cat sat"
+
+
+def _book_with_notes(path, linked: int):
+    """A chapter citing `linked` of three endnotes by link (the rest are plain
+    superscripts), plus a dedicated notes document."""
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_title("Noted")
+    book.add_author("A. Writer")
+    refs = "".join(
+        f'<sup><a href="notes.xhtml#n{i}" epub:type="noteref">{i}</a></sup>'
+        if i <= linked
+        else f"<sup>{i}</sup>"
+        for i in (1, 2, 3)
+    )
+    ch = epub.EpubHtml(title="1. Chapter", file_name="c1.xhtml")
+    ch.content = f"<html><body><h1>1. Chapter</h1><p>Claims{refs} with citations here.</p></body></html>"
+    notes = epub.EpubHtml(title="Notes", file_name="notes.xhtml")
+    notes.content = (
+        "<html><body><h1>Notes</h1>"
+        '<p id="n1">1 First source, a journal.</p>'
+        '<p id="n2">2 Second source, a book.</p>'
+        '<p id="n3">3 Third source, an archive.</p>'
+        "</body></html>"
+    )
+    for item in (ch, notes):
+        book.add_item(item)
+    book.toc = (ch, notes)
+    book.spine = [ch, notes]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(str(path), book)
+    return str(path)
+
+
+def test_notes_document_stays_when_most_of_its_notes_were_never_linked(tmp_path):
+    from extraction.epub_extract import extract
+
+    book = extract(_book_with_notes(tmp_path / "few.epub", linked=1))
+    text = "\n".join(c.markdown for c in book.chapters)
+    assert "Third source, an archive." in text
+    assert "[^1]: 1 First source" in text or "[^1]: First source" in text
+
+
+def test_notes_document_is_dropped_once_its_notes_are_pulled_in(tmp_path):
+    from extraction.epub_extract import extract
+
+    book = extract(_book_with_notes(tmp_path / "all.epub", linked=3))
+    titles = [c.title for c in book.chapters]
+    assert "Notes" not in titles
+    text = "\n".join(c.markdown for c in book.chapters)
+    assert text.count("Third source, an archive.") == 1
