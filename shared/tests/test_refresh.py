@@ -318,3 +318,13 @@ def test_a_broken_image_comment_is_not_counted_as_prose():
     )
     new = 'Prose that stays here.\n\n<!--\nimage:\n  file: abc.gif\n  alt: "Video player loading"\n-->\n'
     assert words_gone(old, new) == {}
+
+
+def test_a_field_the_stored_record_already_lacked_does_not_refuse_the_refresh(tmp_path):
+    store, record, source = _store(tmp_path)
+    text = record.read_text().replace("date_published: 2026-04-24\n", "")
+    record.write_text(text)
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
+    assert outcome.written, outcome.reason
+    assert any("pre-existing" in n for n in outcome.notes)
+    assert "date_published" not in record.read_text()

@@ -726,11 +726,18 @@ def refresh_record(
     if result.fixed:
         content = result.fixed
     notes.extend(f"validation: {w}" for w in result.warnings)
-    if result.errors:
+    # Only a fault the refresh INTRODUCED refuses. A record that already lacked a
+    # field (a book with no publication date) was accepted as it is; carrying its
+    # frontmatter over unchanged cannot be what makes it invalid.
+    already = set(validate(text, extra_required=extra_required).errors)
+    introduced = [e for e in result.errors if e not in already]
+    notes.extend(
+        f"validation (pre-existing): {e}" for e in result.errors if e in already
+    )
+    if introduced:
         return _refuse(
             record_path,
-            "refused: the refreshed record does not validate: "
-            + "; ".join(result.errors),
+            "refused: the refreshed record does not validate: " + "; ".join(introduced),
             notes,
         )
     record_path.write_text(content, encoding="utf-8")
