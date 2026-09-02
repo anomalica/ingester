@@ -78,6 +78,19 @@ def _urls_of(fm: dict) -> set[str]:
     return urls
 
 
+def find_by_source_hash(store_dir: Path, source_hash: str) -> Path | None:
+    """Return the path of the LIVE record extracted from exactly these source
+    bytes (`source_hash`, with or without its sha256: label). A hit means a
+    re-ingest of the same asset is an in-place refresh, not a new record."""
+    wanted = (source_hash or "").removeprefix("sha256:")
+    if not wanted:
+        return None
+    for path, fm in _iter_records(store_dir):
+        if str(fm.get("source_hash") or "").removeprefix("sha256:") == wanted:
+            return path
+    return None
+
+
 def find_by_source_id(store_dir: Path, source_id: str) -> Path | None:
     """Return the path of the first LIVE record whose source_id matches."""
     if not source_id:

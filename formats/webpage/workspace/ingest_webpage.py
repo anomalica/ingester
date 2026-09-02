@@ -21,8 +21,8 @@ from email_shape import (
 )
 from copyright import status_or
 from dates import normalise_published, published_scalar
-from dedup import find_by_source_id
-from hashing import content_hash_label, hash_string, store_exists
+from dedup import find_by_source_hash, find_by_source_id
+from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
 from publisher import canonical_publisher, strip_site_suffix
 from record import get_version, write_record
@@ -30,15 +30,7 @@ from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
 from extraction.trafilatura_ext import extract_article
-
-
-def _get_trafilatura_version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("trafilatura")
-    except PackageNotFoundError:
-        return "unknown"
+from refresh import refresh_record, trafilatura_version
 
 
 _WAYBACK_RE = re.compile(r"web\.archive\.org/web/(\d{4})(\d{2})(\d{2})\d*/", re.I)
@@ -197,7 +189,7 @@ def _build_frontmatter(
     lines.append(f"  pipeline_version: {current_version('web')}")
     lines.append("  tools:")
     lines.append("    - name: trafilatura")
-    lines.append(f'      version: "{_get_trafilatura_version()}"')
+    lines.append(f'      version: "{trafilatura_version()}"')
     lines.append("      role: extraction")
     lines.append("      provider: local")
     lines.append("---")
@@ -219,13 +211,17 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     asset_name = manifest["asset"]
     source_id = manifest.get("source_id")
     fetched_url = manifest.get("fetched_url")
-    source_hash = manifest.get("asset_hash")
     snapshots = manifest.get("snapshots") or []
 
     asset_path = staging_dir / asset_name
     if not asset_path.exists():
         print(f"Error: asset not found: {asset_path}", file=sys.stderr)
         return 1
+    # The bytes the record is extracted from. acquire stamps the hash for a
+    # fetched page; a local file (a re-process of the archived page) carries none,
+    # and it is exactly then that the hash must be known - it is what says this
+    # page is already in the store.
+    source_hash = manifest.get("asset_hash") or hash_file(asset_path)
 
     html = asset_path.read_text(encoding="utf-8", errors="replace")
 
@@ -267,6 +263,35 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         )
     else:
         body_text = article.text
+
+    # The same source bytes already have a live record: this is a re-extraction
+    # of one page, not a second record of it. With --force the record is
+    # refreshed IN PLACE under its existing identity (decision 0040); without,
+    # there is nothing to do.
+    existing = find_by_source_hash(store_dir, source_hash)
+    if existing is not None:
+        if not force:
+            print(
+                f"Skipping: these page bytes are already ingested as "
+                f"{existing.stem[:12]}... (use --force to re-extract in place)",
+                file=sys.stderr,
+            )
+            return 0
+        outcome = refresh_record(existing, store_dir, body_text, asset_path)
+        print(f"Refresh {existing.stem[:12]}...: {outcome.reason}", file=sys.stderr)
+        for note in outcome.notes:
+            print(f"  {note}", file=sys.stderr)
+        if outcome.reason.startswith("refused"):
+            return 1
+        if outcome.written and article.media:
+            body = existing.read_text(encoding="utf-8")
+            media_dir = output_dir / "media" / existing.stem
+            media_dir.mkdir(parents=True, exist_ok=True)
+            for img in article.media:
+                name = f"{img.img_hash}.{img.ext}"
+                if f"  file: {name}" in body:  # a stored file may have won
+                    (media_dir / name).write_bytes(img.data)
+        return 0
 
     hex_hash = hash_string(body_text)
 
