@@ -183,6 +183,22 @@ def _stamp_superseded_by(text: str, new_hash: str) -> str:
     return text
 
 
+def _stamp_supersedes(text: str, old_hash: str) -> str:
+    """Insert a supersedes pointer into the replacement record's frontmatter,
+    after content_hash if present else the opening fence. Idempotent. The pair
+    (supersedes here, superseded_by on the retired record) is what lets a
+    consumer holding the old hash find the new record without a search."""
+    if re.search(r"^supersedes:", text, re.MULTILINE):
+        return text
+    stamp = f"supersedes: {old_hash}\n"
+    anchor = re.search(r"^content_hash:.*\n", text, re.MULTILINE)
+    if anchor:
+        return text[: anchor.end()] + stamp + text[anchor.end() :]
+    if text.startswith("---\n"):
+        return "---\n" + stamp + text[len("---\n") :]
+    return text
+
+
 def _retire_to_v1(old_record: Path, new_hash: str) -> None:
     """Move a superseded record and its sidecars to store/v1 with a superseded_by
     stamp, rather than deleting them. A --force re-ingest must NOT bare-delete the
@@ -283,6 +299,7 @@ def write_record(
             # record anything downstream may resolve by hash and loses any review
             # work on it. See _retire_to_v1.
             _retire_to_v1(existing_target, hex_hash)
+            content = _stamp_supersedes(content, existing_target.name[: -len(".md")])
         link_path.unlink()
     elif link_path.exists():
         link_path.unlink()
