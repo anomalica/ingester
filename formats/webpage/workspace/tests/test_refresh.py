@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from unittest.mock import patch
 
 from extraction.trafilatura_ext import Article
@@ -129,7 +130,12 @@ def test_refresh_refuses_when_prose_goes_missing(tmp_path):
     assert not outcome.written
     assert outcome.reason.startswith("refused")
     assert "suggesting" in outcome.reason
-    assert record.read_text() == before
+    after = record.read_text()
+    fm_after, body_after = after[4:].split("\n---\n", 1)
+    fm_before, body_before = before[4:].split("\n---\n", 1)
+    assert body_after == body_before
+    assert "refresh_refused:" in fm_after
+    assert re.sub(r"refresh_refused:\n(  .*\n?)*", "", fm_after).rstrip() == fm_before
 
 
 def test_reviewed_record_ports_markers_and_is_flagged_for_verification(tmp_path):
