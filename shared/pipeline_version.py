@@ -24,7 +24,10 @@ CURRENT_VERSIONS: dict[str, int] = {
     # v2: strip page furniture before extraction, and capture images as media
     # bytes + structured `<!-- image: file/alt/caption -->` annotations (was
     # markdown ![](remote-url) with the caption as loose italic prose).
-    "web": 2,
+    # v3: inline emphasis is unwrapped from the DOM before extraction. v2 bodies
+    # carry trafilatura's mangled emphasis markers and, around every bold or
+    # italic span, split paragraphs, re-ordered fragments and dropped clauses.
+    "web": 3,
     # v2: emit printed_page markers from EPUB3 pagebreaks (previously discarded).
     "ebook": 2,
     "audio": 1,
