@@ -160,15 +160,49 @@ def _without_irrelevant(body: str) -> str:
     return "\n".join(out)
 
 
-def words_gone(old_body: str, new_body: str) -> Counter:
+_MONTHS = (
+    "january february march april may june july august september october "
+    "november december"
+).split()
+
+
+def carried_words(frontmatter: str) -> str:
+    """Text the record carries outside its body - title, creators, publisher
+    and the publication date in the ways a page prints it - so a dateline,
+    byline or title heading the fresh extraction leaves out of the body is
+    not counted as prose lost from the record."""
+    parts: list[str] = []
+    for key in ("title", "publisher"):
+        m = re.search(rf"^{key}:\s*(.+)$", frontmatter, re.M)
+        if m:
+            parts.append(m.group(1))
+    block = re.search(r"^creators:\n((?:\s+-.*\n?)+)", frontmatter, re.M)
+    if block:
+        parts.append(block.group(1))
+    date = re.search(
+        r"^date_published:\s*\"?(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?", frontmatter, re.M
+    )
+    if date:
+        year, month, day = date.groups()
+        parts.append(year)
+        if month:
+            name = _MONTHS[int(month) - 1]
+            parts.extend([name, name[:3], month])
+        if day:
+            parts.extend([day, str(int(day))])
+    return " ".join(parts)
+
+
+def words_gone(old_body: str, new_body: str, carried: str = "") -> Counter:
     """Words of the stored body that appear nowhere in the fresh one. Counted
     outside the stored body's irrelevant regions - a reviewer has already said
     that prose does not matter, so an extractor that stops emitting it loses
     nothing. A stored "word" that is really two words jammed together by the
     old extractor ("withexecutive") is not gone when the fresh prose still
-    reads "with executive": its letters survive as a run."""
+    reads "with executive": its letters survive as a run. Words in `carried`
+    (see carried_words) count as present."""
     old = word_bag(_without_irrelevant(old_body))
-    new = word_bag(new_body)
+    new = word_bag(new_body) + word_bag(carried)
     new_letters = _squash(_ANNOTATION_RE.sub(_annotation_words, new_body))
     return Counter(
         {
@@ -580,7 +614,7 @@ def refresh_record(
         )
     new_body = tidy(new_body)
 
-    gone = words_gone(old_body, new_body)
+    gone = words_gone(old_body, new_body, carried_words(frontmatter))
     lost = sum(gone.values())
     if reviewed:
         allowed = 0
