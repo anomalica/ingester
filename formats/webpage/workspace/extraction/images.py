@@ -115,6 +115,19 @@ class HarvestedImage:
     url: str
     alt: str | None
     caption: str | None
+    # The nearest run of text BEFORE the image in the page, so an image the
+    # extractor dropped can be put back after the paragraph it followed. None
+    # for an image that precedes all text - the article's lead picture.
+    anchor: str | None = None
+    width: int | None = None
+    height: int | None = None
+
+
+# An image whose declared size is below this on either side is an icon, an
+# avatar or a tracking pixel, never a picture the article is showing.
+_MIN_CONTENT_PX = 100
+# Text runs shorter than this cannot anchor a position (a date, a label).
+_MIN_ANCHOR_CHARS = 12
 
 
 def _has_non_content_ancestor(node) -> bool:
@@ -209,6 +222,48 @@ def _figcaption_text(img_tag) -> str | None:
     return None
 
 
+def _declared_size(img_tag) -> tuple[int | None, int | None]:
+    """The image's own size claim: width/height attributes, or Squarespace's
+    data-image-dimensions ("916x1191")."""
+
+    def _px(value) -> int | None:
+        m = re.match(r"\s*(\d+)", str(value or ""))
+        return int(m.group(1)) if m else None
+
+    width, height = _px(img_tag.get("width")), _px(img_tag.get("height"))
+    dims = img_tag.get("data-image-dimensions") or ""
+    m = re.match(r"(\d+)x(\d+)", dims)
+    if m:
+        width, height = width or int(m.group(1)), height or int(m.group(2))
+    return width, height
+
+
+def _is_tiny(width: int | None, height: int | None) -> bool:
+    return any(v is not None and v < _MIN_CONTENT_PX for v in (width, height))
+
+
+def _anchor_text(img_tag) -> str | None:
+    """The nearest text before the image in document order that is long enough
+    to be found again in the extracted body; None when nothing precedes it."""
+    for node in img_tag.find_all_previous(string=True):
+        parent = getattr(node, "parent", None)
+        # The page title is not in the body (it lives in frontmatter), so text
+        # in an h1 cannot place anything; a lead picture under the title has,
+        # for placement, nothing before it.
+        if parent is not None and parent.name in (
+            "script",
+            "style",
+            "noscript",
+            "h1",
+            "title",
+        ):
+            continue
+        text = " ".join(str(node).split())
+        if len(text) >= _MIN_ANCHOR_CHARS:
+            return text
+    return None
+
+
 def harvest_images(html: str) -> list[HarvestedImage]:
     """Return content-region images with their alt text and figcaptions."""
     soup = BeautifulSoup(html, "lxml")
@@ -223,9 +278,21 @@ def harvest_images(html: str) -> list[HarvestedImage]:
             continue
         if _has_non_content_ancestor(img):
             continue
+        width, height = _declared_size(img)
+        if _is_tiny(width, height):
+            continue
         alt = (img.get("alt") or "").strip() or None
         caption = _figcaption_text(img)
-        found.append(HarvestedImage(url=url, alt=alt, caption=caption))
+        found.append(
+            HarvestedImage(
+                url=url,
+                alt=alt,
+                caption=caption,
+                anchor=_anchor_text(img),
+                width=width,
+                height=height,
+            )
+        )
         seen_urls.add(url)
     return found
 
@@ -427,18 +494,44 @@ def render_images(
         emitted_urls.add(url)
         i = consume_to + 1
 
-    # Content-region images trafilatura dropped entirely: append them so the
-    # reviewer still has them (exact position is lost, presence preserved).
-    # Skip images with no alt and no caption - most likely chrome that slipped
-    # through the content filter.
+    # Content-region images trafilatura dropped entirely - above all an
+    # article's lead picture, which sits before any text and has neither alt
+    # nor caption. Each goes back after the paragraph it followed in the page;
+    # one with no text before it leads the body. One whose preceding text is
+    # not in the body at all followed something the extractor rejected - a
+    # donate banner, a related-posts strip - and is rejected with it.
     for img in images:
-        if img.url in emitted_urls or not (img.caption or img.alt):
+        if img.url in emitted_urls:
+            continue
+        at = _anchor_position(output, img.anchor)
+        if at is None:
             continue
         mi = resolve(img.url)
         file = f"{mi.img_hash}.{mi.ext}" if mi else None
-        output.append(_format_image_annotation(file, img.alt, img.caption))
-        output.append("")
+        if not (file or img.alt or img.caption):
+            continue
+        output[at:at] = [_format_image_annotation(file, img.alt, img.caption), ""]
         emitted_urls.add(img.url)
 
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip() + "\n"
     return text, media
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[\W_]+", "", re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)).lower()
+
+
+def _anchor_position(lines: list[str], anchor: str | None) -> int | None:
+    """Where in `lines` a dropped image goes: right after the first line that
+    carries its anchor text; at the very top when it had no text before it;
+    nowhere (None) when the body does not carry the anchor."""
+    if anchor is None:
+        return 0
+    key = _squash(anchor)
+    if key:
+        for i, line in enumerate(lines):
+            if line.startswith("<!--"):
+                continue
+            if key in _squash(line):
+                return i + 1 if i + 1 >= len(lines) or lines[i + 1].strip() else i + 2
+    return None
