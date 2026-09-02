@@ -223,7 +223,8 @@ if source_url:
     # artefact's MIME and a YouTube video was recorded as an audio source - how
     # it was acquired, not what it is. archived_ext already describes the
     # artefact, so naming the source medium here loses nothing.
-    if re.search(r'(?:youtube\.com|youtu\.be|vimeo\.com|twitch\.tv)/', source_url):
+    video_platform = bool(re.search(r'(?:youtube\.com|youtu\.be|vimeo\.com|twitch\.tv)/', source_url))
+    if video_platform:
         manifest['original_type'] = 'video'
     if not source_id:
         m = re.search(r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})', source_url)
@@ -235,15 +236,19 @@ if source_url:
     # mapping (video_metadata_fields) is SHARED with acquire's URL path, so a
     # reprocess record is indistinguishable from a fresh URL ingest. Best effort: a
     # fetch failure leaves the URL-only manifest rather than aborting re-transcription.
-    try:
-        proc = subprocess.run(['yt-dlp', '--dump-json', '--no-warnings', source_url],
-                              capture_output=True, text=True, timeout=90)
-        if proc.returncode == 0 and proc.stdout.strip():
-            fields = video_metadata_fields(json.loads(proc.stdout))
-            fields.pop('source_id', None)  # keep the explicit/URL-derived id below
-            manifest.update(fields)
-    except (subprocess.SubprocessError, OSError, ValueError):
-        pass
+    # Video platforms only: on a news article's URL yt-dlp has nothing to say and
+    # takes the full timeout to say it, which turned a web refresh into a
+    # minute-and-a-half wait per record.
+    if video_platform:
+        try:
+            proc = subprocess.run(['yt-dlp', '--dump-json', '--no-warnings', source_url],
+                                  capture_output=True, text=True, timeout=90)
+            if proc.returncode == 0 and proc.stdout.strip():
+                fields = video_metadata_fields(json.loads(proc.stdout))
+                fields.pop('source_id', None)  # keep the explicit/URL-derived id below
+                manifest.update(fields)
+        except (subprocess.SubprocessError, OSError, ValueError):
+            pass
 if source_id:
     manifest['source_id'] = source_id
 with open(os.environ['MANIFEST_OUT'], 'w') as f:
