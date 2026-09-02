@@ -370,6 +370,28 @@ def _resequence_pages_sequential(content: str, page_count: int) -> tuple[str, bo
     return fixed, True
 
 
+def _impossible_page_sequence(content: str, page_count: int) -> str | None:
+    """A file_page state that CANNOT be correct, or None.
+
+    file_page is the position of the page in the file, so a marker past the last
+    page, or the same page number twice, is not a near-miss to be served with a
+    caveat - it is wrong, and a reviewer lines the source pane up against it. Only
+    the impossible states are here. A SHORTFALL (fewer markers than pages) is not:
+    a blank page can legitimately carry no marker, so that stays a warning and a
+    repair attempt upstream, not a hard block."""
+    markers = [int(m) for m in re.findall(r"file_page: (\d+)", content)]
+    if not markers:
+        return None
+    highest = max(markers)
+    if highest > page_count:
+        return f"file_page {highest} exceeds the {page_count}-page document"
+    seen: set[int] = set()
+    repeated = sorted({p for p in markers if p in seen or seen.add(p)})
+    if repeated:
+        return f"file_page numbers repeat: {repeated}"
+    return None
+
+
 def _repair_missing_pages(
     content: str,
     missing_pages: list[int],
@@ -1010,6 +1032,16 @@ def main():
                 print(f"Validation error: {error}", file=sys.stderr)
             if not validation.errors:
                 print("Repair successful", file=sys.stderr)
+
+    # Final gate: resequencing and repair have had their turn, so a file_page
+    # that is still impossible (past the last page, or repeated) is corruption we
+    # would otherwise write and serve as truth - which is how a whole document of
+    # invented page numbers reached a reviewer before this. Refuse rather than
+    # serve it; the operator re-runs (chunking) or investigates.
+    page_error = _impossible_page_sequence(content, page_count)
+    if page_error:
+        print(f"Refusing to write {input_hash}: {page_error}", file=sys.stderr)
+        sys.exit(1)
 
     # Reconcile classification markings: lift the document banner to a
     # frontmatter `classification` field, drop redundant in-body repeats,
