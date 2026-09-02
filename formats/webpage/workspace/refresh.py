@@ -52,6 +52,17 @@ _LEADING_HEADING_RE = re.compile(r"^\s*#[^\n]*\n")
 _IRRELEVANT_START = re.compile(r"^\s*<!--\s*irrelevant:\s*start\s*-->\s*$")
 _IRRELEVANT_END = re.compile(r"^\s*<!--\s*irrelevant:\s*end\s*-->\s*$")
 _NON_WORD_RE = re.compile(r"[\W_]+")
+# A reviewer's inline markers: paired {{X-start: ...}} / {{X-end: id}} spans
+# (highlight, note, link, cites, external) plus any other {{...}} token.
+_INLINE_MARKER_RE = re.compile(r"\{\{[^{}]*\}\}")
+_PAIRED_MARKER_RE = re.compile(
+    r"\{\{\s*(highlight|note|link|cites|external)-(start|end)\s*:\s*(.*?)\s*\}\}"
+)
+# A stored token at least this long whose letters run unbroken through the
+# fresh prose is a jam of words, not a word that vanished.
+_JAM_MIN_CHARS = 5
+# Squashed characters of context used to find where a marker sat.
+_CONTEXT_CHARS = (24, 16, 8)
 
 # Below this many characters a line is too short to identify prose on its own
 # (a lone "Advertisement" or a date), so it cannot anchor a ported region.
@@ -109,11 +120,13 @@ def _annotation_words(m: re.Match) -> str:
 def word_bag(text: str) -> Counter:
     text = _LEADING_HEADING_RE.sub("", text, count=1)
     text = _ANNOTATION_RE.sub(_annotation_words, text)
+    text = _INLINE_MARKER_RE.sub("", text)
     text = _LINK_RE.sub(r"\1", text)
     return Counter(re.findall(r"[^\W_]+", text.lower()))
 
 
 def _squash(line: str) -> str:
+    line = _INLINE_MARKER_RE.sub("", line)
     return _NON_WORD_RE.sub("", _LINK_RE.sub(r"\1", line)).lower()
 
 
@@ -150,10 +163,19 @@ def words_gone(old_body: str, new_body: str) -> Counter:
     """Words of the stored body that appear nowhere in the fresh one. Counted
     outside the stored body's irrelevant regions - a reviewer has already said
     that prose does not matter, so an extractor that stops emitting it loses
-    nothing."""
+    nothing. A stored "word" that is really two words jammed together by the
+    old extractor ("withexecutive") is not gone when the fresh prose still
+    reads "with executive": its letters survive as a run."""
     old = word_bag(_without_irrelevant(old_body))
     new = word_bag(new_body)
-    return Counter({w: n for w, n in old.items() if w not in new})
+    new_letters = _squash(_ANNOTATION_RE.sub(_annotation_words, new_body))
+    return Counter(
+        {
+            w: n
+            for w, n in old.items()
+            if w not in new and not (len(w) >= _JAM_MIN_CHARS and w in new_letters)
+        }
+    )
 
 
 # --- what carries over --------------------------------------------------------
@@ -296,6 +318,103 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     return "\n".join(out), len(spans), unported
 
 
+def _marker_id(payload: str) -> str:
+    """The id a paired marker carries: bare (`a1`) or first in a flow list
+    (`[a1, "text"]`)."""
+    m = re.match(r"\[\s*([^,\]]+)", payload)
+    return (m.group(1) if m else payload).strip().strip("\"'")
+
+
+def _prose_map(body: str) -> tuple[str, list[int]]:
+    """The body squashed to its letters, with each squashed character's index in
+    the raw body, skipping annotations, inline markers and link targets."""
+    chars: list[str] = []
+    positions: list[int] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        if body.startswith("<!--", i):
+            end = body.find("-->", i)
+            i = n if end < 0 else end + 3
+            continue
+        if body.startswith("{{", i):
+            end = body.find("}}", i)
+            i = n if end < 0 else end + 2
+            continue
+        if body[i] == "]" and i + 1 < n and body[i + 1] == "(":
+            end = body.find(")", i)
+            i = n if end < 0 else end + 1
+            continue
+        c = body[i]
+        if not _NON_WORD_RE.fullmatch(c) and c != "_":
+            chars.append(c.lower())
+            positions.append(i)
+        i += 1
+    return "".join(chars), positions
+
+
+def _locate(squashed: str, before: str, after: str, taken_from: int) -> int | None:
+    """The squashed index at which a marker with these contexts sat: where
+    `before` ends and `after` begins, tried at shrinking context widths."""
+    for width in _CONTEXT_CHARS:
+        b, a = before[-width:], after[:width]
+        if not b and not a:
+            continue
+        idx = squashed.find(b + a, taken_from)
+        if idx >= 0:
+            return idx + len(b)
+    return None
+
+
+def port_inline_markers(old_body: str, new_body: str) -> tuple[str, int, int]:
+    """Re-place a reviewer's paired inline markers ({{highlight-start: id}} ...
+    {{highlight-end: id}} and the note/link/cites/external families) at the
+    same prose positions in the fresh body, found by the letters either side
+    of each marker. Returns the body, the count of markers placed and the
+    count of pairs dropped because one half no longer has a home."""
+    old_markers = list(_PAIRED_MARKER_RE.finditer(old_body))
+    if not old_markers:
+        return new_body, 0, 0
+    old_squashed, _ = _prose_map(old_body)
+    new_squashed, new_positions = _prose_map(new_body)
+    # Where each old marker sits in the old prose, as a squashed index.
+    old_prose_before = _prose_map(old_body[: old_markers[0].start()])[0]
+    placements: list[tuple[str, str, str, int | None]] = []  # kind, half, id, new idx
+    cursor = 0
+    for m in old_markers:
+        idx = len(_prose_map(old_body[: m.start()])[0])
+        before, after = old_squashed[:idx], old_squashed[idx:]
+        at = _locate(new_squashed, before, after, cursor)
+        if at is not None:
+            cursor = at
+        placements.append((m.group(1), m.group(2), _marker_id(m.group(3)), at))
+    del old_prose_before
+    # A pair lives or dies together: a start without its end would auto-close
+    # at the end of the body and mark far more than the reviewer did.
+    homes: dict[tuple[str, str], list[int | None]] = {}
+    for kind, _half, ident, at in placements:
+        homes.setdefault((kind, ident), []).append(at)
+    dropped_pairs = {k for k, ats in homes.items() if any(a is None for a in ats)}
+    inserts: list[tuple[int, int, str]] = []
+    for m, (kind, half, ident, at) in zip(old_markers, placements):
+        if (kind, ident) in dropped_pairs or at is None:
+            continue
+        # A start marker goes just before the prose character it opened on; an
+        # end marker just after the last character it closed on, so it hugs the
+        # word rather than the space or line break that follows it.
+        if half == "start":
+            raw = new_positions[at] if at < len(new_positions) else len(new_body)
+        else:
+            raw = new_positions[at - 1] + 1 if at > 0 else 0
+        inserts.append((raw, 0 if half == "end" else 1, m.group(0)))
+    out = new_body
+    for raw, _order, marker in sorted(
+        inserts, key=lambda t: (t[0], t[1]), reverse=True
+    ):
+        out = out[:raw] + marker + out[raw:]
+    return out, len(inserts), len(dropped_pairs)
+
+
 # --- the frontmatter stamps ---------------------------------------------------
 
 
@@ -402,6 +521,19 @@ def refresh_record(
         notes.append(
             f"irrelevant regions: {ported} ported"
             + (f", {unported} no longer in the extraction" if unported else "")
+        )
+    new_body, placed, dropped_pairs = port_inline_markers(old_body, new_body)
+    if placed or dropped_pairs:
+        notes.append(
+            f"inline markers: {placed} re-placed"
+            + (f", {dropped_pairs} pair(s) without a home" if dropped_pairs else "")
+        )
+    if dropped_pairs and reviewed:
+        return Outcome(
+            False,
+            f"refused: {dropped_pairs} of the reviewer's marker pair(s) have no home "
+            "in the fresh extraction",
+            notes,
         )
     new_body = tidy(new_body)
 
