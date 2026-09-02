@@ -216,3 +216,17 @@ def test_write_record_reuses_slug_on_same_hash_reingest(tmp_path):
     assert links[0].name == "2020-05-14-pdf-old-title.md"  # the ORIGINAL slug held
     assert links[0].resolve() == (store / "abc123.md").resolve()
     assert (store / "abc123.md").read_text().endswith("body2")  # content did update
+
+
+def test_write_record_force_stamps_supersedes_on_the_replacement(tmp_path):
+    store = tmp_path / "store"
+    by_name = tmp_path / "by-name"
+    old = "---\ncontent_hash: sha256:aaa111\ntitle: T\n---\nold body\n"
+    write_record(store, by_name, "aaa111", old, "2020-01-01", "web", "Same Title")
+    new = "---\ncontent_hash: sha256:bbb222\ntitle: T\n---\nnew body\n"
+    path, _ = write_record(
+        store, by_name, "bbb222", new, "2020-01-01", "web", "Same Title", force=True
+    )
+    text = path.read_text()
+    assert "content_hash: sha256:bbb222\nsupersedes: aaa111\n" in text
+    assert "superseded_by: bbb222" in (store / "v1" / "aaa111.md").read_text()

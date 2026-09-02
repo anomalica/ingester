@@ -134,3 +134,69 @@ def test_ext_for_prefers_content_type_then_url():
     assert _ext_for(None, "https://x/a.webp?v=2") == "webp"
     assert _ext_for(None, "https://x/a.JPEG") == "jpg"
     assert _ext_for(None, "https://x/no-extension") == "jpg"
+
+
+def _fetch_png(url):
+    return (b"\x89PNG bytes " + url.encode(), "image/png")
+
+
+def test_lead_image_with_no_alt_or_caption_leads_the_body():
+    # A Squarespace post's lead picture: no alt, no figcaption, before all text.
+    html = """<html><body><article>
+    <h1>Lue Elizondo: No Going Back</h1>
+    <figure><img src="https://cdn.example/lue.jpg" alt="" data-image-dimensions="916x1191"></figure>
+    <p>Written by Christopher Sharp - 3 June 2026</p>
+    <p>Lue Elizondo has said there is no going back on disclosure.</p>
+    </article></body></html>"""
+    md = "Written by Christopher Sharp - 3 June 2026\n\nLue Elizondo has said there is no going back on disclosure.\n"
+    text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
+    assert text.startswith("<!--\nimage:\n  file: ")
+    assert len(media) == 1
+    assert text.index("image:") < text.index("Written by")
+
+
+def test_dropped_image_goes_back_after_the_paragraph_it_followed():
+    html = """<html><body><article>
+    <p>First paragraph of the article, long enough to anchor.</p>
+    <figure><img src="https://cdn.example/mid.jpg" alt="" width="800" height="600"></figure>
+    <p>Second paragraph continues the story afterwards.</p>
+    </article></body></html>"""
+    md = "First paragraph of the article, long enough to anchor.\n\nSecond paragraph continues the story afterwards.\n"
+    text, _ = render_images(md, harvest_images(html), fetch=_fetch_png)
+    first, second = text.index("First paragraph"), text.index("Second paragraph")
+    assert first < text.index("<!--\nimage:") < second
+
+
+def test_tiny_images_are_not_harvested():
+    html = """<html><body><article>
+    <p>Some article text that is long enough.</p>
+    <img src="https://cdn.example/avatar.jpg" width="32" height="32">
+    <img src="https://cdn.example/pixel.gif" data-image-dimensions="1x1">
+    <img src="https://cdn.example/real.jpg" width="1200" height="800">
+    </article></body></html>"""
+    urls = [h.url for h in harvest_images(html)]
+    assert urls == ["https://cdn.example/real.jpg"]
+
+
+def test_dropped_image_that_cannot_be_fetched_and_says_nothing_is_left_out():
+    html = """<html><body><article>
+    <p>Some article text that is long enough.</p>
+    <img src="https://cdn.example/gone.jpg" width="1200" height="800">
+    </article></body></html>"""
+    text, _ = render_images(
+        "Some article text that is long enough.\n",
+        harvest_images(html),
+        fetch=lambda url: None,
+    )
+    assert "image:" not in text
+
+
+def test_image_after_text_the_extractor_rejected_is_rejected_with_it():
+    html = """<html><body><article>
+    <p>Real article prose that is long enough to anchor.</p>
+    <p>Love our content and wish to support the website?</p>
+    <img src="https://cdn.example/banner.jpg" width="1200" height="400">
+    </article></body></html>"""
+    md = "Real article prose that is long enough to anchor.\n"
+    text, media = render_images(md, harvest_images(html), fetch=_fetch_png)
+    assert "image:" not in text and media == []
