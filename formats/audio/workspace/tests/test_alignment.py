@@ -412,3 +412,72 @@ def test_single_sentence_segment_not_split():
     assert len(turns) == 1
     assert len(turns[0].sentences) == 1
     assert turns[0].sentences[0].text == "Just one sentence here."
+
+
+def _word(text, start, end):
+    from models import Word
+
+    return Word(text=text, start=start, end=end)
+
+
+def _segment(words):
+    from models import Segment
+
+    return Segment(
+        text=" ".join(w.text for w in words),
+        start=words[0].start,
+        end=words[-1].end,
+        words=words,
+    )
+
+
+def _speaker_seg(speaker, start, end):
+    from models import SpeakerSegment
+
+    return SpeakerSegment(speaker=speaker, start=start, end=end)
+
+
+def test_align_splits_a_segment_where_the_speaker_changes():
+    # One whisper segment covering a question and its answer. Before splitting,
+    # the whole segment took the majority speaker and the question was
+    # attributed to the person answering.
+    words = [
+        _word("did", 0.0, 0.3),
+        _word("you", 0.3, 0.6),
+        _word("see", 0.6, 0.9),
+        _word("it?", 0.9, 1.2),
+    ]
+    words += [
+        _word(t, 2.0 + i * 0.4, 2.4 + i * 0.4)
+        for i, t in enumerate(["yes", "i", "saw", "it", "clearly", "that", "night"])
+    ]
+    speakers = [_speaker_seg("A", 0.0, 1.5), _speaker_seg("B", 1.6, 6.0)]
+    turns = align([_segment(words)], speakers, keep_words=True)
+    assert [t.speaker for t in turns] == ["A", "B"]
+    assert "did you see it?" in turns[0].sentences[0].text.lower()
+    assert "yes" in turns[1].sentences[0].text.lower()
+
+
+def test_align_ignores_a_single_word_flicker_at_a_boundary():
+    # One word landing on the other speaker is diarisation jitter, not a turn.
+    words = [
+        _word(t, i * 0.4, 0.4 + i * 0.4)
+        for i, t in enumerate(
+            ["the", "craft", "was", "recovered", "intact", "he", "said", "later"]
+        )
+    ]
+    speakers = [
+        _speaker_seg("A", 0.0, 1.2),
+        _speaker_seg("B", 1.2, 1.6),
+        _speaker_seg("A", 1.6, 4.0),
+    ]
+    turns = align([_segment(words)], speakers, keep_words=True)
+    assert [t.speaker for t in turns] == ["A"]
+
+
+def test_align_leaves_a_segment_without_word_timings_alone():
+    from models import Segment
+
+    seg = Segment(text="No timings here at all.", start=0.0, end=3.0, words=[])
+    turns = align([seg], [_speaker_seg("A", 0.0, 3.0)])
+    assert len(turns) == 1 and turns[0].speaker == "A"
