@@ -79,7 +79,13 @@ def _single_file_hash(fm: str) -> str | None:
 def original_of(fm: str):
     """(hash, ext) of the record's archived original, matching operations'
     resolve_original: pdf/audio/video keyed by content_hash; ebook by
-    content_hash|source_hash; web by its single_file snapshot hash."""
+    content_hash|source_hash; web by its single_file snapshot, falling back to
+    the raw fetch.
+
+    The web fallback matters: a record ingested before frozen-page snapshots
+    existed has no single_file entry, and keying it by one reports the original
+    as missing when the raw fetch is sitting on disk under source_hash. Two
+    records read as lost that way."""
     st = _field(fm, "source_type")
     ch = _bare(_field(fm, "content_hash"))
     sh = _bare(_field(fm, "source_hash"))
@@ -90,7 +96,7 @@ def original_of(fm: str):
     if st == "ebook":
         return (sh or ch, "epub")
     if st == "web":
-        return (_single_file_hash(fm), "html")
+        return (_single_file_hash(fm) or sh, "html")
     return (ch, _field(fm, "archived_ext"))
 
 
