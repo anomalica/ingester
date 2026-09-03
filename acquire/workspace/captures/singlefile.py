@@ -6,6 +6,9 @@ fonts, images) inlined as data URIs. The result is a single HTML file that
 renders identically to the original under a sandboxed iframe with no
 network access - which is what the workbench review pane needs.
 
+A capture is only worth having if it renders, so the browser runs with web
+security off; see BROWSER_ARGS for what that fixes and why it is safe here.
+
 Note: single-file runs its own browser, independent of patchright. Our
 cosmetic adblock CSS is NOT applied to this snapshot. Ads visible on the
 live page will appear in the SingleFile output. Acceptable for v1 - we
@@ -23,6 +26,9 @@ from pathlib import Path
 
 TIMEOUT_SECONDS = 120
 SINGLE_FILE_FALLBACK = "/usr/local/bin/single-file"
+BROWSER_ARGS = (
+    '--browser-args=["--no-sandbox","--disable-dev-shm-usage","--disable-web-security"]'
+)
 
 
 def _find_chromium() -> str | None:
@@ -79,7 +85,19 @@ def capture_singlefile(url: str) -> bytes | None:
                 url,
                 str(output_path),
                 f"--browser-executable-path={chromium}",
-                '--browser-args=["--no-sandbox","--disable-dev-shm-usage"]',
+                # --disable-web-security is what makes a site's own stylesheet
+                # survive the capture. SingleFile cannot read a cross-origin
+                # stylesheet out of the CSSOM (the browser refuses
+                # sheet.cssRules for it), so it re-fetches the URL - and that
+                # fetch is subject to CORS, which a redirect breaks. Squarespace
+                # serves a versioned site.css and 301s an outdated version
+                # number to the current one, so every Squarespace page lost its
+                # entire layout stylesheet and the snapshot rendered as
+                # unstyled text (23 of our 35 web records). With web security
+                # off the CSSOM is readable and the stylesheet is captured.
+                # This is a throwaway browser in a container, given one URL we
+                # are already fetching, with no profile and no user data.
+                BROWSER_ARGS,
                 # Force lazy-loaded images to materialise before capture.
                 # Without these the captured DOM keeps src=data:URI
                 # placeholders and the real image URLs only in data-src /
