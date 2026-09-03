@@ -46,8 +46,11 @@ CURRENT_VERSIONS: dict[str, int] = {
     # notes document under a Text/ prefix is found by its bare name (v4 dropped
     # six chapters of one book on a failed lookup).
     "ebook": 5,
-    "audio": 1,
-    "video": 1,
+    # v2: a transcription segment is split where its own words change speaker,
+    # so an interjection is no longer attributed to whoever was talking around
+    # it (misattributed words 4.75% -> 3.88% over three reviewed interviews).
+    "audio": 2,
+    "video": 2,
 }
 
 MANIFEST_NAME = "_pipeline_versions.yaml"
