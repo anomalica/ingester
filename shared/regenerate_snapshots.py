@@ -47,12 +47,13 @@ ACQUIRE = INGESTER / "acquire"
 # keeps the file it has, and the record is not touched.
 MIN_CSS_GAIN = 1.5
 
-# A record with no stored capture has nothing to compare against, so the fresh
-# one has to stand on its own. A paywall interstitial or a bot-check page comes
-# back as a few KB with almost no text; a real article does not. Both floors
-# must be cleared before such a capture is accepted.
-MIN_NEW_BYTES = 60_000
-MIN_NEW_TEXT_CHARS = 1_500
+# A capture is accepted only if it actually contains the article, and the record
+# itself is the ground truth for that: the share of the record's own vocabulary
+# that appears in the capture. A paywall interstitial, a bot check or a redirect
+# stub scores near zero however many bytes it weighs, and a small old page scores
+# 100% on 9 KB - which no byte floor can tell apart.
+MIN_ARTICLE_COVERAGE = 0.8
+
 
 _STYLE_RE = re.compile(r"<style[^>]*>(.*?)</style>", re.S)
 _SNAPSHOT_BLOCK_RE = re.compile(r"^snapshots:\n((?:  [ -].*\n)+)", re.M)
@@ -85,11 +86,19 @@ def snapshot_hash(text: str, role: str) -> str | None:
     return next((h for r, h in entries if r == role), None)
 
 
-def visible_text_chars(html: str) -> int:
-    """Roughly how much readable text a capture carries, with script, style and
-    tags removed - enough to tell an article from a bot-check page."""
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z']{4,}", text.lower()))
+
+
+def article_coverage(html: str, body: str) -> float:
+    """The share of the record's own vocabulary that appears in the capture -
+    a direct answer to "is this the article?", independent of page size."""
+    want = _words(re.sub(r"<!--.*?-->", " ", body, flags=re.S))
+    if not want:
+        return 1.0
     stripped = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
-    return len(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", stripped)).strip())
+    got = _words(re.sub(r"<[^>]+>", " ", stripped))
+    return len(want & got) / len(want)
 
 
 def source_url(text: str) -> str | None:
@@ -97,25 +106,19 @@ def source_url(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def capture(url: str) -> bytes | None:
-    """Run the acquire container's single-file capture against a live URL."""
-    script = (
-        "import sys; sys.path.insert(0, '/home/mark/workspace')\n"
-        "from captures.singlefile import capture_singlefile\n"
-        "out = capture_singlefile(sys.argv[1])\n"
-        "sys.stdout.buffer.write(out or b'')\n"
-    )
-    result = subprocess.run(
-        ["cm", "run", "python", "-c", script, url],
-        cwd=ACQUIRE,
-        capture_output=True,
-        timeout=600,
-    )
+def capture(url: str, from_archive: bool = False) -> bytes | None:
+    """Capture a page via the acquire container's capture_url entry point."""
+    cmd = ["cm", "run", "python", "workspace/capture_url.py", url]
+    if from_archive:
+        cmd.append("--archive")
+    result = subprocess.run(cmd, cwd=ACQUIRE, capture_output=True, timeout=1200)
     data = result.stdout
     return data if data.startswith(b"<") else None
 
 
-def replace_snapshot(text: str, role: str, new_hash: str, when: str) -> str:
+def replace_snapshot(
+    text: str, role: str, new_hash: str, when: str, source: str | None = None
+) -> str:
     """Point a snapshot entry at a new capture and stamp when it was taken,
     adding the entry - and the block - when the record has none. Returns the
     text unchanged only if there is nowhere to anchor a snapshots block."""
@@ -125,6 +128,8 @@ def replace_snapshot(text: str, role: str, new_hash: str, when: str) -> str:
         f"    content_type: text/html\n"
         f"    captured_at: {when}\n"
     )
+    if source:
+        entry += f"    captured_from: {source}\n"
     block = _SNAPSHOT_BLOCK_RE.search(text)
     if block is None:
         anchor = re.search(r"^source_hash:.*\n", text, re.M) or re.search(
@@ -156,24 +161,25 @@ def stored_css(text: str) -> int | None:
     return css_size(path.read_text(encoding="utf-8", errors="replace"))
 
 
-def regenerate(path: Path, write: bool) -> str:
+def regenerate(path: Path, write: bool, from_url: str | None = None) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
-    url = source_url(text)
+    url = from_url or source_url(text)
     if not url:
         return "no source_url"
+    body = text.split("\n---\n", 1)[1] if "\n---\n" in text else ""
     before = stored_css(text)
-    data = capture(url)
+    data = capture(url, from_archive=bool(from_url))
     if not data:
         return "capture failed"
     html = data.decode("utf-8", "replace")
+    coverage = article_coverage(html, body)
+    if coverage < MIN_ARTICLE_COVERAGE:
+        return (
+            f"fresh capture holds only {coverage:.0%} of the record's text "
+            f"({len(data) // 1024} KB) - left alone"
+        )
     after = css_size(html)
     if before is None:
-        text_chars = visible_text_chars(html)
-        if len(data) < MIN_NEW_BYTES or text_chars < MIN_NEW_TEXT_CHARS:
-            return (
-                f"fresh capture does not look like the article "
-                f"({len(data) // 1024} KB, {text_chars} chars of text) - left alone"
-            )
         verdict = f"no stored capture; fresh one has {after // 1024} KB of CSS"
     elif after < before * MIN_CSS_GAIN:
         return (
@@ -182,13 +188,16 @@ def regenerate(path: Path, write: bool) -> str:
         )
     else:
         verdict = f"CSS {before // 1024} KB -> {after // 1024} KB"
+    verdict += f", holds {coverage:.0%} of the record's text"
+    if from_url:
+        verdict += " (from the archive)"
     if not write:
         return f"WOULD REPLACE: {verdict}"
     new_hash = hashlib.sha256(data).hexdigest()
     when = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     # Update the record first: a capture archived under a hash no record points
     # at is litter nothing will ever collect.
-    updated = replace_snapshot(text, "single_file", new_hash, when)
+    updated = replace_snapshot(text, "single_file", new_hash, when, from_url)
     if updated == text:
         return "nowhere to anchor a snapshots block - nothing written"
     (RECORDS / f"{new_hash}.html").write_bytes(data)
@@ -206,6 +215,13 @@ def main() -> int:
         action="store_true",
         help="keep the fresh capture where it is materially better (default: report only)",
     )
+    ap.add_argument(
+        "--from",
+        dest="from_url",
+        help="capture this URL instead of the record's own - an archived copy "
+        "when the live page no longer serves the article. Stamps captured_from "
+        "and drops the archive's own toolbar. One record at a time.",
+    )
     args = ap.parse_args()
 
     records = web_records()
@@ -215,9 +231,13 @@ def main() -> int:
             print("no matching records", file=sys.stderr)
             return 1
 
+    if args.from_url and len(records) != 1:
+        print("--from takes exactly one record", file=sys.stderr)
+        return 1
+
     replaced = 0
     for path in records:
-        outcome = regenerate(path, args.write)
+        outcome = regenerate(path, args.write, args.from_url)
         print(f"{path.stem[:12]}: {outcome}", flush=True)
         replaced += outcome.startswith("re-captured")
     if args.write:

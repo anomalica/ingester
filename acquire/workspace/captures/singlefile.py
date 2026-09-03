@@ -25,6 +25,9 @@ import tempfile
 from pathlib import Path
 
 TIMEOUT_SECONDS = 120
+# Replaying an archived page is far slower than loading the live one: every
+# subresource is served from the archive, and the Wayback Machine rate-limits.
+ARCHIVE_TIMEOUT_SECONDS = 600
 SINGLE_FILE_FALLBACK = "/usr/local/bin/single-file"
 BROWSER_ARGS = (
     '--browser-args=["--no-sandbox","--disable-dev-shm-usage","--disable-web-security"]'
@@ -44,8 +47,18 @@ def _find_chromium() -> str | None:
     return None
 
 
-def capture_singlefile(url: str) -> bytes | None:
+def capture_singlefile(
+    url: str, drop_selectors: str | None = None, timeout: int = TIMEOUT_SECONDS
+) -> bytes | None:
     """Run single-file-cli against the URL and return inlined HTML bytes.
+
+    ``timeout`` bounds the capture; an archived page needs far longer than a
+    live one (ARCHIVE_TIMEOUT_SECONDS).
+
+    ``drop_selectors`` is a comma-separated CSS selector list removed before
+    serialising - used to drop an archive's replay toolbar when capturing from
+    the Wayback Machine, so the snapshot shows the publisher's page and not the
+    archive's chrome around it.
 
     Returns None if the tool fails or times out. Reuses the patchright-
     installed Chromium to avoid pulling down another browser.
@@ -107,8 +120,13 @@ def capture_singlefile(url: str) -> bytes | None:
                 "--load-deferred-images=true",
                 "--load-deferred-images-dispatch-scroll-event=true",
                 "--load-deferred-images-max-idle-time=10000",
+                *(
+                    [f"--removed-elements-selector={drop_selectors}"]
+                    if drop_selectors
+                    else []
+                ),
             ],
-            timeout=TIMEOUT_SECONDS,
+            timeout=timeout,
             capture_output=True,
             env=env,
         )
