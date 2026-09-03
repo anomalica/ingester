@@ -21,6 +21,13 @@ Runs on the host; the capture itself runs in the acquire container.
     python3 shared/regenerate_snapshots.py --check            # what is broken
     python3 shared/regenerate_snapshots.py <hash> [<hash>...]  # re-capture those
     python3 shared/regenerate_snapshots.py --check --write     # re-capture all broken
+
+Capturing from an archive (`--from`) is slow and unreliable in a way the live
+path is not: the Internet Archive throttles hard after a few page replays, and
+under throttling it answers a valid snapshot URL with a 404 rather than a delay.
+So a failure there usually means "come back later", not "this page is gone" -
+give it one page at a time with minutes between, and re-check the snapshot with
+a plain fetch before concluding anything about the record.
 """
 
 from __future__ import annotations
