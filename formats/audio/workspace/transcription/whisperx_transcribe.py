@@ -13,6 +13,14 @@ WHISPER_MODEL = "large-v3-turbo"
 BATCH_SIZE = int(os.environ.get("WHISPER_BATCH", "8"))
 
 
+def _env_float(name: str, default: float) -> float:
+    """A float from the environment, or the default when unset or unparseable."""
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
 def transcribe(
     audio_path: Path, language: str | None = None
 ) -> tuple[list[Segment], dict]:
@@ -53,6 +61,37 @@ def transcribe(
     # Reviewable list at shared/whisper_prompt.txt; disable with INGEST_WHISPER_PROMPT=0.
     initial_prompt = load_prompt()
     asr_options = {"initial_prompt": initial_prompt} if initial_prompt else None
+
+    # Speech detection decides what the model is even shown, so a quiet voice
+    # under its threshold is not transcribed badly - it is cut out, and the
+    # model fills the hole with something plausible. That is the failure mode
+    # in an interview where the guest is close to the microphone and the people
+    # asking questions are not: whole questions replaced by invented sentences,
+    # while the guest reads perfectly.
+    #
+    # whisperx's defaults (onset 0.500, offset 0.363) are tuned for clean audio.
+    # Measured on a 4-speaker interview whose quietest participant sits 9 dB
+    # below the guest, over two windows, the same model and audio throughout:
+    #
+    #   window            default   these values   most sensitive (0.15/0.10)
+    #   quiet questions    -0.258      -0.200          -0.175
+    #   clean passage      -0.128      -0.124          -0.155
+    #
+    # (median avg_logprob, higher is better.) At the default the model produced
+    # MORE words with WORSE confidence in the quiet window - padding, not
+    # transcription - and lost a 50-word question entirely. The most sensitive
+    # values recover the most there but cost accuracy on clean audio, because
+    # more room noise is admitted and Whisper invents text on noise. These
+    # values are the ones that improve the bad case without hurting the good.
+    #
+    # Raising the volume does NOT fix this: the same quiet turns transcribe
+    # identically at +12 dB, and normalising the file to -16 LUFS changed the
+    # transcript almost not at all. The audio was always audible; it was being
+    # discarded before the model saw it.
+    vad_options = {
+        "vad_onset": _env_float("INGEST_VAD_ONSET", 0.30),
+        "vad_offset": _env_float("INGEST_VAD_OFFSET", 0.20),
+    }
     if initial_prompt:
         print(
             f"[whisper] initial_prompt bias on ({len(initial_prompt.split())} terms)",
@@ -65,6 +104,7 @@ def transcribe(
         compute_type=compute_type,
         language=language,
         asr_options=asr_options,
+        vad_options=vad_options,
     )
     transcribe_result = model.transcribe(str(audio_path), batch_size=BATCH_SIZE)
 
