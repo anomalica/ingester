@@ -63,7 +63,10 @@ MIN_ARTICLE_COVERAGE = 0.8
 
 
 _STYLE_RE = re.compile(r"<style[^>]*>(.*?)</style>", re.S)
-_SNAPSHOT_BLOCK_RE = re.compile(r"^snapshots:\n((?:  [ -].*\n)+)", re.M)
+# Entries are written both flush-left (`- role:`) and indented (`  - role:`)
+# in the store, and a block that does not match here is a block this tool would
+# add a SECOND `snapshots:` key beside - which is what it did to seven records.
+_SNAPSHOT_BLOCK_RE = re.compile(r"^snapshots:\n((?:[ ]*-[ ].*\n|[ ]+[^ -].*\n)+)", re.M)
 
 
 def css_size(html: str) -> int:
@@ -113,14 +116,26 @@ def source_url(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def capture(url: str, from_archive: bool = False) -> bytes | None:
-    """Capture a page via the acquire container's capture_url entry point."""
+def capture(url: str, from_archive: bool = False) -> tuple[bytes | None, str]:
+    """Capture a page via the acquire container's capture_url entry point.
+
+    The container writes the page to stdout, and on a cold start the runtime
+    writes its own progress lines there first, so the page is taken from where
+    its markup begins rather than from the first byte.
+    """
     cmd = ["cm", "run", "python", "workspace/capture_url.py", url]
     if from_archive:
         cmd.append("--archive")
     result = subprocess.run(cmd, cwd=ACQUIRE, capture_output=True, timeout=1200)
     data = result.stdout
-    return data if data.startswith(b"<") else None
+    start = min(
+        (i for i in (data.find(b"<!DOCTYPE"), data.find(b"<html")) if i >= 0),
+        default=-1,
+    )
+    if start < 0:
+        tail = (result.stderr or data)[-300:].decode("utf-8", "replace").strip()
+        return None, " ".join(tail.split())
+    return data[start:], ""
 
 
 def replace_snapshot(
@@ -129,15 +144,27 @@ def replace_snapshot(
     """Point a snapshot entry at a new capture and stamp when it was taken,
     adding the entry - and the block - when the record has none. Returns the
     text unchanged only if there is nowhere to anchor a snapshots block."""
+    block = _SNAPSHOT_BLOCK_RE.search(text)
+    indent = "  "
+    if block:
+        first = next(
+            (
+                line
+                for line in block.group(1).split("\n")
+                if line.lstrip().startswith("- ")
+            ),
+            "  - ",
+        )
+        indent = first[: len(first) - len(first.lstrip())]
+    field = indent + "  "
     entry = (
-        f"  - role: {role}\n"
-        f"    hash: sha256:{new_hash}\n"
-        f"    content_type: text/html\n"
-        f"    captured_at: {when}\n"
+        f"{indent}- role: {role}\n"
+        f"{field}hash: sha256:{new_hash}\n"
+        f"{field}content_type: text/html\n"
+        f"{field}captured_at: {when}\n"
     )
     if source:
-        entry += f"    captured_from: {source}\n"
-    block = _SNAPSHOT_BLOCK_RE.search(text)
+        entry += f"{field}captured_from: {source}\n"
     if block is None:
         anchor = re.search(r"^source_hash:.*\n", text, re.M) or re.search(
             r"^content_hash:.*\n", text, re.M
@@ -147,7 +174,7 @@ def replace_snapshot(
         return text[: anchor.end()] + "snapshots:\n" + entry + text[anchor.end() :]
 
     existing = re.compile(
-        rf"  - role: {re.escape(role)}\n(?:    .*\n)+",
+        rf"{indent}- role: {re.escape(role)}\n(?:{field}.*\n)+",
     )
     if existing.search(block.group(1)):
         replaced = existing.sub(entry, block.group(1), count=1)
@@ -175,9 +202,9 @@ def regenerate(path: Path, write: bool, from_url: str | None = None) -> str:
         return "no source_url"
     body = text.split("\n---\n", 1)[1] if "\n---\n" in text else ""
     before = stored_css(text)
-    data = capture(url, from_archive=bool(from_url))
+    data, failure = capture(url, from_archive=bool(from_url))
     if not data:
-        return "capture failed"
+        return f"capture failed: {failure}" if failure else "capture failed"
     html = data.decode("utf-8", "replace")
     coverage = article_coverage(html, body)
     if coverage < MIN_ARTICLE_COVERAGE:
