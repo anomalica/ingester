@@ -24,7 +24,7 @@ test-pdf:
     #!/usr/bin/env bash
     set -euo pipefail
     cd formats/pdf
-    cm run pytest workspace/tests/ -v
+    cm run test -v
 
 test-ebook:
     #!/usr/bin/env bash
@@ -53,7 +53,7 @@ test-all:
     python3 -m pytest formats/audio/workspace/tests/ -v
     echo ""
     echo "=== pdf ==="
-    cd formats/pdf && cm run pytest workspace/tests/ -v
+    cd formats/pdf && cm run test -v
 
 download-test-corpus: download-test-corpus-pdf
 

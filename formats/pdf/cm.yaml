@@ -2,7 +2,6 @@ names:
   image: anomalica-ingester-pdf
   workspace: workspace
   user: nonroot
-
 runtime:
   features: []
   volumes:
@@ -11,7 +10,6 @@ runtime:
     - ../../staging:/mnt/staging:ro
     - ../../../ingests:/mnt/output:rw
     - ../../../anomalica-common/src:/opt/anomalica-common:ro
-
 stages:
   base:
     from: python:3.12-slim
@@ -26,23 +24,26 @@ stages:
             - pyyaml
             - pymupdf
             - requests
-
   development:
     from: base
     steps:
       - pip:
           install:
             - pytest
-
   production:
     from: base
     steps:
       - copy: workspace
-
 commands:
   ingest:
     command: python workspace/ingest_pdf.py
     description: Extract structured content from a PDF
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: workspace:/opt/anomalica-common
+  test:
+    command: pytest workspace/tests/
+    description: Run the PDF handler's tests with the shared library on the path
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: workspace:/opt/anomalica-common
