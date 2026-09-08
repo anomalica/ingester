@@ -400,6 +400,31 @@ def test_a_region_is_not_placed_over_text_it_never_covered():
     assert "concluding the argument at length" in kept
 
 
+def test_a_region_is_placed_from_its_most_distinctive_line():
+    from refresh import port_irrelevant_markers
+
+    # The bibliography's own heading also appears in the contents at the front
+    # of the book. Placing the region from that first, least distinctive line
+    # would stretch it over everything between the two.
+    old = (
+        "Contents\n\nThe Control System\n\nBibliography\n\n"
+        "The Control System\n\nA long chapter, concluding the argument at length.\n\n"
+        "<!-- irrelevant: start -->\n\nBibliography\n\n"
+        "Hynek, J. A. *The UFO Experience.* Chicago: Regnery, 1973.\n\n"
+        "<!-- irrelevant: end -->\n"
+    )
+    new = old.replace("<!-- irrelevant: start -->\n\n", "").replace(
+        "\n\n<!-- irrelevant: end -->", ""
+    )
+    body, ported, unported = port_irrelevant_markers(old, new)
+    assert (ported, unported) == (1, 0)
+    kept = "\n".join(
+        line for line, irr in zip(body.split("\n"), _flags(body)) if not irr
+    )
+    assert "concluding the argument at length" in kept
+    assert "The UFO Experience" not in kept
+
+
 def test_refresh_refuses_when_carrying_regions_would_gut_the_record(tmp_path):
     body = (
         "<!-- irrelevant: start -->\n\nContents\n\nChapter One\n\n<!-- irrelevant: end -->\n\n"

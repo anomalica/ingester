@@ -357,6 +357,123 @@ def _append_blocks(body: str, blocks: list[str]) -> str:
     )
 
 
+def _place_region(
+    region: list[str], lines: list[str], squashed: list[str], taken: list[bool]
+) -> list[int]:
+    """The fresh lines carrying a stored region's prose, in order.
+
+    Placement starts at the region's LONGEST line rather than its first, and
+    works outwards from there. A region's opening line is often its least
+    distinctive - a bare heading like "Bibliography", which a book also lists
+    in its contents hundreds of lines earlier - and starting there drags the
+    region's whole span back to that stray match. The longest line is the one
+    least likely to be repeated anywhere else in the book.
+    """
+
+    def usable(i: int) -> bool:
+        return not taken[i] and not lines[i].lstrip().startswith("<!--")
+
+    keys = [
+        k
+        for k in (_squash(content) for content in region)
+        if len(k) >= _MIN_ANCHOR_CHARS
+    ]
+    if not keys:
+        return []
+    order = sorted(range(len(keys)), key=lambda i: len(keys[i]), reverse=True)
+    seed = next(
+        (
+            i
+            for i in order
+            if any(usable(j) and keys[i] in squashed[j] for j in range(len(lines)))
+        ),
+        None,
+    )
+    if seed is None:
+        return []
+    best: list[int] = []
+    for start in (
+        i for i in range(len(lines)) if usable(i) and keys[seed] in squashed[i]
+    ):
+        after: list[int] = []
+        cursor = start + 1
+        for key in keys[seed + 1 :]:
+            hit = next(
+                (
+                    i
+                    for i in range(cursor, len(lines))
+                    if usable(i) and key in squashed[i]
+                ),
+                None,
+            )
+            if hit is not None:
+                after.append(hit)
+                cursor = hit + 1
+        before: list[int] = []
+        cursor = start - 1
+        for key in reversed(keys[:seed]):
+            hit = next(
+                (i for i in range(cursor, -1, -1) if usable(i) and key in squashed[i]),
+                None,
+            )
+            if hit is not None:
+                before.append(hit)
+                cursor = hit - 1
+        hits = sorted(before) + [start] + after
+        if not best or (len(hits), -(hits[-1] - hits[0])) > (
+            len(best),
+            -(best[-1] - best[0]),
+        ):
+            best = hits
+    if not best:
+        return []
+    return _grow_over_edges(region, best, lines, squashed, usable)
+
+
+def _skippable(line: str) -> bool:
+    """Blank lines and one-line annotations, which sit between a region's
+    heading and its first paragraph."""
+    text = line.strip()
+    return not text or (text.startswith("<!--") and text.endswith("-->"))
+
+
+def _grow_over_edges(
+    region: list[str],
+    hits: list[int],
+    lines: list[str],
+    squashed: list[str],
+    usable,
+) -> list[int]:
+    """Extend a placed region over the short lines at its edges.
+
+    A region's own edges are often one-word headings - "Contents", "Index",
+    "Prologue" - too short to anchor on safely, since they occur all over a
+    book. They can be taken at the edge of a region already placed by its long
+    lines, where the only question is whether the line immediately outside is
+    one the reviewer covered.
+    """
+    edges = {
+        key
+        for key in (_squash(content) for content in region)
+        if key and len(key) < _MIN_ANCHOR_CHARS
+    }
+    if not edges:
+        return hits
+    lo, hi = hits[0], hits[-1]
+    for step, bound in ((-1, -1), (1, len(lines))):
+        while True:
+            i = (lo if step < 0 else hi) + step
+            while i != bound and _skippable(lines[i]):
+                i += step
+            if i == bound or not usable(i) or squashed[i] not in edges:
+                break
+            if step < 0:
+                lo = i
+            else:
+                hi = i
+    return [lo] + hits + [hi]
+
+
 def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int]:
     """Re-place each reviewer-marked irrelevant region around the fresh body's
     lines that carry the same prose. A fresh line matches a stored one when it
@@ -364,7 +481,7 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     Returns the body and the counts of regions ported and not ported (whose
     prose the fresh extraction no longer carries at all).
 
-    Matching is ORDERED and the result is SIZE-CHECKED, and both guards exist
+    Matching is ANCHORED and the result is SIZE-CHECKED, and both guards exist
     for the same reason. A region's lines are not unique strings: a book's
     contents listing repeats every chapter title, and a bibliography or index
     entry repeats names and phrases that appear throughout the text. Searching
@@ -372,9 +489,9 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     first match to the last therefore lets one stray match anywhere in the book
     swallow everything between - which is precisely what happened, marking 97%
     of one book and 84% of another as irrelevant and reducing them to their
-    front matter. So each line is sought only at or after the previous line's
-    match, and a span carrying far more text than the region it came from is
-    refused rather than placed.
+    front matter. So a region is placed from its most distinctive line outwards
+    and a span carrying far more text than the region it came from is refused
+    rather than placed.
     """
     regions = irrelevant_regions(old_body)
     if not regions:
@@ -385,21 +502,7 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     spans: list[tuple[int, int]] = []
     unported = 0
     for region in regions:
-        hits: list[int] = []
-        cursor = 0
-        for content in region:
-            key = _squash(content)
-            if len(key) < _MIN_ANCHOR_CHARS:
-                continue
-            for i in range(cursor, len(lines)):
-                if (
-                    not taken[i]
-                    and key in squashed[i]
-                    and not lines[i].lstrip().startswith("<!--")
-                ):
-                    hits.append(i)
-                    cursor = i + 1
-                    break
+        hits = _place_region(region, lines, squashed, taken)
         if not hits:
             unported += 1
             continue
