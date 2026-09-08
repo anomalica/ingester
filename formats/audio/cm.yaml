@@ -2,7 +2,6 @@ names:
   image: anomalica-ingester-audio
   workspace: workspace
   user: nonroot
-
 runtime:
   features:
     - gpu
@@ -18,7 +17,6 @@ runtime:
     # download once and are reused across runs (the container is --rm). Without
     # this, every ingestion re-downloads ~2.5GB of models.
     - /home/mark/.cache/anomalica-ingester-hf:/mnt/hfcache:rw
-
 stages:
   base:
     from: python:3.12-slim
@@ -44,19 +42,16 @@ stages:
             - huggingface-hub<1.0.0
             - soundfile
             - pyyaml
-
   development:
     from: base
     steps:
       - pip:
           install:
             - pytest
-
   production:
     from: base
     steps:
       - copy: workspace
-
 commands:
   ingest:
     command: python workspace/ingest_audio.py
@@ -82,4 +77,16 @@ commands:
       # Conservative batch for float16 on the 6GB card - comfortable headroom.
       WHISPER_BATCH: "4"
       # Reduce CUDA fragmentation for transcription + diarisation on the GPU.
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  vad-check:
+    command: python workspace/vad_check.py
+    description: Measure a voice-activity setting against a record's cached transcript
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/mnt/shared"
+      HF_HOME: "/mnt/hfcache"
+      TORCH_HOME: "/mnt/hfcache/torch"
+      WHISPER_DEVICE: "cuda"
+      CUDA_VISIBLE_DEVICES: "0"
+      WHISPER_BATCH: "4"
       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
