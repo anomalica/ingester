@@ -427,7 +427,64 @@ def _place_region(
             best = hits
     if not best:
         return []
-    return _grow_over_edges(region, best, lines, squashed, usable)
+    return _grow_over_edges(
+        region, _snap_to_annotations(best, lines), lines, squashed, usable
+    )
+
+
+_IRRELEVANT_MARKER_RE = re.compile(r"^\s*<!-- irrelevant: (?:start|end) -->\s*$")
+
+
+def _snap_to_annotations(hits: list[int], lines: list[str]) -> list[int]:
+    """Move a placed region's edges out to enclose any annotation they land in.
+
+    A reviewer marks a whole image annotation irrelevant, and its inner
+    `  file: photo.jpg` line is what the fresh body matches. Bounding the
+    region on that line would cut the annotation in half and strand its `-->`
+    outside, so an edge inside a block takes the whole block.
+    """
+    inside = _inside_annotation(lines)
+    lo, hi = hits[0], hits[-1]
+    if inside[lo]:
+        while lo > 0 and inside[lo - 1]:
+            lo -= 1
+    if inside[hi]:
+        while hi + 1 < len(lines) and inside[hi + 1]:
+            hi += 1
+    return [lo] + hits + [hi]
+
+
+def _inside_annotation(lines: list[str]) -> list[bool]:
+    """Which lines sit within an annotation block.
+
+    A region marker placed on one of them splits the annotation in half and
+    leaves a `-->` stranded outside the region, so those lines are not
+    candidates to bound a region - a `  file: photo.jpg` line otherwise looks
+    like ordinary text. Openers are found anywhere in the line, not only at its
+    start: an ebook's title page puts a whole image annotation inside a table
+    cell.
+    """
+    inside = [False] * len(lines)
+    open_at: int | None = None
+    for i, line in enumerate(lines):
+        if _IRRELEVANT_MARKER_RE.match(line):
+            continue
+        cursor = 0
+        while True:
+            if open_at is None:
+                found = line.find("<!--", cursor)
+                if found < 0:
+                    break
+                open_at, cursor = i, found + 4
+            else:
+                found = line.find("-->", cursor)
+                if found < 0:
+                    inside[i] = True
+                    break
+                for j in range(open_at, i + 1):
+                    inside[j] = True
+                open_at, cursor = None, found + 3
+    return inside
 
 
 def _skippable(line: str) -> bool:

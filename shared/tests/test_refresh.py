@@ -425,6 +425,24 @@ def test_a_region_is_placed_from_its_most_distinctive_line():
     assert "The UFO Experience" not in kept
 
 
+def test_a_region_marker_is_never_placed_inside_an_annotation():
+    from refresh import port_irrelevant_markers
+
+    old = (
+        "The article ends here.\n\n"
+        "<!-- irrelevant: start -->\n\nSubscribe to our newsletter for more.\n\n"
+        "<!--\nimage:\n  file: 33bfaf9b9aba.jpg\n-->\n\n<!-- irrelevant: end -->\n"
+    )
+    new = (
+        "The article ends here.\n\nSubscribe to our newsletter for more.\n\n"
+        "<!--\nimage:\n  file: 33bfaf9b9aba.jpg\n-->\n"
+    )
+    body, ported, _unported = port_irrelevant_markers(old, new)
+    assert ported == 1
+    assert "  file: 33bfaf9b9aba.jpg\n-->" in body
+    assert body.count("<!-- irrelevant: end -->") == 1
+
+
 def test_refresh_refuses_when_carrying_regions_would_gut_the_record(tmp_path):
     body = (
         "<!-- irrelevant: start -->\n\nContents\n\nChapter One\n\n<!-- irrelevant: end -->\n\n"
