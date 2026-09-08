@@ -360,3 +360,63 @@ def test_uncaptioned_stored_annotations_with_no_fresh_counterpart_are_dropped():
     )
     body, _ = transplant_image_files(old2, "Prose.\n")
     assert "lead.jpg" in body
+
+
+def _flags(body: str) -> list[bool]:
+    """Per-line irrelevant flags, mirroring the shared parser's flat toggle."""
+    out, inside = [], False
+    for line in body.split("\n"):
+        if re.match(r"^\s*<!--\s*irrelevant:\s*start\s*-->\s*$", line):
+            inside = True
+            out.append(True)
+        elif re.match(r"^\s*<!--\s*irrelevant:\s*end\s*-->\s*$", line):
+            inside = False
+            out.append(True)
+        else:
+            out.append(inside)
+    return out
+
+
+def test_a_region_is_not_placed_over_text_it_never_covered():
+    from refresh import port_irrelevant_markers
+
+    # A contents listing repeats every chapter title, so each of its lines also
+    # matches the real chapter heading later in the book. Taking the span from
+    # the first match to the last would mark the whole book irrelevant.
+    old = (
+        "<!-- irrelevant: start -->\n\nContents\n\nThe Psychic Component\n\n"
+        "The Control System\n\n<!-- irrelevant: end -->\n\n"
+        "The Psychic Component\n\nA long chapter about the psychic component of it all.\n\n"
+        "The Control System\n\nAnother long chapter, concluding the argument at length.\n"
+    )
+    new = old.replace("<!-- irrelevant: start -->\n\n", "").replace(
+        "\n\n<!-- irrelevant: end -->", ""
+    )
+    body, _ported, _unported = port_irrelevant_markers(old, new)
+    kept = "\n".join(
+        line for line, irr in zip(body.split("\n"), _flags(body)) if not irr
+    )
+    assert "A long chapter about the psychic component" in kept
+    assert "concluding the argument at length" in kept
+
+
+def test_refresh_refuses_when_carrying_regions_would_gut_the_record(tmp_path):
+    body = (
+        "<!-- irrelevant: start -->\n\nContents\n\nChapter One\n\n<!-- irrelevant: end -->\n\n"
+        + "Chapter One\n\n"
+        + "\n\n".join(
+            f"Paragraph {i} of real content that must survive." for i in range(40)
+        )
+        + "\n"
+    )
+    store, record, source = _store(tmp_path, body=body)
+    # A fresh body where the contents lines match the chapter heading far below.
+    fresh = "Contents\n\nChapter One\n\n" + "\n\n".join(
+        f"Paragraph {i} of real content that must survive." for i in range(40)
+    )
+    refresh_record(record, store, fresh, source, media_type="ebook")
+    text = record.read_text()
+    kept = "\n".join(
+        line for line, irr in zip(text.split("\n"), _flags(text)) if not irr
+    )
+    assert "Paragraph 39 of real content" in kept

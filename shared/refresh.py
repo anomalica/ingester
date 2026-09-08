@@ -81,6 +81,16 @@ _CONTEXT_CHARS = (24, 16, 8)
 # Below this many characters a line is too short to identify prose on its own
 # (a lone "Advertisement" or a date), so it cannot anchor a ported region.
 _MIN_ANCHOR_CHARS = 12
+# A ported region may legitimately grow - the fresh extraction rewraps, and the
+# span includes blank lines the region's content lines do not - but not by much.
+# Beyond this the anchors matched somewhere they do not belong and the region is
+# refused rather than placed over text it was never meant to cover.
+_MAX_SPAN_GROWTH = 3.0
+_SPAN_SLACK_CHARS = 400
+# How much of the record may stop reaching extraction because its irrelevant
+# regions moved. A refresh legitimately shifts this a little; a collapse means a
+# region landed over the wrong text.
+_MAX_MATERIALISED_LOSS = 0.15
 # An unreviewed record may lose this much of its stored prose to a refresh -
 # furniture an improved extractor no longer extracts - before it is refused: a
 # tenth of its words, never more than a footer's worth, never fewer than a few.
@@ -211,6 +221,14 @@ def carried_words(frontmatter: str) -> str:
         if day:
             parts.extend([day, str(int(day))])
     return " ".join(parts)
+
+
+def _materialised_share(body: str) -> float:
+    """The share of a body that survives its irrelevant regions - what actually
+    reaches extraction."""
+    if not body:
+        return 1.0
+    return len(_without_irrelevant(body)) / len(body)
 
 
 def words_gone(old_body: str, new_body: str, carried: str = "") -> Counter:
@@ -344,7 +362,20 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     lines that carry the same prose. A fresh line matches a stored one when it
     contains it (a paragraph the old extractor split now arrives whole).
     Returns the body and the counts of regions ported and not ported (whose
-    prose the fresh extraction no longer carries at all)."""
+    prose the fresh extraction no longer carries at all).
+
+    Matching is ORDERED and the result is SIZE-CHECKED, and both guards exist
+    for the same reason. A region's lines are not unique strings: a book's
+    contents listing repeats every chapter title, and a bibliography or index
+    entry repeats names and phrases that appear throughout the text. Searching
+    the whole document for each line independently and taking the span from the
+    first match to the last therefore lets one stray match anywhere in the book
+    swallow everything between - which is precisely what happened, marking 97%
+    of one book and 84% of another as irrelevant and reducing them to their
+    front matter. So each line is sought only at or after the previous line's
+    match, and a span carrying far more text than the region it came from is
+    refused rather than placed.
+    """
     regions = irrelevant_regions(old_body)
     if not regions:
         return new_body, 0, 0
@@ -354,23 +385,30 @@ def port_irrelevant_markers(old_body: str, new_body: str) -> tuple[str, int, int
     spans: list[tuple[int, int]] = []
     unported = 0
     for region in regions:
-        hits = []
+        hits: list[int] = []
+        cursor = 0
         for content in region:
             key = _squash(content)
             if len(key) < _MIN_ANCHOR_CHARS:
                 continue
-            for i, s in enumerate(squashed):
+            for i in range(cursor, len(lines)):
                 if (
                     not taken[i]
-                    and key in s
+                    and key in squashed[i]
                     and not lines[i].lstrip().startswith("<!--")
                 ):
                     hits.append(i)
+                    cursor = i + 1
                     break
         if not hits:
             unported += 1
             continue
-        lo, hi = min(hits), max(hits)
+        lo, hi = hits[0], hits[-1]
+        region_chars = sum(len(line) for line in region)
+        span_chars = sum(len(lines[i]) for i in range(lo, hi + 1))
+        if span_chars > _MAX_SPAN_GROWTH * region_chars + _SPAN_SLACK_CHARS:
+            unported += 1
+            continue
         for i in range(lo, hi + 1):
             taken[i] = True
         spans.append((lo, hi))
@@ -669,6 +707,24 @@ def carry_review_work(
         notes.append(
             f"irrelevant regions: {ported} ported"
             + (f", {unported} no longer in the extraction" if unported else "")
+        )
+    # What a reviewer marked irrelevant is invisible to the loss gate below:
+    # the words are still in the body, just marked, so a marker placed over the
+    # wrong text passes every check while removing the record from extraction
+    # entirely. This is that check - the share of the body that survives
+    # materialising, before against after. It is one division and it is the only
+    # thing that catches a mis-placed region, which is how a book came to be 97%
+    # marked and nobody noticed until a digest was built from its front matter.
+    was = _materialised_share(old_body)
+    now = _materialised_share(new_body)
+    if was - now > _MAX_MATERIALISED_LOSS:
+        return Carry(
+            new_body,
+            f"refused: carrying the reviewer's irrelevant regions would leave "
+            f"{now:.0%} of the body materialising, against {was:.0%} before - "
+            "a region has been placed over text it did not cover",
+            notes,
+            True,
         )
     new_body, placed, dropped_pairs = port_inline_markers(old_body, new_body)
     if placed or dropped_pairs:
