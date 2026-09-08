@@ -443,6 +443,28 @@ def test_a_region_marker_is_never_placed_inside_an_annotation():
     assert body.count("<!-- irrelevant: end -->") == 1
 
 
+def test_growing_a_region_does_not_reach_into_a_neighbouring_annotation():
+    from refresh import port_irrelevant_markers
+
+    # "image:" is a line of the annotation the reviewer marked, and it is short
+    # enough to be an edge key. The annotation that follows the region carries
+    # the same line, and taking it would cut that one in half.
+    old = (
+        "<!-- irrelevant: start -->\n\nSubscribe to our newsletter for more.\n\n"
+        "<!--\nimage:\n  file: aaa.jpg\n-->\n\n<!-- irrelevant: end -->\n\n"
+        "The article itself begins here and runs on for a while.\n\n"
+        "<!--\nimage:\n  file: bbb.jpg\n-->\n"
+    )
+    new = old.replace("<!-- irrelevant: start -->\n\n", "").replace(
+        "\n\n<!-- irrelevant: end -->", ""
+    )
+    body, ported, _unported = port_irrelevant_markers(old, new)
+    assert ported == 1
+    assert "  file: bbb.jpg\n-->" in body
+    kept = body.split("<!-- irrelevant: end -->")[1]
+    assert "The article itself begins here" in kept
+
+
 def test_refresh_refuses_when_carrying_regions_would_gut_the_record(tmp_path):
     body = (
         "<!-- irrelevant: start -->\n\nContents\n\nChapter One\n\n<!-- irrelevant: end -->\n\n"

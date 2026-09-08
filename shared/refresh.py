@@ -370,6 +370,8 @@ def _place_region(
     least likely to be repeated anywhere else in the book.
     """
 
+    annotated = _inside_annotation(lines)
+
     def usable(i: int) -> bool:
         return not taken[i] and not lines[i].lstrip().startswith("<!--")
 
@@ -428,14 +430,21 @@ def _place_region(
     if not best:
         return []
     return _grow_over_edges(
-        region, _snap_to_annotations(best, lines), lines, squashed, usable
+        region,
+        _snap_to_annotations(best, lines, annotated),
+        lines,
+        squashed,
+        annotated,
+        usable,
     )
 
 
 _IRRELEVANT_MARKER_RE = re.compile(r"^\s*<!-- irrelevant: (?:start|end) -->\s*$")
 
 
-def _snap_to_annotations(hits: list[int], lines: list[str]) -> list[int]:
+def _snap_to_annotations(
+    hits: list[int], lines: list[str], inside: list[bool]
+) -> list[int]:
     """Move a placed region's edges out to enclose any annotation they land in.
 
     A reviewer marks a whole image annotation irrelevant, and its inner
@@ -443,7 +452,6 @@ def _snap_to_annotations(hits: list[int], lines: list[str]) -> list[int]:
     region on that line would cut the annotation in half and strand its `-->`
     outside, so an edge inside a block takes the whole block.
     """
-    inside = _inside_annotation(lines)
     lo, hi = hits[0], hits[-1]
     if inside[lo]:
         while lo > 0 and inside[lo - 1]:
@@ -499,6 +507,7 @@ def _grow_over_edges(
     hits: list[int],
     lines: list[str],
     squashed: list[str],
+    inside: list[bool],
     usable,
 ) -> list[int]:
     """Extend a placed region over the short lines at its edges.
@@ -522,7 +531,7 @@ def _grow_over_edges(
             i = (lo if step < 0 else hi) + step
             while i != bound and _skippable(lines[i]):
                 i += step
-            if i == bound or not usable(i) or squashed[i] not in edges:
+            if i == bound or inside[i] or not usable(i) or squashed[i] not in edges:
                 break
             if step < 0:
                 lo = i
