@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, "/mnt/shared")
 
 RECORDS = Path("/mnt/records")
+MEASUREMENTS = Path("/mnt/vad")
 
 #: A silence at least this long, with a diarised speaker inside it for at least
 #: MIN_SPEECH_SECONDS, is speech the transcription did not hear.
@@ -125,7 +126,7 @@ def main(argv: list[str]) -> int:
     report("stored", stored, tracks, 0.0)
     fresh = transcribe_with(audio, onset, offset)
     report(f"onset {onset} offset {offset}", fresh, tracks, start)
-    out = Path(f"/tmp/{stem[:12]}.vad-{onset}-{offset}.json")
+    out = MEASUREMENTS / f"{stem[:12]}.vad-{onset}-{offset}.json"
     out.write_text(json.dumps(fresh, indent=1))
     print("wrote", out, flush=True)
     return 0
