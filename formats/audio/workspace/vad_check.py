@@ -18,7 +18,11 @@ model caches and the GPU batch size are set per command, so a bare run
 re-downloads the alignment model and transcribes at a batch the card
 cannot always hold.
 
-A length of 0 takes the whole recording.
+A length of 0 takes the whole recording, and that is the measurement to trust.
+A short window is not a smaller version of the same job: chunking and language
+detection both change, and on one recording a 300-second window produced no
+transcript at all for its first half while the whole-file run heard 45 segments
+there. Use a window to look at a passage, never to compare two settings.
 """
 
 from __future__ import annotations
