@@ -83,6 +83,21 @@ class ClaudeCodeProvider:
                     "--no-session-persistence",
                     "--add-dir",
                     str(pdf_path.parent),
+                    # The interactive session the CLI loads before reading the
+                    # page. Measured 2026-09-09 against this exact command:
+                    # 132,626 tokens without these two flags, 39,077 with them,
+                    # and the Read tool still returned the right answer. It stays
+                    # higher than a no-tools call because the file tools remain
+                    # loaded, which is the point of this path.
+                    #
+                    # --restricted confines the file tools to the working
+                    # directories, and --add-dir above is explicitly one of them,
+                    # so the PDF stays reachable. Do NOT add
+                    # --dangerously-skip-permissions here: restricted mode refuses
+                    # it, and --allowedTools Read already authorises the one tool
+                    # this needs.
+                    "--strict-mcp-config",
+                    "--restricted",
                     "--output-format",
                     "json",
                 ],
