@@ -1,7 +1,11 @@
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 from acquire import _redirected_away, _ytdlp_creators, acquire
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_ytdlp_creators_distinct_from_channel():
@@ -116,6 +120,58 @@ def test_acquire_accepts_small_pdf(tmp_path):
     assert exit_code == 0
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert manifest["fetch_method"] == "http"
+
+
+def test_acquire_rejects_pmc_pdf_interstitial(tmp_path):
+    interstitial = (FIXTURES / "pmc_pdf_interstitial.html").read_bytes()
+    fetchers = [
+        ("wayback", lambda url: (interstitial, "text/html")),
+        ("patchright", lambda url: (interstitial, "text/html")),
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire(
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC7514271/pdf/entropy-21-00939.pdf",
+            tmp_path,
+        )
+    assert exit_code == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["asset"] is None
+    assert "PMC download proof-of-work interstitial" in manifest["error"]
+    assert not list(tmp_path.glob("asset.*"))
+
+
+def test_acquire_rejects_html_for_pdf_url_without_known_markers(tmp_path):
+    html = b"<html><body>Generic download error</body></html>" * 100
+    with _patch_fetchers(http_result=(html, "text/html")):
+        exit_code = acquire("https://example.com/paper.pdf?download=1", tmp_path)
+    assert exit_code == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert (
+        "URL names application/pdf, but the response is text/html" in manifest["error"]
+    )
+
+
+def test_acquire_rejects_html_bytes_mislabelled_as_pdf(tmp_path):
+    interstitial = (FIXTURES / "pmc_pdf_interstitial.html").read_bytes()
+    with _patch_fetchers(http_result=(interstitial, "application/pdf")):
+        exit_code = acquire("https://example.com/paper.pdf", tmp_path)
+    assert exit_code == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert "PMC download proof-of-work interstitial" in manifest["error"]
+    assert not list(tmp_path.glob("asset.*"))
+
+
+def test_acquire_uses_real_pdf_after_rejecting_html(tmp_path):
+    html = b"<html><body>Download gate</body></html>" * 100
+    pdf = b"%PDF-1.7 authoritative copy"
+    fetchers = [
+        ("wayback", lambda url: (html, "text/html")),
+        ("pmc", lambda url: (pdf, "application/pdf")),
+    ]
+    with patch("acquire.FETCHERS", fetchers):
+        exit_code = acquire("https://example.com/paper.pdf", tmp_path)
+    assert exit_code == 0
+    assert (tmp_path / "asset.pdf").read_bytes() == pdf
 
 
 def test_acquire_returns_1_when_all_fail(tmp_path):

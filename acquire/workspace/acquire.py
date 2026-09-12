@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from detect import detect
+from detect import detect, detect_from_bytes, detect_from_extension
 from fetch import FETCHERS
 from fetch import ytdlp
 from fetch.ytdlp import is_video_platform
@@ -115,6 +115,37 @@ MIME_TO_EXT = {
 
 MIN_HTML_SIZE = 1024
 
+_HTML_TYPES = {"text/html", "application/xhtml+xml"}
+_PMC_DOWNLOAD_INTERSTITIAL_MARKERS = (
+    b"Preparing to download",
+    b"HHS Vulnerability Disclosure",
+)
+
+
+def _html_rejection_reason(url: str, content: bytes, detected_type: str) -> str | None:
+    """Why an HTML response is not the requested resource, if applicable."""
+    signature_type = detect_from_bytes(content)
+    html_type = (
+        signature_type
+        if signature_type in _HTML_TYPES
+        else detected_type
+        if detected_type in _HTML_TYPES
+        else None
+    )
+    if html_type is None:
+        return None
+    if all(marker in content for marker in _PMC_DOWNLOAD_INTERSTITIAL_MARKERS):
+        return "PMC download proof-of-work interstitial"
+    expected_type = detect_from_extension(urlparse(url).path)
+    if expected_type and expected_type not in _HTML_TYPES:
+        if signature_type in _HTML_TYPES and detected_type not in _HTML_TYPES:
+            return (
+                f"URL names {expected_type} and the response declares {detected_type}, "
+                f"but its bytes are {signature_type}"
+            )
+        return f"URL names {expected_type}, but the response is {html_type}"
+    return None
+
 
 def acquire(url: str, staging_dir: Path) -> int:
     """Fetch a URL and write the asset and manifest to staging_dir.
@@ -153,6 +184,7 @@ def acquire(url: str, staging_dir: Path) -> int:
             ("wayback-snapshot", lambda _u, _a=archive_url: _wb.fetch_snapshot(_a))
         ] + list(FETCHERS)
 
+    rejected_html: list[str] = []
     for method_name, fetcher in fetchers:
         print(f"Trying {method_name}...", file=sys.stderr)
         result = fetcher(url)
@@ -175,7 +207,12 @@ def acquire(url: str, staging_dir: Path) -> int:
         if not detected_type:
             detected_type = "application/octet-stream"
 
-        is_html = detected_type in ("text/html", "application/xhtml+xml")
+        is_html = detected_type in _HTML_TYPES
+
+        if reason := _html_rejection_reason(url, content, detected_type):
+            rejected_html.append(reason)
+            print(f"  {method_name}: {reason}, trying next", file=sys.stderr)
+            continue
 
         if is_html and len(content) < MIN_HTML_SIZE:
             print(
@@ -348,6 +385,9 @@ def acquire(url: str, staging_dir: Path) -> int:
         error = f"yt-dlp could not fetch this video-platform URL: {reason}"
     else:
         error = "All fetch methods exhausted"
+        if rejected_html:
+            reasons = "; ".join(dict.fromkeys(rejected_html))
+            error = f"{error}: rejected HTML ({reasons})"
     manifest = {
         "source": url,
         "asset": None,
