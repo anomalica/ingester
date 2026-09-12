@@ -6,7 +6,7 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] [--source-url URL [--source-id ID]] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--source-url URL [--source-id ID]] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
@@ -17,6 +17,8 @@ usage() {
 	echo "                 archived file, e.g. re-transcribing an .opus as record/2" >&2
 	echo "  --source-id    Optional stable id for --source-url; derived from the URL" >&2
 	echo "                 when omitted (youtube:{id} / url:{hash})" >&2
+	echo "  --run-uuid     Scheduler-supplied canonical UUID for the result receipt" >&2
+	echo "  --result-path  Absolute path for the atomic structured result receipt" >&2
 	exit 1
 }
 
@@ -29,6 +31,8 @@ USE_API=0
 INGEST_MODEL="${INGEST_MODEL:-}"
 SOURCE_URL=""
 SOURCE_ID=""
+RUN_UUID=""
+RESULT_PATH=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--force)
@@ -76,6 +80,22 @@ while [[ $# -gt 0 ]]; do
 		SOURCE_ID="${1#*=}"
 		shift
 		;;
+	--run-uuid)
+		RUN_UUID="$2"
+		shift 2
+		;;
+	--run-uuid=*)
+		RUN_UUID="${1#*=}"
+		shift
+		;;
+	--result-path)
+		RESULT_PATH="$2"
+		shift 2
+		;;
+	--result-path=*)
+		RESULT_PATH="${1#*=}"
+		shift
+		;;
 	--help | -h) usage ;;
 	-*)
 		echo "Unknown option: $1" >&2
@@ -101,6 +121,71 @@ if [[ ! -d "$INGESTS_DIR" ]]; then
 	echo "Clone it with: gh repo clone anomalica/ingests $(dirname "${INGESTS_DIR}")" >&2
 	exit 1
 fi
+
+SCHEDULER_RESULT=0
+if { [[ -n "$RUN_UUID" ]] && [[ -z "$RESULT_PATH" ]]; } ||
+	{ [[ -z "$RUN_UUID" ]] && [[ -n "$RESULT_PATH" ]]; }; then
+	echo "Error: --run-uuid and --result-path must be supplied together" >&2
+	exit 1
+fi
+if [[ -n "$RUN_UUID" ]]; then
+	SCHEDULER_RESULT=1
+fi
+UUID="${RUN_UUID:-$(python3 -c 'import uuid; print(uuid.uuid4())')}"
+if ! RUN_UUID="$UUID" python3 -c "import os, uuid; value=os.environ['RUN_UUID']; raise SystemExit(0 if str(uuid.UUID(value)) == value else 1)" 2>/dev/null; then
+	echo "Error: --run-uuid must be a canonical lowercase UUID" >&2
+	exit 1
+fi
+if [[ -z "$RESULT_PATH" ]]; then
+	DATA_DIR="${ANOMALICA_DATA_DIR:-${HOME}/.local/share/anomalica}"
+	RESULT_PATH="${DATA_DIR}/ingest-results/${UUID}.json"
+elif [[ "$RESULT_PATH" != /* ]]; then
+	echo "Error: --result-path must be an absolute path" >&2
+	exit 1
+fi
+
+emit_result() {
+	local outcome="$1"
+	local record_path="$2"
+	local commit_sha="${3:-}"
+	if [[ -z "$commit_sha" ]]; then
+		commit_sha="$(git -C "$INGESTS_DIR" rev-parse HEAD)"
+	fi
+	python3 "${SCRIPT_DIR}/shared/ingest_result.py" publish \
+		--ingests-dir "$INGESTS_DIR" \
+		--result-path "$RESULT_PATH" \
+		--run-uuid "$UUID" \
+		--outcome "$outcome" \
+		--record-path "$record_path" \
+		--commit-sha "$commit_sha"
+}
+
+INGESTS_LOCK_HELD=0
+INGESTS_HEAD_BEFORE=""
+acquire_ingests_write_lock() {
+	if [[ "$INGESTS_LOCK_HELD" -eq 1 ]]; then
+		return
+	fi
+	local common_dir
+	common_dir="$(git -C "$INGESTS_DIR" rev-parse --git-common-dir)"
+	if [[ "$common_dir" != /* ]]; then
+		common_dir="$(realpath "${INGESTS_DIR}/${common_dir}")"
+	fi
+	exec {INGESTS_LOCK_FD}>"${common_dir}/anomalica-write.lock"
+	flock -x "$INGESTS_LOCK_FD"
+	INGESTS_LOCK_HELD=1
+	INGESTS_HEAD_BEFORE="$(git -C "$INGESTS_DIR" rev-parse HEAD)"
+}
+
+release_ingests_write_lock() {
+	if [[ "$INGESTS_LOCK_HELD" -eq 0 ]]; then
+		return
+	fi
+	flock -u "$INGESTS_LOCK_FD"
+	exec {INGESTS_LOCK_FD}>&-
+	INGESTS_LOCK_HELD=0
+	INGESTS_HEAD_BEFORE=""
+}
 
 # Capture the ingester version (git short hash) and write it to .env so the
 # format containers (which don't have .git/) can read it via the auto-loaded
@@ -144,9 +229,34 @@ if ! is_url "$INPUT"; then
 		exit 1
 	fi
 	FILE_HASH="$(sha256sum "$INPUT" | cut -d' ' -f1)"
+	# Scheduler reprocess upgrades legacy audio/video to the parallel v2 record.
+	# If that v2 is already committed, a previous attempt may have lost only its
+	# receipt after commit. Resolve it now instead of repeating GPU extraction.
+	if [[ "$SCHEDULER_RESULT" -eq 1 ]] && [[ "$FORCE_FLAG" -eq 1 ]] &&
+		[[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
+		acquire_ingests_write_lock
+		if [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
+			release_ingests_write_lock
+		else
+			echo "Skipping: reprocess output already committed (hash: ${FILE_HASH:0:12}...)" >&2
+			emit_result "no-op" "store/${FILE_HASH}.v2.md"
+			exit 0
+		fi
+	fi
 	if { [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] || [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; } && [[ "$FORCE_FLAG" -eq 0 ]]; then
-		echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
-		exit 0
+		acquire_ingests_write_lock
+		if [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] && [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
+			release_ingests_write_lock
+		else
+			echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
+			if [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
+				EXISTING="store/${FILE_HASH}.v2.md"
+			else
+				EXISTING="store/${FILE_HASH}.md"
+			fi
+			emit_result "no-op" "$EXISTING"
+			exit 0
+		fi
 	fi
 fi
 
@@ -159,13 +269,26 @@ match = find_by_source_url(Path('${INGESTS_DIR}/store'), '${INPUT}')
 print(match if match else '')
 ")"
 	if [[ -n "$EXISTING" ]]; then
-		echo "Skipping: URL already ingested" >&2
-		echo "Existing record: ${EXISTING}" >&2
-		exit 0
+		acquire_ingests_write_lock
+		EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+from pathlib import Path
+from dedup import find_by_source_url
+match = find_by_source_url(Path('${INGESTS_DIR}/store'), '${INPUT}')
+print(match if match else '')
+")"
+		if [[ -z "$EXISTING" ]]; then
+			release_ingests_write_lock
+		else
+			echo "Skipping: URL already ingested" >&2
+			echo "Existing record: ${EXISTING}" >&2
+			EXISTING="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
+				--ingests-dir "$INGESTS_DIR" --source-url "$INPUT")"
+			emit_result "no-op" "$EXISTING"
+			exit 0
+		fi
 	fi
 fi
 
-UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 RUN_DIR="${STAGING_DIR}/${UUID}"
 mkdir -p "$RUN_DIR"
 
@@ -284,9 +407,23 @@ match = find_by_source_id(Path('${INGESTS_DIR}/store'), '${SOURCE_ID}')
 print(match if match else '')
 ")"
 	if [[ -n "$EXISTING" ]]; then
-		echo "Skipping: source_id already ingested (${SOURCE_ID})" >&2
-		echo "Existing record: ${EXISTING}" >&2
-		exit 0
+		acquire_ingests_write_lock
+		EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+from pathlib import Path
+from dedup import find_by_source_id
+match = find_by_source_id(Path('${INGESTS_DIR}/store'), '${SOURCE_ID}')
+print(match if match else '')
+")"
+		if [[ -z "$EXISTING" ]]; then
+			release_ingests_write_lock
+		else
+			echo "Skipping: source_id already ingested (${SOURCE_ID})" >&2
+			echo "Existing record: ${EXISTING}" >&2
+			EXISTING="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
+				--ingests-dir "$INGESTS_DIR" --source-id "$SOURCE_ID")"
+			emit_result "no-op" "$EXISTING"
+			exit 0
+		fi
 	fi
 fi
 
@@ -316,24 +453,33 @@ fi
 
 echo "Routing to: ${HANDLER}" >&2
 
+# Every local writer shares this lock with housekeeping apply. Hold it from the
+# last pre-write identity check through handler writes, commit and receipt
+# verification, so another local writer cannot invalidate the committed result.
+acquire_ingests_write_lock
+HANDLER_LOG="${RUN_DIR}/handler.stderr"
 case "$HANDLER" in
 webpage)
-	(cd "${SCRIPT_DIR}/formats/webpage" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	(cd "${SCRIPT_DIR}/formats/webpage" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 pdf)
-	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE)
+	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 audio)
-	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 ebook)
-	(cd "${SCRIPT_DIR}/formats/ebook" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE)
+	(cd "${SCRIPT_DIR}/formats/ebook" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 *)
 	echo "Error: handler '${HANDLER}' is not yet implemented" >&2
 	exit 1
 	;;
 esac
+wait
+
+HANDLER_RECORD="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" written \
+	--ingests-dir "$INGESTS_DIR" --log-path "$HANDLER_LOG")"
 
 echo "Done. Staging: ${RUN_DIR}" >&2
 
@@ -341,13 +487,16 @@ echo "Done. Staging: ${RUN_DIR}" >&2
 RECORDS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/records"
 mkdir -p "$RECORDS_DIR"
 ASSET_PATH="${RUN_DIR}/${ASSET}"
+ASSET_HASH=""
 if [[ ! -f "$ASSET_PATH" ]]; then
 	# A record with no archived original cannot be served for review, and this
 	# must never pass silently: a month-old record with no source on disk was
 	# found by a corpus audit, not by a log, because this step skipped wordlessly.
-	echo "WARNING: no asset at ${ASSET_PATH} - record has NO archived original" >&2
+	echo "Error: no asset at ${ASSET_PATH} - ingest is partial and has no archived original" >&2
+	exit 1
 else
 	CONTENT_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
+	ASSET_HASH="$CONTENT_HASH"
 	ASSET_EXT="${ASSET##*.}"
 	TARGET="${RECORDS_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
 	if [[ ! -f "$TARGET" ]]; then
@@ -405,6 +554,18 @@ else:
 " || echo "WARNING: archived_ext stamp step errored for ${CONTENT_HASH:0:12}" >&2
 fi
 
+# Resolve the handler's exact live output before committing. PDF/audio records use
+# the asset hash; web/ebook records expose it as source_hash. source_id is only the
+# fallback. Ambiguity is a hard failure: the scheduler must never infer identity.
+if [[ -n "$HANDLER_RECORD" ]]; then
+	RECORD_PATH="$HANDLER_RECORD"
+else
+	RECORD_PATH="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
+		--ingests-dir "$INGESTS_DIR" \
+		--asset-hash "$ASSET_HASH" \
+		--source-id "$SOURCE_ID")"
+fi
+
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
 # in the manifest's snapshots[] list. Each is content-addressed by sha256
 # of its own bytes so workbench can resolve via {source_hash} -> sibling.
@@ -435,7 +596,7 @@ fi
 QUALITY_TARGETS="$({
 	git -C "$INGESTS_DIR" diff --name-only -- store/
 	git -C "$INGESTS_DIR" ls-files --others --exclude-standard -- store/
-} 2>/dev/null | grep -E '^store/[^/]+\.md$' | sort -u)"
+} 2>/dev/null | { grep -E '^store/[^/]+\.md$' || true; } | sort -u)"
 if [[ -n "$QUALITY_TARGETS" ]]; then
 	while IFS= read -r REC; do
 		[[ -z "$REC" ]] && continue
@@ -480,11 +641,15 @@ if [[ -n "$(git status --porcelain)" ]]; then
 	# so every ingest extracted fine and then died at the commit with
 	# "pathspec 'records/' did not match any files", leaving the record uncommitted.
 	git add store/ by-name/ media/
-	NEW_FILES="$(git diff --cached --name-only --diff-filter=A | grep '^store/' | wc -l)"
+	NEW_FILES="$(git diff --cached --name-only --diff-filter=A | grep -c '^store/' || true)"
 	if [[ "$NEW_FILES" -gt 0 ]]; then
 		COMMIT_MSG="ingest: add ${NEW_FILES} record(s) from ${HANDLER} ingestion"
 	else
 		COMMIT_MSG="ingest: update records from ${HANDLER} ingestion"
+	fi
+	if [[ "$(git rev-parse HEAD)" != "$INGESTS_HEAD_BEFORE" ]]; then
+		echo "Error: ingests HEAD changed while holding the writer lock" >&2
+		exit 1
 	fi
 	GIT_AUTHOR_NAME="Anomalica Ingester" \
 		GIT_AUTHOR_EMAIL="ingester@anomalica.is" \
@@ -495,3 +660,14 @@ if [[ -n "$(git status --porcelain)" ]]; then
 else
 	echo "No new records to commit." >&2
 fi
+
+INGESTS_HEAD_AFTER="$(git rev-parse HEAD)"
+OUTCOME="no-op"
+if [[ "$INGESTS_HEAD_AFTER" != "$INGESTS_HEAD_BEFORE" ]] &&
+	git diff-tree --no-commit-id --name-only -r "$INGESTS_HEAD_AFTER" -- "$RECORD_PATH" | grep -Fxq "$RECORD_PATH"; then
+	OUTCOME="committed"
+elif [[ "$INGESTS_HEAD_AFTER" != "$INGESTS_HEAD_BEFORE" ]]; then
+	echo "Error: ingest created a commit that does not contain ${RECORD_PATH}" >&2
+	exit 1
+fi
+emit_result "$OUTCOME" "$RECORD_PATH" "$INGESTS_HEAD_AFTER"
