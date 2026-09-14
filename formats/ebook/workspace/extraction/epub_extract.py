@@ -35,6 +35,7 @@ REDACTION_TOKEN_RE = re.compile(
 PAGE_TOKEN_PREFIX = "ANOMALICAPAGE"
 PAGE_TOKEN_SUFFIX = "PGEND"
 PAGE_TOKEN_RE = re.compile(rf"{PAGE_TOKEN_PREFIX}([0-9A-Za-z]+){PAGE_TOKEN_SUFFIX}")
+PRINTED_PAGE_RE = re.compile(r"<!-- printed_page: ([0-9A-Za-z]+) -->")
 # A page label worth emitting: Arabic digits or a roman numeral (front matter).
 PAGE_LABEL_RE = re.compile(r"^[0-9A-Za-z]+$")
 
@@ -725,6 +726,54 @@ def _expand_page_tokens(md: str) -> str:
     return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
 
 
+def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
+    """Add state markers when repeated page labels begin another sequence.
+
+    Some updated ebooks splice newly paginated material into an older print
+    sequence, then return to the old sequence for back matter. Sequence 1 is
+    implicit; transitions are emitted only when duplicate labels would otherwise
+    make page identity ambiguous.
+    """
+    sequences: list[dict] = [{"seen": set(), "last": None}]
+    current = 0
+
+    for chapter in chapters:
+
+        def replace(match: re.Match) -> str:
+            nonlocal current
+            label = match.group(1)
+            number = int(label) if label.isdigit() else None
+            marker = match.group(0)
+
+            if number is not None:
+                continuation = next(
+                    (
+                        index
+                        for index, state in enumerate(sequences)
+                        if index != current and state["last"] == number - 1
+                    ),
+                    None,
+                )
+                if continuation is not None:
+                    current = continuation
+                    marker = f"<!-- printed_page_sequence: {current + 1} -->\n{marker}"
+                else:
+                    last = sequences[current]["last"]
+                    collision = any(label in state["seen"] for state in sequences)
+                    if last is not None and number < last and collision:
+                        sequences.append({"seen": set(), "last": None})
+                        current = len(sequences) - 1
+                        marker = (
+                            f"<!-- printed_page_sequence: {current + 1} -->\n{marker}"
+                        )
+                sequences[current]["last"] = number
+
+            sequences[current]["seen"].add(label)
+            return marker
+
+        chapter.markdown = PRINTED_PAGE_RE.sub(replace, chapter.markdown)
+
+
 # A pagebreak at the very start of a heading (the common per-chapter case)
 # markdownifies inline: `## <!-- printed_page: 13 --> Chapter 2`.
 _HEADING_PAGE_RE = re.compile(
@@ -899,6 +948,7 @@ def extract(epub_path: str) -> ExtractedBook:
         for chapter, filename in zip(chapters, chapter_files)
         if filename not in resolver.note_documents or not resolver.spent(filename)
     ]
+    _disambiguate_page_sequences(chapters)
 
     return ExtractedBook(
         title=title,

@@ -3,6 +3,7 @@
 from bs4 import BeautifulSoup
 
 from extraction.epub_extract import (
+    Chapter,
     FN_TOKEN_PREFIX,
     FN_TOKEN_SUFFIX,
     PAGE_TOKEN_PREFIX,
@@ -10,6 +11,7 @@ from extraction.epub_extract import (
     _analyse_body,
     _collect_footnotes,
     _collect_pagebreaks,
+    _disambiguate_page_sequences,
     _enum_to_int,
     _expand_footnote_tokens,
     _is_chapter_number,
@@ -133,6 +135,34 @@ def test_hoist_heading_only_marker_drops_empty_heading():
 
 def test_hoist_leaves_ordinary_heading_untouched():
     assert _hoist_heading_page_markers("## Chapter 2\n\ntext") == "## Chapter 2\n\ntext"
+
+
+def test_repeated_page_labels_get_sequence_markers_and_can_resume_sequence_one():
+    chapters = [
+        Chapter(1, "Original", "<!-- printed_page: 1 -->\n<!-- printed_page: 2 -->"),
+        Chapter(2, "Added", "<!-- printed_page: 1 -->\n<!-- printed_page: 2 -->"),
+        Chapter(3, "Back matter", "<!-- printed_page: 3 -->"),
+    ]
+
+    _disambiguate_page_sequences(chapters)
+
+    assert "printed_page_sequence" not in chapters[0].markdown
+    assert chapters[1].markdown.startswith("<!-- printed_page_sequence: 2 -->")
+    assert chapters[2].markdown.startswith("<!-- printed_page_sequence: 1 -->")
+
+
+def test_out_of_order_new_page_labels_do_not_start_a_sequence():
+    chapters = [
+        Chapter(
+            1,
+            "Back matter",
+            "<!-- printed_page: 308 -->\n<!-- printed_page: 304 -->",
+        )
+    ]
+
+    _disambiguate_page_sequences(chapters)
+
+    assert "printed_page_sequence" not in chapters[0].markdown
 
 
 def test_is_chapter_number():

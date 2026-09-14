@@ -49,7 +49,7 @@ CURRENT_VERSIONS: dict[str, int] = {
     # notes document under a Text/ prefix is found by its bare name (v4 dropped
     # six chapters of one book on a failed lookup).
     # v6: retain a print-page anchor nested inside a discarded chapter-number
-    # heading (v5 omitted the opening page of affected chapters).
+    # heading, and identify distinct sequences when page labels repeat.
     "ebook": 6,
     # v2: a transcription segment is split where its own words change speaker,
     # so an interjection is no longer attributed to whoever was talking around
