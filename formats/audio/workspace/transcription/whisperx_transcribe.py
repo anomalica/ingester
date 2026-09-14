@@ -45,13 +45,28 @@ def transcribe(
     import torch
     import whisperx
 
-    # Device is overridable via WHISPER_DEVICE. On this machine the 6GB GPU is
-    # shared with other always-on services (~2.3GB committed), leaving too
-    # little for the full large-v3 encoder (turbo only shrinks the decoder), so
-    # transcription is pinned to CPU here and the GPU is left for diarisation.
-    device = os.environ.get("WHISPER_DEVICE") or (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    # NEVER FALL BACK TO THE CPU. Transcription on CPU is not a slower version of
+    # the same job - it takes hours instead of minutes, holds the lane the whole
+    # time, and produces no error, so nobody looks. It ran that way for hours
+    # because the helper that frees the card was disabled and `or "cpu"` quietly
+    # absorbed the consequence.
+    #
+    # A missing GPU is now a hard failure that names the cause. The card is freed
+    # by the `gpu` wrapper before dispatch; if it is not free, the right outcome
+    # is a job that stops and says so, not one that finishes eventually.
+    #
+    # WHISPER_DEVICE still overrides, so CPU remains reachable when it is asked
+    # for deliberately - the fault was the silent default, not the capability.
+    device = os.environ.get("WHISPER_DEVICE")
+    if not device:
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "no CUDA device available for transcription. Something is holding "
+                "the card, or the `gpu` wrapper did not free it. Refusing to "
+                "transcribe on the CPU: it takes hours rather than minutes and "
+                "reports no error. Set WHISPER_DEVICE=cpu to do it anyway."
+            )
+        device = "cuda"
     compute_type = os.environ.get("WHISPER_COMPUTE") or (
         "float16" if device == "cuda" else "int8"
     )

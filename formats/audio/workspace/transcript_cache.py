@@ -53,10 +53,13 @@ def save_raw_archive(
     path.write_text(json.dumps(payload, default=_json_default))
 
 
-def load_raw_archive(path: Path) -> tuple[list[Segment], list[SpeakerSegment]]:
+def load_raw_archive(
+    path: Path, diarisation_tracks: str = "tracks"
+) -> tuple[list[Segment], list[SpeakerSegment]]:
     """Reconstruct the processed (segments, speaker_segments) from the archive,
-    so a re-render skips the GPU entirely. Mirrors what transcribe()+diarise()
-    return from their raw output."""
+    so a re-render skips the GPU entirely. ``diarisation_tracks`` may select the
+    optional Community-1 ``exclusive_tracks`` for offline evaluation; the default
+    remains the regular tracks used by production."""
     data = json.loads(path.read_text())
 
     aligned = data["whisperx"]["aligned"]["segments"]
@@ -76,6 +79,6 @@ def load_raw_archive(path: Path) -> tuple[list[Segment], list[SpeakerSegment]]:
 
     speaker_segments = [
         SpeakerSegment(speaker=t["speaker"], start=t["start"], end=t["end"])
-        for t in data["pyannote"].get("tracks", [])
+        for t in data["pyannote"].get(diarisation_tracks, [])
     ]
     return segments, speaker_segments

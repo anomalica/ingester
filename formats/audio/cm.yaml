@@ -93,3 +93,15 @@ commands:
       CUDA_VISIBLE_DEVICES: "0"
       WHISPER_BATCH: "4"
       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  diarisation-benchmark:
+    command: python workspace/benchmark_exclusive_diarisation.py
+    description: Compare cached words against regular and exclusive Community-1 tracks
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "/mnt/shared"
+      HF_HOME: "/mnt/hfcache"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      DIARISE_DEVICE: "cuda"
+      CUDA_VISIBLE_DEVICES: "0"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"

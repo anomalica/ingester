@@ -1,0 +1,54 @@
+{
+  "schema": "anomalica/transcript-archive/1",
+  "meta": { "fixture": "overlapping regular tracks versus exclusive reconciliation" },
+  "whisperx": {
+    "aligned": {
+      "segments": [
+        {
+          "text": "Can you describe what happened next I saw the light move straight upward",
+          "start": 0.1,
+          "end": 11.8,
+          "words": [
+            { "word": "Can", "start": 0.1, "end": 0.8 },
+            { "word": "you", "start": 1.1, "end": 1.8 },
+            { "word": "describe", "start": 2.1, "end": 2.8 },
+            { "word": "what", "start": 3.1, "end": 3.8 },
+            { "word": "happened", "start": 4.1, "end": 4.8 },
+            { "word": "next", "start": 5.1, "end": 5.8 },
+            { "word": "I", "start": 6.1, "end": 6.8 },
+            { "word": "saw", "start": 7.1, "end": 7.8 },
+            { "word": "the", "start": 8.1, "end": 8.8 },
+            { "word": "light", "start": 9.1, "end": 9.8 },
+            { "word": "move", "start": 10.1, "end": 10.8 },
+            { "word": "upward", "start": 11.1, "end": 11.8 }
+          ]
+        }
+      ]
+    }
+  },
+  "pyannote": {
+    "model": "pyannote/speaker-diarization-community-1",
+    "tracks": [
+      { "start": 0.0, "end": 12.0, "speaker": "SPEAKER_00", "track": "A" },
+      { "start": 6.0, "end": 12.0, "speaker": "SPEAKER_01", "track": "B" }
+    ],
+    "exclusive_tracks": [
+      { "start": 0.0, "end": 6.0, "speaker": "SPEAKER_00", "track": "A" },
+      { "start": 6.0, "end": 12.0, "speaker": "SPEAKER_01", "track": "B" }
+    ]
+  },
+  "reviewed_words": {
+    "0.10": "Interviewer",
+    "1.10": "Interviewer",
+    "2.10": "Interviewer",
+    "3.10": "Interviewer",
+    "4.10": "Interviewer",
+    "5.10": "Interviewer",
+    "6.10": "Witness",
+    "7.10": "Witness",
+    "8.10": "Witness",
+    "9.10": "Witness",
+    "10.10": "Witness",
+    "11.10": "Witness"
+  }
+}

@@ -25,6 +25,9 @@ def test_archive_round_trip_reconstructs_segments(tmp_path):
     pyannote_raw = {
         "model": "test",
         "tracks": [{"start": 0.0, "end": 1.2, "speaker": "SPEAKER_00", "track": "A"}],
+        "exclusive_tracks": [
+            {"start": 0.1, "end": 1.1, "speaker": "SPEAKER_00", "track": "A"}
+        ],
     }
 
     path = archive_path(tmp_path, "abc123")
@@ -47,3 +50,6 @@ def test_archive_round_trip_reconstructs_segments(tmp_path):
         )
     ]
     assert speakers == [SpeakerSegment("SPEAKER_00", 0.0, 1.2)]
+
+    _, exclusive = load_raw_archive(path, diarisation_tracks="exclusive_tracks")
+    assert exclusive == [SpeakerSegment("SPEAKER_00", 0.1, 1.1)]
