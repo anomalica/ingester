@@ -17,10 +17,13 @@ import yaml
 
 # Current extraction generation per media type (source_type). Bump a type when
 # a re-ingest of existing records is warranted. A record whose
-# processing.pipeline_version is below the current value - or absent, which
-# consumers treat as 0 - is stale and a backfill target.
+# processing.pipeline_version is below the current value is stale. An absent or
+# invalid generation is unknown and must not be coerced to zero.
 CURRENT_VERSIONS: dict[str, int] = {
     "pdf": 1,
+    # Images use the PDF vision path, but source_type describes acquisition and
+    # therefore needs its own explicit manifest registration.
+    "image": 1,
     # v2: strip page furniture before extraction, and capture images as media
     # bytes + structured `<!-- image: file/alt/caption -->` annotations (was
     # markdown ![](remote-url) with the caption as loose italic prose).
@@ -57,9 +60,11 @@ MANIFEST_NAME = "_pipeline_versions.yaml"
 
 
 def current_version(media_type: str) -> int:
-    """The current pipeline version for a media type. An unregistered type is
-    generation 1 - a new handler is v1 until it declares a bump."""
-    return CURRENT_VERSIONS.get(media_type, 1)
+    """Return the registered pipeline version for a supported source type."""
+    try:
+        return CURRENT_VERSIONS[media_type]
+    except KeyError as exc:
+        raise ValueError(f"unsupported source_type: {media_type!r}") from exc
 
 
 def write_manifest(store_dir: Path) -> Path:
@@ -78,8 +83,15 @@ def write_manifest(store_dir: Path) -> Path:
         existing = yaml.safe_load(path.read_text()) or {}
     except (OSError, yaml.YAMLError):
         existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
     for media_type, version in existing.items():
-        if isinstance(version, int) and version > versions.get(media_type, 0):
+        if (
+            media_type in versions
+            and isinstance(version, int)
+            and not isinstance(version, bool)
+            and version > versions[media_type]
+        ):
             versions[media_type] = version
     path.write_text(yaml.safe_dump(versions, sort_keys=True))
     return path

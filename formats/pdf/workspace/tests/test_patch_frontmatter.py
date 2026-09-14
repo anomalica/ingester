@@ -13,6 +13,7 @@ from ingest_pdf import (
     _resequence_pages_sequential,
     _strip_frontmatter,
 )
+from shared.pipeline_version import current_version
 
 
 def test_a_body_horizontal_rule_is_left_alone():
@@ -60,6 +61,7 @@ def test_patch_frontmatter_forces_source_type_image():
     fm = out.split("---", 2)[1]
     assert "source_type: image" in fm
     assert "source_type: pdf" not in fm
+    assert f"pipeline_version: {current_version('image')}" in fm
 
 
 def test_patch_frontmatter_leaves_source_type_when_not_given():

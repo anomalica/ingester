@@ -359,7 +359,7 @@ def _patch_frontmatter(
         processing = "\nprocessing:"
         processing += "\n  handler: pdf"
         processing += f"\n  version: {get_version()}"
-        processing += f"\n  pipeline_version: {current_version('pdf')}"
+        processing += f"\n  pipeline_version: {current_version(effective_source_type)}"
         processing += "\n  tools:"
         processing += "\n    - name: claude"
         processing += f'\n      version: "{model or "unknown"}"'
