@@ -330,7 +330,7 @@ def test_a_field_the_stored_record_already_lacked_does_not_refuse_the_refresh(tm
     assert "date_published" not in record.read_text()
 
 
-def test_a_refresh_that_moves_no_content_line_leaves_the_review_standing(tmp_path):
+def test_any_reviewed_body_change_stamps_review_carryover(tmp_path):
     store, record, source = _store(tmp_path, reviewed=True)
     refresh_record(record, store, FRESH_BODY, source, media_type="web")
     text = record.read_text()
@@ -340,8 +340,71 @@ def test_a_refresh_that_moves_no_content_line_leaves_the_review_standing(tmp_pat
     retouched = FRESH_BODY.replace("https://unsplash.com/x", "https://unsplash.com/y")
     outcome = refresh_record(record, store, retouched, source, media_type="web")
     assert outcome.written, outcome.reason
-    assert "review_carryover:\n" not in record.read_text()
-    assert any("left standing" in n for n in outcome.notes)
+    assert "review_carryover:\n" in record.read_text()
+    assert any("review_carryover stamped" in n for n in outcome.notes)
+
+
+def test_v2_review_sidecar_protects_speaker_annotations_without_mutation(tmp_path):
+    store = tmp_path / "output" / "store"
+    store.mkdir(parents=True)
+    content_hash = "b" * 64
+    record = store / f"{content_hash}.v2.md"
+    original = f"""---
+schema: anomalica/record/2
+title: Reviewed audio
+date_published: 1962-05-24
+source_type: audio
+duration: 5.0
+content_hash: sha256:{content_hash}
+copyright:
+  status: public_domain
+processing:
+  handler: audio
+  version: old
+  pipeline_version: 1
+---
+<!-- speaker: Scott Carpenter -->
+Hello there.
+"""
+    record.write_text(original)
+    (store / f"{content_hash}.review.json").write_text('{"reviews": []}\n')
+    source = tmp_path / "source.ogg"
+    source.write_bytes(b"audio")
+
+    outcome = refresh_record(
+        record,
+        store,
+        "<!-- speaker: [speaker 1] -->\nHello there.\n",
+        source,
+        media_type="audio",
+        expected_schema="anomalica/record/2",
+        stamp_refusals=False,
+    )
+
+    assert not outcome.written
+    assert "speaker annotations differ" in outcome.reason
+    assert record.read_text() == original
+
+
+def test_refresh_refuses_declared_identity_mismatch_without_mutation(tmp_path):
+    store, record, source = _store(tmp_path)
+    original = record.read_text().replace(
+        "content_hash: sha256:" + "a" * 64, "content_hash: sha256:" + "b" * 64
+    )
+    record.write_text(original)
+
+    outcome = refresh_record(
+        record,
+        store,
+        FRESH_BODY,
+        source,
+        media_type="web",
+        stamp_refusals=False,
+    )
+
+    assert not outcome.written
+    assert "content_hash" in outcome.reason
+    assert record.read_text() == original
 
 
 def test_renumbered_footnotes_and_roman_page_numbers_are_not_lost_words():

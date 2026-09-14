@@ -67,6 +67,7 @@ _NON_WORD_RE = re.compile(r"[\W_]+")
 # A reviewer's inline markers: paired {{X-start: ...}} / {{X-end: id}} spans
 # (highlight, note, link, cites, external) plus any other {{...}} token.
 _INLINE_MARKER_RE = re.compile(r"\{\{[^{}]*\}\}")
+_SPEAKER_MARKER_RE = re.compile(r"<!--\s*speaker:\s*(.*?)\s*-->")
 _PAIRED_MARKER_RE = re.compile(
     r"\{\{\s*(highlight|note|link|cites|external)-(start|end)\s*:\s*(.*?)\s*\}\}"
 )
@@ -104,6 +105,7 @@ class Outcome:
     written: bool
     reason: str
     notes: list[str] = field(default_factory=list)
+    candidate: str | None = None
 
 
 def installed_version(package: str) -> str:
@@ -820,13 +822,28 @@ def _declared_pipeline_version(frontmatter: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _refuse(record_path: Path, reason: str, notes: list[str]) -> Outcome:
-    stamp_refusal(record_path, reason)
+def _refuse(
+    record_path: Path,
+    reason: str,
+    notes: list[str],
+    *,
+    stamp_refusals: bool = True,
+) -> Outcome:
+    if stamp_refusals:
+        stamp_refusal(record_path, reason)
     return Outcome(False, reason, notes)
 
 
-def _reviewed(record_path: Path) -> bool:
-    return record_path.with_suffix(".review.json").exists()
+def _content_hash(frontmatter: str, record_path: Path) -> str | None:
+    match = re.search(r"^content_hash:\s*sha256:([0-9a-f]{64})\s*$", frontmatter, re.M)
+    path_hash = record_path.name.split(".", 1)[0]
+    if not match or match.group(1) != path_hash:
+        return None
+    return match.group(1)
+
+
+def _reviewed(record_path: Path, content_hash: str) -> bool:
+    return (record_path.parent / f"{content_hash}.review.json").exists()
 
 
 @dataclass
@@ -948,6 +965,9 @@ def refresh_record(
     media_type: str,
     tool_version: str | None = None,
     extra_required: list[str] | None = None,
+    expected_schema: str = "anomalica/record/1",
+    stamp_refusals: bool = True,
+    write: bool = True,
 ) -> Outcome:
     """Replace the body of the live record at `record_path` with `fresh_body`,
     keeping its identity, its frontmatter and everything a human added. See
@@ -957,14 +977,36 @@ def refresh_record(
     if split is None:
         return Outcome(False, f"refused: {record_path.name} has no frontmatter")
     frontmatter, old_body = split
-    content_hash = record_path.stem
-    reviewed = _reviewed(record_path)
+    content_hash = _content_hash(frontmatter, record_path)
+    if content_hash is None:
+        return _refuse(
+            record_path,
+            "refused: declared content_hash is absent, malformed, or differs from the record path",
+            [],
+            stamp_refusals=stamp_refusals,
+        )
+    reviewed = _reviewed(record_path, content_hash)
+
+    if reviewed and _SPEAKER_MARKER_RE.findall(old_body) != _SPEAKER_MARKER_RE.findall(
+        fresh_body
+    ):
+        return _refuse(
+            record_path,
+            "refused: reviewed speaker annotations differ from the fresh extraction",
+            [],
+            stamp_refusals=stamp_refusals,
+        )
 
     carry = carry_review_work(
         old_body, fresh_body, carried_words(frontmatter), reviewed
     )
     if carry.refused:
-        return _refuse(record_path, carry.refused, carry.notes)
+        return _refuse(
+            record_path,
+            carry.refused,
+            carry.notes,
+            stamp_refusals=stamp_refusals,
+        )
     new_body, notes = carry.body, carry.notes
 
     if new_body == old_body:
@@ -973,11 +1015,13 @@ def refresh_record(
         # The body already matches; only the record's declared generation is
         # behind - bring the stamps up to date so it stops reading as stale.
         stamped = restamp(frontmatter, content_hash, None, media_type, tool_version)
-        record_path.write_text(
-            stamp_record(f"---\n{stamped}\n---\n{new_body}"), encoding="utf-8"
+        content = stamp_record(f"---\n{stamped}\n---\n{new_body}")
+        if write:
+            record_path.write_text(content, encoding="utf-8")
+            write_manifest(store_dir)
+        return Outcome(
+            True, "body unchanged, stamps brought up to date", notes, content
         )
-        write_manifest(store_dir)
-        return Outcome(True, "body unchanged, stamps brought up to date", notes)
 
     # A reviewed record is flagged for another look only when what the reviewer
     # read moved - a content line changed text or position. A refresh that only
@@ -985,19 +1029,25 @@ def refresh_record(
     stamped = restamp(
         frontmatter,
         content_hash,
-        carry.prose_moved if reviewed and carry.layout_moved else None,
+        carry.prose_moved if reviewed else None,
         media_type,
         tool_version,
     )
     content = stamp_record(f"---\n{stamped}\n---\n{new_body}")
-    result = validate(content, extra_required=extra_required)
+    result = validate(
+        content, extra_required=extra_required, expected_schema=expected_schema
+    )
     if result.fixed:
         content = result.fixed
     notes.extend(f"validation: {w}" for w in result.warnings)
     # Only a fault the refresh INTRODUCED refuses. A record that already lacked a
     # field (a book with no publication date) was accepted as it is; carrying its
     # frontmatter over unchanged cannot be what makes it invalid.
-    already = set(validate(text, extra_required=extra_required).errors)
+    already = set(
+        validate(
+            text, extra_required=extra_required, expected_schema=expected_schema
+        ).errors
+    )
     introduced = [e for e in result.errors if e not in already]
     notes.extend(
         f"validation (pre-existing): {e}" for e in result.errors if e in already
@@ -1007,18 +1057,19 @@ def refresh_record(
             record_path,
             "refused: the refreshed record does not validate: " + "; ".join(introduced),
             notes,
+            stamp_refusals=stamp_refusals,
         )
+    if not write:
+        return Outcome(True, "refreshed candidate validated", notes, content)
     record_path.write_text(content, encoding="utf-8")
     write_manifest(store_dir)
     if needs_sidecar(content):
         sidecar = build_sidecar(content, source_path=source_path)
         write_sidecar(store_dir, content_hash, sidecar)
         notes.append("verification sidecar regenerated")
-    if reviewed and carry.layout_moved:
+    if reviewed:
         notes.append(
             "reviewed record: review_carryover stamped"
             + (" (prose moved - verify)" if carry.prose_moved else "")
         )
-    elif reviewed:
-        notes.append("reviewed record: no content line moved, review left standing")
-    return Outcome(True, "refreshed in place", notes)
+    return Outcome(True, "refreshed in place", notes, content)

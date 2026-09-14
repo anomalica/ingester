@@ -6,12 +6,13 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] [--source-url URL [--source-id ID]] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--canary] [--source-url URL [--source-id ID]] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
 	echo "Options:" >&2
 	echo "  --force        Re-process even if output already exists" >&2
+	echo "  --canary       Validate one existing rerender against HEAD; never commit" >&2
 	echo "  --source-url   Provenance for a LOCAL source: stamp this origin URL" >&2
 	echo "                 (a local path carries none). Use when re-processing an" >&2
 	echo "                 archived file, e.g. re-transcribing an .opus as record/2" >&2
@@ -27,6 +28,7 @@ FORCE_FLAG=0
 INPUT=""
 COPYRIGHT_STATUS=""
 NO_COMMIT=0
+CANARY=0
 USE_API=0
 INGEST_MODEL="${INGEST_MODEL:-}"
 SOURCE_URL=""
@@ -49,6 +51,11 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--no-commit)
+		NO_COMMIT=1
+		shift
+		;;
+	--canary)
+		CANARY=1
 		NO_COMMIT=1
 		shift
 		;;
@@ -114,6 +121,10 @@ done
 
 if [[ -z "$INPUT" ]]; then
 	usage
+fi
+if [[ "$CANARY" -eq 1 ]] && [[ "$FORCE_FLAG" -ne 1 ]]; then
+	echo "Error: --canary requires --force" >&2
+	exit 1
 fi
 
 if [[ ! -d "$INGESTS_DIR" ]]; then
@@ -451,6 +462,17 @@ if [[ -z "$HANDLER" ]]; then
 	exit 1
 fi
 
+if [[ "$CANARY" -eq 1 ]]; then
+	if [[ "$HANDLER" != "audio" ]]; then
+		echo "Error: --canary currently supports existing audio/video rerenders only" >&2
+		exit 1
+	fi
+	if is_url "$INPUT" || [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
+		echo "Error: --canary requires a local source with an existing v2 record" >&2
+		exit 1
+	fi
+fi
+
 echo "Routing to: ${HANDLER}" >&2
 
 # Every local writer shares this lock with housekeeping apply. Hold it from the
@@ -466,7 +488,11 @@ pdf)
 	(cd "${SCRIPT_DIR}/formats/pdf" && cm run ingest -- --staging-dir "/mnt/staging/${UUID}" $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 audio)
-	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
+	AUDIO_CANARY_ARGS=()
+	if [[ "$CANARY" -eq 1 ]]; then
+		AUDIO_CANARY_ARGS=(--candidate-dir "/mnt/output/.ai/canary-candidates/${UUID}")
+	fi
+	(cd "${SCRIPT_DIR}/formats/audio" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE "${AUDIO_CANARY_ARGS[@]}") 2> >(tee "$HANDLER_LOG" >&2)
 	;;
 ebook)
 	(cd "${SCRIPT_DIR}/formats/ebook" && cm run ingest "/mnt/staging/${UUID}" -- $FORCE) 2> >(tee "$HANDLER_LOG" >&2)
@@ -478,8 +504,27 @@ ebook)
 esac
 wait
 
-HANDLER_RECORD="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" written \
-	--ingests-dir "$INGESTS_DIR" --log-path "$HANDLER_LOG")"
+if [[ "$CANARY" -eq 1 ]] && [[ "$HANDLER" == "audio" ]]; then
+	HANDLER_RECORD="store/${FILE_HASH}.v2.md"
+	CANDIDATE_PATH="${INGESTS_DIR}/.ai/canary-candidates/${UUID}/${FILE_HASH}.v2.md"
+else
+	HANDLER_RECORD="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" written \
+		--ingests-dir "$INGESTS_DIR" --log-path "$HANDLER_LOG")"
+fi
+
+if [[ "$CANARY" -eq 1 ]]; then
+	if [[ -z "$HANDLER_RECORD" ]]; then
+		echo "Error: canary handler did not report one written record" >&2
+		exit 1
+	fi
+	python3 "${SCRIPT_DIR}/shared/canary_guard.py" \
+		--ingests-dir "$INGESTS_DIR" \
+		--parent "$INGESTS_HEAD_BEFORE" \
+		--record-path "$HANDLER_RECORD" \
+		--candidate-path "$CANDIDATE_PATH"
+	echo "Canary candidate isolated for acceptance: ${CANDIDATE_PATH}" >&2
+	exit 0
+fi
 
 echo "Done. Staging: ${RUN_DIR}" >&2
 

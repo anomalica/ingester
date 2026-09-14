@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from unittest.mock import patch
@@ -270,6 +271,146 @@ def test_run_force_reprocesses(mock_transcribe, mock_diarise, tmp_path):
 
     ingest_audio.run(staging, output, force=True, use_cache=False)  # fresh GPU
     assert mock_transcribe.call_count == 2
+
+
+@patch("ingest_audio.probe")
+@patch("ingest_audio.diarise")
+@patch("ingest_audio.transcribe")
+def test_cached_rerender_refuses_reviewed_speaker_and_metadata_loss(
+    mock_transcribe, mock_diarise, mock_probe, tmp_path
+):
+    import ingest_audio
+
+    asset = b"reviewed audio"
+    content_hash = hashlib.sha256(asset).hexdigest()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "asset.ogg").write_bytes(asset)
+    (staging / "manifest.json").write_text(
+        json.dumps(
+            {
+                "source": "/archive/asset.ogg",
+                "asset": "asset.ogg",
+                "detected_type": "audio/ogg",
+                "source_url": "https://example.com/audio",
+                "source_id": "archive:audio",
+            }
+        )
+    )
+    mock_probe.return_value = {
+        "codec": "opus",
+        "container": "ogg",
+        "bitrate": 1000,
+        "sample_rate": 48000,
+        "channels": 1,
+        "size_bytes": len(asset),
+        "duration": 5.0,
+    }
+
+    output = tmp_path / "output"
+    store = output / "store"
+    store.mkdir(parents=True)
+    record = store / f"{content_hash}.v2.md"
+    original = f"""---
+schema: anomalica/record/2
+title: Reviewed audio
+date_published: 1962-05-24
+source_type: audio
+file_format: opus
+word_timestamps: true
+source_url: https://example.com/audio
+source_id: archive:audio
+duration: 5.0
+content_hash: sha256:{content_hash}
+copyright:
+  status: public_domain
+  detail: government recording
+provenance:
+  collection: curated archive
+speakers:
+  - Scott Carpenter
+  - Ground Control
+processing:
+  handler: audio
+  version: old
+  pipeline_version: 1
+  source:
+    audio:
+      - codec: opus
+        sha256: {content_hash}
+---
+<!-- speaker: Scott Carpenter -->
+{{{{t:0.00}}}}Hello {{{{t:0.60}}}}there
+
+<!-- speaker: Ground Control -->
+{{{{t:2.50}}}}I {{{{t:2.70}}}}am {{{{t:3.00}}}}fine {{{{t:3.40}}}}thanks
+"""
+    record.write_text(original)
+    (store / f"{content_hash}.review.json").write_text('{"reviews": []}\n')
+
+    records = tmp_path / "records"
+    records.mkdir()
+    (records / f"{content_hash}.transcript.json").write_text(
+        json.dumps(
+            {
+                "schema": "anomalica/transcript-archive/1",
+                "meta": {"hex_hash": content_hash},
+                "whisperx": MOCK_WHISPERX_RAW,
+                "pyannote": MOCK_PYANNOTE_RAW,
+            }
+        )
+    )
+
+    assert ingest_audio.run(staging, output, force=True, word_timestamps=True) == 1
+    assert record.read_text() == original
+    mock_transcribe.assert_not_called()
+    mock_diarise.assert_not_called()
+
+
+@patch("ingest_audio.probe")
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_valid_cached_candidate_is_isolated_from_live_record(
+    mock_transcribe, mock_diarise, mock_probe, tmp_path
+):
+    import ingest_audio
+
+    staging = _create_staging(tmp_path)
+    output = tmp_path / "output"
+    mock_probe.return_value = {
+        "codec": "mp3",
+        "container": "mp3",
+        "bitrate": 1000,
+        "sample_rate": 48000,
+        "channels": 1,
+        "size_bytes": len(b"fake audio data"),
+        "duration": 5.0,
+    }
+    assert ingest_audio.run(staging, output, force=False, word_timestamps=True) == 0
+    record = next((output / "store").glob("*.v2.md"))
+    parent = record.read_text().replace(
+        "  pipeline_version: 2", "  pipeline_version: 1"
+    )
+    record.write_text(parent)
+
+    candidate_dir = tmp_path / "candidates"
+    assert (
+        ingest_audio.run(
+            staging,
+            output,
+            force=True,
+            word_timestamps=True,
+            candidate_dir=candidate_dir,
+        )
+        == 0
+    )
+
+    assert record.read_text() == parent
+    candidate = (candidate_dir / record.name).read_text()
+    assert "  pipeline_version: 2" in candidate
+    assert candidate != parent
+    assert mock_transcribe.call_count == 1
+    assert mock_diarise.call_count == 1
 
 
 def test_run_fails_missing_manifest(tmp_path):

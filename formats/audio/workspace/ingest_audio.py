@@ -22,6 +22,7 @@ from models import TimedSentence, Turn, detect_source_type, format_time_precise
 from pipeline_version import current_version
 from probe import probe
 from record import get_version, write_record
+from refresh import refresh_record
 from transcript_cache import archive_path, load_raw_archive, save_raw_archive
 from transcription.whisperx_transcribe import transcribe, WHISPER_MODEL
 from validator import validate
@@ -419,6 +420,7 @@ def run(
     force: bool,
     word_timestamps: bool = False,
     use_cache: bool = True,
+    candidate_dir: Path | None = None,
 ) -> int:
     """Run the audio ingestion pipeline. Returns 0 on success, 1 on failure.
 
@@ -652,6 +654,37 @@ def run(
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
 
+    if existing_record_path.exists():
+        outcome = refresh_record(
+            existing_record_path,
+            store_dir,
+            body,
+            asset_path,
+            media_type=source_type,
+            extra_required=["duration"],
+            expected_schema=expected_schema,
+            # A producer refusal must leave the exact parent bytes available for
+            # canary comparison; the error is already returned to the caller.
+            stamp_refusals=False,
+            write=candidate_dir is None,
+        )
+        for note in outcome.notes:
+            print(f"Refresh: {note}", file=sys.stderr)
+        if not outcome.written:
+            if outcome.reason == "unchanged":
+                print(f"Unchanged: {existing_record_path}", file=sys.stderr)
+                return 0
+            print(f"Error: {outcome.reason}", file=sys.stderr)
+            return 1
+        if candidate_dir is not None:
+            candidate_dir.mkdir(parents=True, exist_ok=True)
+            candidate_path = candidate_dir / existing_record_path.name
+            candidate_path.write_text(outcome.candidate or "", encoding="utf-8")
+            print(f"Candidate: {candidate_path}", file=sys.stderr)
+            return 0
+        print(f"Written: {existing_record_path}", file=sys.stderr)
+        return 0
+
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
@@ -689,6 +722,11 @@ def main():
         "--force", action="store_true", help="Re-process even if output exists"
     )
     parser.add_argument(
+        "--candidate-dir",
+        type=Path,
+        help="Write a validated rerender candidate here without replacing the live record",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Force fresh transcription/diarisation instead of reusing the "
@@ -711,6 +749,7 @@ def main():
             # timestamps). The corpus is v2-only; there's no reason to emit v1.
             word_timestamps=True,
             use_cache=not args.no_cache,
+            candidate_dir=args.candidate_dir,
         )
     )
 
