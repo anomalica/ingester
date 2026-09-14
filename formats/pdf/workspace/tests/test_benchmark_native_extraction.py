@@ -58,3 +58,9 @@ def test_benchmark_hashes_inputs(monkeypatch, tmp_path: Path):
         "pdf_sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
         "reviewed_ingest_sha256": hashlib.sha256(reviewed.read_bytes()).hexdigest(),
     }
+    assert report["production_decision"] == {
+        "code": "supplement-only",
+        "summary": "Use native text extraction as a supplement; do not replace AI transcription.",
+        "role": "supplement",
+        "replace_ai_transcription": False,
+    }

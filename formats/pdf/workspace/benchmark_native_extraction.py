@@ -21,6 +21,12 @@ COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 TOKEN = re.compile(r"[^\W_]+(?:['’][^\W_]+)*", re.UNICODE)
 MIN_PAGES = 40
 MAX_PAGES = 60
+PRODUCTION_DECISION = {
+    "code": "supplement-only",
+    "summary": "Use native text extraction as a supplement; do not replace AI transcription.",
+    "role": "supplement",
+    "replace_ai_transcription": False,
+}
 
 
 def reviewed_pages(record: str) -> dict[int, str]:
@@ -125,6 +131,7 @@ def benchmark(pdf_path: Path, reviewed_path: Path) -> dict:
         "network_calls": 0,
         "model_downloads": 0,
         "ocr_performed": False,
+        "production_decision": PRODUCTION_DECISION,
         "limitations": [
             "The source has an embedded text layer, so this pilot does not measure raster OCR.",
             "The reviewed ingest is roughly checked, not character-perfect ground truth.",
