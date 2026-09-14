@@ -1,6 +1,8 @@
 # Acquire Re-architecture Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: Historical and superseded.** The acquisition architecture described here is now present; do not execute the unchecked steps. Current repository guidance belongs in `AGENTS.md`. `CLAUDE.md` is only the `@AGENTS.md` compatibility shim and must not be replaced by the final documentation steps below.
+
+> **For agentic workers (historical):** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Restructure the ingester into three layers: host script, acquire container (fetch + type detection), and format-specific containers (webpage, pdf) under formats/.
 
