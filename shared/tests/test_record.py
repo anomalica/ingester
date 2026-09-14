@@ -73,6 +73,12 @@ def test_symlink_name():
     assert name == "2023-06-05-web-some-article-title.md"
 
 
+def test_symlink_name_refuses_a_missing_date():
+    for date in (None, "", "None", "null", "undefined"):
+        with pytest.raises(ValueError, match="evidenced date"):
+            symlink_name(date, "video", "Some Video")
+
+
 def test_get_version_returns_string():
     version = get_version()
     assert isinstance(version, str)

@@ -276,7 +276,7 @@ def test_run_force_reprocesses(mock_transcribe, mock_diarise, tmp_path):
 @patch("ingest_audio.probe")
 @patch("ingest_audio.diarise")
 @patch("ingest_audio.transcribe")
-def test_cached_rerender_refuses_reviewed_speaker_and_metadata_loss(
+def test_cached_rerender_preserves_reviewed_body_and_metadata(
     mock_transcribe, mock_diarise, mock_probe, tmp_path
 ):
     import ingest_audio
@@ -361,10 +361,65 @@ processing:
         )
     )
 
-    assert ingest_audio.run(staging, output, force=True, word_timestamps=True) == 1
-    assert record.read_text() == original
+    assert ingest_audio.run(staging, output, force=True, word_timestamps=True) == 0
+    refreshed = record.read_text()
+    assert refreshed.split("\n---\n", 1)[1] == original.split("\n---\n", 1)[1]
+    assert "  pipeline_version: 2" in refreshed
+    assert "provenance:\n  collection: curated archive" in refreshed
+    assert (
+        "copyright:\n  status: public_domain\n  detail: government recording"
+        in refreshed
+    )
+    assert "speakers:\n  - Scott Carpenter\n  - Ground Control" in refreshed
     mock_transcribe.assert_not_called()
     mock_diarise.assert_not_called()
+
+
+@patch("ingest_audio.probe")
+@patch("ingest_audio.diarise", return_value=(MOCK_SPEAKER_SEGMENTS, MOCK_PYANNOTE_RAW))
+@patch("ingest_audio.transcribe", return_value=(MOCK_SEGMENTS, MOCK_WHISPERX_RAW))
+def test_fresh_video_keeps_copy_metadata_and_uses_posted_date_for_alias(
+    mock_transcribe, mock_diarise, mock_probe, tmp_path
+):
+    import ingest_audio
+
+    staging = _create_staging(tmp_path, source="/incoming/video.opus")
+    manifest_path = staging / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(
+        {
+            "original_type": "video",
+            "source_url": "https://www.youtube.com/watch?v=abc12345678",
+            "source_id": "youtube:abc12345678",
+            "title": "Ross Coulthart Q&A: What species are the human hybrids?",
+            "posted_by": "NewsNation",
+            "posted_date": "2026-07-26",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest))
+    mock_probe.return_value = {
+        "codec": "opus",
+        "container": "ogg",
+        "bitrate": 1000,
+        "sample_rate": 48000,
+        "channels": 2,
+        "size_bytes": len(b"fake audio data"),
+        "duration": 5.0,
+    }
+
+    output = tmp_path / "output"
+    assert ingest_audio.run(staging, output, force=False, word_timestamps=True) == 0
+
+    record = next((output / "store").glob("*.v2.md"))
+    content = record.read_text()
+    assert "source_type: video" in content
+    assert 'posted_by: "NewsNation"' in content
+    assert "posted_date: 2026-07-26" in content
+    assert "date_published:" not in content
+    assert list((output / "by-name").iterdir())[0].name.startswith(
+        "2026-07-26-video-ross-coulthart-q-a"
+    )
+    assert "None-" not in list((output / "by-name").iterdir())[0].name
 
 
 @patch("ingest_audio.probe")
@@ -807,6 +862,19 @@ def test_the_title_split_still_works_without_a_credit():
 
     names = _extract_known_speakers("Jesse Michels: Inside the Program", None, None)
     assert names == ["Jesse Michels"]
+
+
+def test_a_title_format_suffix_is_not_part_of_a_person_name():
+    from ingest_audio import _extract_known_speakers
+
+    assert (
+        _extract_known_speakers(
+            "Ross Coulthart Q&A: What species are the human hybrids?",
+            None,
+            "NewsNation",
+        )
+        == []
+    )
 
 
 def test_a_channel_name_is_not_a_speaker():

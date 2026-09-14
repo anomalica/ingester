@@ -987,6 +987,13 @@ def refresh_record(
         )
     reviewed = _reviewed(record_path, content_hash)
 
+    # A reviewed transcript is the canonical hearing of the source. Re-running
+    # cached extraction validates that the producer still completes, but cannot
+    # replace corrected words, timings, turn boundaries or named speakers with
+    # anonymous model output. Fresh and unreviewed records still adopt fresh_body.
+    if reviewed and media_type in {"audio", "video"}:
+        fresh_body = old_body
+
     if reviewed and _SPEAKER_MARKER_RE.findall(old_body) != _SPEAKER_MARKER_RE.findall(
         fresh_body
     ):

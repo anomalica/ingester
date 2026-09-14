@@ -47,9 +47,13 @@ def slugify(text: str, max_length: int = 60) -> str:
     return text
 
 
-def symlink_name(date: str, source_type: str, title: str, variant: str = "") -> str:
+def symlink_name(
+    date: str | None, source_type: str, title: str, variant: str = ""
+) -> str:
     """Generate the human-readable symlink filename. ``variant`` (e.g. ".v2")
     is inserted before the extension to keep parallel records distinct."""
+    if not date or str(date).strip().lower() in {"none", "null", "undefined"}:
+        raise ValueError("a record alias requires an evidenced date")
     slug = slugify(title)
     return f"{date}-{source_type}-{slug}{variant}.md"
 
@@ -248,7 +252,7 @@ def write_record(
     by_name_dir: Path,
     hex_hash: str,
     content: str,
-    date: str,
+    date: str | None,
     source_type: str,
     title: str,
     force: bool = False,

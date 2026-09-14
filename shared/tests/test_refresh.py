@@ -344,7 +344,7 @@ def test_any_reviewed_body_change_stamps_review_carryover(tmp_path):
     assert any("review_carryover stamped" in n for n in outcome.notes)
 
 
-def test_v2_review_sidecar_protects_speaker_annotations_without_mutation(tmp_path):
+def test_reviewed_av_refresh_preserves_exact_body_and_protected_metadata(tmp_path):
     store = tmp_path / "output" / "store"
     store.mkdir(parents=True)
     content_hash = "b" * 64
@@ -358,13 +358,19 @@ duration: 5.0
 content_hash: sha256:{content_hash}
 copyright:
   status: public_domain
+  detail: government recording
+provenance:
+  collection: curated archive
 processing:
   handler: audio
   version: old
   pipeline_version: 1
 ---
 <!-- speaker: Scott Carpenter -->
-Hello there.
+{{t:0.00}}Hello, {{t:0.60}}there.
+
+<!-- speaker: Ground Control -->
+{{t:2.50}}I {{t:2.70}}am {{t:3.00}}fine.
 """
     record.write_text(original)
     (store / f"{content_hash}.review.json").write_text('{"reviews": []}\n')
@@ -374,16 +380,54 @@ Hello there.
     outcome = refresh_record(
         record,
         store,
-        "<!-- speaker: [speaker 1] -->\nHello there.\n",
+        "<!-- speaker: [speaker 1] -->\n"
+        "{{t:0.10}}Hello {{t:0.70}}there\n"
+        "{{t:2.50}}I {{t:2.70}}am {{t:3.00}}wrong.\n",
         source,
         media_type="audio",
         expected_schema="anomalica/record/2",
         stamp_refusals=False,
     )
 
-    assert not outcome.written
-    assert "speaker annotations differ" in outcome.reason
-    assert record.read_text() == original
+    assert outcome.written, outcome.reason
+    refreshed = record.read_text()
+    assert refreshed.split("\n---\n", 1)[1] == original.split("\n---\n", 1)[1]
+    assert "  pipeline_version: 2" in refreshed
+    assert (
+        "copyright:\n  status: public_domain\n  detail: government recording"
+        in refreshed
+    )
+    assert "provenance:\n  collection: curated archive" in refreshed
+
+
+def test_unreviewed_av_refresh_still_adopts_fresh_body(tmp_path):
+    store = tmp_path / "output" / "store"
+    store.mkdir(parents=True)
+    content_hash = "c" * 64
+    record = store / f"{content_hash}.v2.md"
+    record.write_text(
+        f"---\nschema: anomalica/record/2\ntitle: Audio\nsource_type: audio\n"
+        f"duration: 5.0\ncontent_hash: sha256:{content_hash}\n"
+        "copyright:\n  status: publicly_accessible\nprocessing:\n"
+        "  handler: audio\n  version: old\n  pipeline_version: 1\n---\n"
+        "<!-- speaker: [speaker 1] -->\n{{t:0.00}}Old\n"
+    )
+    source = tmp_path / "source.ogg"
+    source.write_bytes(b"audio")
+    fresh = "<!-- speaker: [speaker 1] -->\n{{t:0.00}}Fresh\n"
+
+    outcome = refresh_record(
+        record,
+        store,
+        fresh,
+        source,
+        media_type="audio",
+        expected_schema="anomalica/record/2",
+        stamp_refusals=False,
+    )
+
+    assert outcome.written, outcome.reason
+    assert record.read_text().endswith(fresh)
 
 
 def test_refresh_refuses_declared_identity_mismatch_without_mutation(tmp_path):

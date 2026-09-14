@@ -9,7 +9,14 @@ from canary_guard import CanaryError, main, validate_candidate
 HASH = "a" * 64
 
 
-def _record(*, generation=1, copyright="public_domain", carryover=False, body="Old"):
+def _record(
+    *,
+    generation=1,
+    copyright="public_domain",
+    carryover=False,
+    body="Old",
+    source_type="audio",
+):
     carry = (
         f"review_carryover:\n  at: 2026-09-14T00:00:00Z\n  from: {HASH}\n"
         "  had_text_edits: true\n"
@@ -20,7 +27,7 @@ def _record(*, generation=1, copyright="public_domain", carryover=False, body="O
 schema: anomalica/record/2
 title: Reviewed audio
 date_published: 1962-05-24
-source_type: audio
+source_type: {source_type}
 source_url: https://example.com/audio
 content_hash: sha256:{HASH}
 copyright:
@@ -37,18 +44,19 @@ processing:
 
 
 def test_reviewed_candidate_requires_carryover_and_preserves_protected_fields():
-    parent = _record()
-    candidate = _record(generation=2, carryover=True, body="New")
+    parent = _record(source_type="web")
+    candidate = _record(generation=7, carryover=True, body="New", source_type="web")
     validate_candidate(parent, candidate, content_hash=HASH, reviewed=True)
 
     with pytest.raises(CanaryError, match="rights"):
         validate_candidate(
             parent,
             _record(
-                generation=2,
+                generation=7,
                 copyright="publicly_accessible",
                 carryover=True,
                 body="New",
+                source_type="web",
             ),
             content_hash=HASH,
             reviewed=True,
@@ -57,10 +65,24 @@ def test_reviewed_candidate_requires_carryover_and_preserves_protected_fields():
     with pytest.raises(CanaryError, match="review_carryover"):
         validate_candidate(
             parent,
-            _record(generation=2, body="New"),
+            _record(generation=7, body="New", source_type="web"),
             content_hash=HASH,
             reviewed=True,
         )
+
+
+def test_reviewed_audio_candidate_must_preserve_the_exact_body():
+    parent = _record(body="<!-- speaker: Person -->\n{{t:0.00}}A word")
+    changed = _record(
+        generation=2,
+        carryover=True,
+        body="<!-- speaker: Person -->\n{{t:0.10}}Another word",
+    )
+    with pytest.raises(CanaryError, match="audio/video body changed"):
+        validate_candidate(parent, changed, content_hash=HASH, reviewed=True)
+
+    unchanged = _record(generation=2, body="<!-- speaker: Person -->\n{{t:0.00}}A word")
+    validate_candidate(parent, unchanged, content_hash=HASH, reviewed=True)
 
 
 def test_isolated_guard_accepts_or_refuses_without_touching_live_parent(
@@ -98,7 +120,7 @@ def test_isolated_guard_accepts_or_refuses_without_touching_live_parent(
     ).stdout.strip()
 
     candidate = tmp_path / "candidate.md"
-    candidate.write_text(_record(generation=2, carryover=True, body="New"))
+    candidate.write_text(_record(generation=2, body="Old"))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -121,8 +143,7 @@ def test_isolated_guard_accepts_or_refuses_without_touching_live_parent(
         _record(
             generation=2,
             copyright="publicly_accessible",
-            carryover=True,
-            body="New",
+            body="Old",
         )
     )
     with pytest.raises(CanaryError, match="rights"):

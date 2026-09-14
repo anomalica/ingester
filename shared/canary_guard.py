@@ -72,6 +72,13 @@ def validate_candidate(
     if errors:
         raise CanaryError("candidate does not validate: " + "; ".join(errors))
 
+    if (
+        reviewed
+        and new.get("source_type") in {"audio", "video"}
+        and new_body != old_body
+    ):
+        raise CanaryError("reviewed audio/video body changed")
+
     if reviewed and new_body != old_body:
         carryover = new.get("review_carryover")
         if not isinstance(carryover, dict) or carryover.get("from") != content_hash:

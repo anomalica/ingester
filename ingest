@@ -6,7 +6,7 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] [--canary] [--source-url URL [--source-id ID]] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--canary] [--source-url URL [--source-id ID]] [--posted-by NAME --posted-date DATE] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
@@ -18,6 +18,8 @@ usage() {
 	echo "                 archived file, e.g. re-transcribing an .opus as record/2" >&2
 	echo "  --source-id    Optional stable id for --source-url; derived from the URL" >&2
 	echo "                 when omitted (youtube:{id} / url:{hash})" >&2
+	echo "  --posted-by    Publisher/channel of the fetched copy" >&2
+	echo "  --posted-date  Publication/upload date of the fetched copy" >&2
 	echo "  --run-uuid     Scheduler-supplied canonical UUID for the result receipt" >&2
 	echo "  --result-path  Absolute path for the atomic structured result receipt" >&2
 	exit 1
@@ -33,6 +35,8 @@ USE_API=0
 INGEST_MODEL="${INGEST_MODEL:-}"
 SOURCE_URL=""
 SOURCE_ID=""
+POSTED_BY=""
+POSTED_DATE=""
 RUN_UUID=""
 RESULT_PATH=""
 while [[ $# -gt 0 ]]; do
@@ -85,6 +89,22 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--source-id=*)
 		SOURCE_ID="${1#*=}"
+		shift
+		;;
+	--posted-by)
+		POSTED_BY="$2"
+		shift 2
+		;;
+	--posted-by=*)
+		POSTED_BY="${1#*=}"
+		shift
+		;;
+	--posted-date)
+		POSTED_DATE="$2"
+		shift 2
+		;;
+	--posted-date=*)
+		POSTED_DATE="${1#*=}"
 		shift
 		;;
 	--run-uuid)
@@ -328,7 +348,8 @@ print(result or 'application/octet-stream')
 
 	SOURCE_PATH="${RESOLVED}" ASSET_NAME="asset.${EXT}" DETECTED_TYPE="${DETECTED_TYPE}" \
 		MANIFEST_OUT="${RUN_DIR}/manifest.json" COPYRIGHT_STATUS="${COPYRIGHT_STATUS}" \
-		SOURCE_URL="${SOURCE_URL}" SOURCE_ID="${SOURCE_ID}" SCRIPT_DIR="${SCRIPT_DIR}" python3 -c "
+		SOURCE_URL="${SOURCE_URL}" SOURCE_ID="${SOURCE_ID}" POSTED_BY="${POSTED_BY}" \
+		POSTED_DATE="${POSTED_DATE}" SCRIPT_DIR="${SCRIPT_DIR}" python3 -c "
 import hashlib, json, os, re, subprocess, sys
 from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.environ['SCRIPT_DIR'], 'acquire/workspace'))
@@ -385,6 +406,12 @@ if source_url:
             pass
 if source_id:
     manifest['source_id'] = source_id
+posted_by = os.environ.get('POSTED_BY', '')
+posted_date = os.environ.get('POSTED_DATE', '')
+if posted_by:
+    manifest['posted_by'] = posted_by
+if posted_date:
+    manifest['posted_date'] = posted_date
 with open(os.environ['MANIFEST_OUT'], 'w') as f:
     json.dump(manifest, f, indent=2)
 "

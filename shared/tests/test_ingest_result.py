@@ -169,6 +169,31 @@ def _result(proc, result_path):
     return json.loads(stdout_bytes)
 
 
+def test_local_manifest_preserves_supplied_copy_metadata(tmp_path):
+    ingester, _, source, run_uuid, result_path, env, _ = _workspace(
+        tmp_path, b"%PDF-1.4 copy metadata"
+    )
+
+    proc = _invoke(
+        ingester,
+        source,
+        run_uuid,
+        result_path,
+        env,
+        "--posted-by",
+        "NewsNation",
+        "--posted-date",
+        "2026-07-26",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    manifest = json.loads(
+        (ingester / "staging" / run_uuid / "manifest.json").read_text()
+    )
+    assert manifest["posted_by"] == "NewsNation"
+    assert manifest["posted_date"] == "2026-07-26"
+
+
 def test_success_emits_result_only_after_record_commit(tmp_path):
     setup = _workspace(tmp_path, b"%PDF-1.4\nfixture\n")
     ingester, ingests, source, run_uuid, result_path, env, content_hash = setup

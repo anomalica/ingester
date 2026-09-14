@@ -124,6 +124,8 @@ _CHANNEL_WORDS = {
     "tv",
 }
 
+_NON_NAME_WORDS = {"q&a", "qa"}
+
 
 def _extract_known_speakers(
     title: str, description: str | None, publisher: str | None
@@ -171,6 +173,8 @@ def _extract_known_speakers(
         if not all(w[0].isupper() for w in words):
             return False
         if any(w.lower() in NOT_NAMES for w in words):
+            return False
+        if any(w.strip(".:-").lower() in _NON_NAME_WORDS for w in words):
             return False
         return True
 
@@ -685,12 +689,16 @@ def run(
         print(f"Written: {existing_record_path}", file=sys.stderr)
         return 0
 
+    # A copy date is not a work publication date, but it is an evidenced date for
+    # the human alias. Fall back to acquisition only for a local source carrying
+    # neither; never allow Python's ``None`` placeholder into a durable path.
+    alias_date = date_published or posted_date or (date_accessed or "")[:10] or None
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
         hex_hash,
         content,
-        date_published,
+        alias_date,
         source_type,
         title,
         variant=variant,
