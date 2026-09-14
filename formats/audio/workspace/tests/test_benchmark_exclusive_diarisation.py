@@ -20,10 +20,17 @@ def test_adoption_requires_fewer_word_errors_without_more_wrong_turns():
         "a": {"regular": _result(10, 2), "exclusive": _result(8, 2)},
         "b": {"regular": _result(5, 1), "exclusive": _result(4, 1)},
     }
-    assert aggregate(passing)["adopt_exclusive"] is True
+    adopted = aggregate(passing)
+    assert adopted["adopt_exclusive"] is True
+    assert adopted["production_decision"]["code"] == "adopt-exclusive"
 
     passing["b"]["exclusive"] = _result(3, 2)
-    assert aggregate(passing)["adopt_exclusive"] is False
+    retained = aggregate(passing)
+    assert retained["adopt_exclusive"] is False
+    assert retained["production_decision"] == {
+        "code": "retain-regular",
+        "summary": "Retain regular Community-1 tracks for speaker attribution.",
+    }
 
 
 def test_prepared_audio_is_16khz_mono(tmp_path: Path):

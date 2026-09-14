@@ -111,9 +111,21 @@ def aggregate(results: dict[str, dict[str, dict]]) -> dict:
             "turn_error_pct": round(100 * wrong_turns / turns, 2),
             "labels": sum(result[strategy]["labels"] for result in results.values()),
         }
-    totals["adopt_exclusive"] = (
+    adopt_exclusive = (
         totals["exclusive"]["wrong_words"] < totals["regular"]["wrong_words"]
         and totals["exclusive"]["wrong_turns"] <= totals["regular"]["wrong_turns"]
+    )
+    totals["adopt_exclusive"] = adopt_exclusive
+    totals["production_decision"] = (
+        {
+            "code": "adopt-exclusive",
+            "summary": "Adopt Community-1 exclusive tracks for speaker attribution.",
+        }
+        if adopt_exclusive
+        else {
+            "code": "retain-regular",
+            "summary": "Retain regular Community-1 tracks for speaker attribution.",
+        }
     )
     return totals
 
