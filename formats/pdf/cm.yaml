@@ -9,6 +9,8 @@ runtime:
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
     - ../../../ingests:/mnt/output:rw
+    - ../../../records:/mnt/records:ro
+    - ../../.ai/pdf:/mnt/benchmark:rw
     - ../../../anomalica-common/src:/opt/anomalica-common:ro
 stages:
   base:
@@ -47,3 +49,8 @@ commands:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: workspace:/opt/anomalica-common
+  native-extraction-benchmark:
+    command: python workspace/benchmark_native_extraction.py
+    description: Compare offline native PDF text/layout extraction with a reviewed ingest
+    env:
+      PYTHONUNBUFFERED: "1"
