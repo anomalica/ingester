@@ -759,6 +759,11 @@ def _xhtml_to_markdown(
     body = soup.find("body") or soup
     title, number, number_tag = _analyse_body(body)
     if number_tag is not None:
+        # Chapter-number headings are omitted from prose, but publishers often
+        # put the chapter's print-page anchor inside that heading. Keep those
+        # anchors at the same position before removing the redundant number.
+        for pagebreak in list(number_tag.find_all(_is_pagebreak)):
+            number_tag.insert_before(pagebreak.extract())
         number_tag.decompose()
     footnotes = _collect_footnotes(body, chapter_file, resolver)
     _strip_internal_anchors(body)

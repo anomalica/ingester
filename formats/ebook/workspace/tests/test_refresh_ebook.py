@@ -22,9 +22,12 @@ def _epub(path, body_one="Body one."):
 
 
 def _staging(tmp_path, name):
+    source = tmp_path / "fixture.epub"
+    if not source.exists():
+        _epub(source)
     staging = tmp_path / name
     staging.mkdir()
-    _epub(staging / "asset.epub")
+    (staging / "asset.epub").write_bytes(source.read_bytes())
     (staging / "manifest.json").write_text(
         json.dumps(
             {

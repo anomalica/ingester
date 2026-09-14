@@ -301,7 +301,10 @@ def _minimal_epub(path: str) -> str:
     book.set_title("My Book")
     book.add_author("A. Writer")
     ch = epub.EpubHtml(title="1. First Chapter", file_name="c1.xhtml")
-    ch.content = "<html><body><h1>1. First Chapter</h1><p>Body one.</p></body></html>"
+    ch.content = (
+        '<html><body><h1><span epub:type="pagebreak" title="7"/>'
+        "1. First Chapter</h1><p>Body one.</p></body></html>"
+    )
     back = epub.EpubHtml(title="About the Author", file_name="c2.xhtml")
     back.content = "<html><body><h1>About the Author</h1><p>A bio.</p></body></html>"
     book.add_item(ch)
@@ -322,6 +325,7 @@ def test_extract_book_title_survives_the_chapter_loop(tmp_path):
     assert book.title == "My Book"
     numbered = [c for c in book.chapters if c.number]
     assert numbered and numbered[0].number == "1"
+    assert "<!-- printed_page: 7 -->" in numbered[0].markdown
 
 
 # --- drop-cap rejoin -----------------------------------------------------------

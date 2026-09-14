@@ -48,7 +48,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # v5: a document nothing was pulled from is never dropped as spent, and a
     # notes document under a Text/ prefix is found by its bare name (v4 dropped
     # six chapters of one book on a failed lookup).
-    "ebook": 5,
+    # v6: retain a print-page anchor nested inside a discarded chapter-number
+    # heading (v5 omitted the opening page of affected chapters).
+    "ebook": 6,
     # v2: a transcription segment is split where its own words change speaker,
     # so an interjection is no longer attributed to whoever was talking around
     # it (misattributed words 4.75% -> 3.88% over three reviewed interviews).
