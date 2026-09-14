@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -90,7 +91,9 @@ def benchmark_one(
         raise FileNotFoundError(archive if not archive.exists() else record)
     segments, _ = load_raw_archive(archive)
     truth = reviewed_words(record)
-    return score_track_sets(segments, payload["pyannote"], truth)
+    result = score_track_sets(segments, payload["pyannote"], truth)
+    result["reviewed_ingest_sha256"] = hashlib.sha256(record.read_bytes()).hexdigest()
+    return result
 
 
 def aggregate(results: dict[str, dict[str, dict]]) -> dict:
