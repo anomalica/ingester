@@ -5,6 +5,7 @@ from pipeline_version import (
     CURRENT_VERSIONS,
     MANIFEST_NAME,
     current_version,
+    stamp_pipeline_version,
     write_manifest,
 )
 
@@ -75,3 +76,41 @@ def test_manifest_replaces_a_malformed_existing_manifest(tmp_path):
     written = yaml.safe_load(write_manifest(store).read_text())
 
     assert written == CURRENT_VERSIONS
+
+
+def test_stamp_pipeline_version_changes_only_the_generation(tmp_path):
+    record = tmp_path / "record.md"
+    record.write_text(
+        "---\nsource_type: web\ndate_extracted: old\nprocessing:\n"
+        "  pipeline_version: 6\n  version: abc1234\n---\nBody bytes.\n"
+    )
+
+    assert stamp_pipeline_version(record, "web", expected_previous=6)
+
+    assert record.read_text() == (
+        "---\nsource_type: web\ndate_extracted: old\nprocessing:\n"
+        "  pipeline_version: 7\n  version: abc1234\n---\nBody bytes.\n"
+    )
+
+
+def test_stamp_pipeline_version_adds_a_processing_block(tmp_path):
+    record = tmp_path / "record.md"
+    record.write_text("---\nsource_type: pdf\ntitle: Example\n---\nBody bytes.\n")
+
+    assert stamp_pipeline_version(record, "pdf", expected_previous=None)
+
+    assert record.read_text() == (
+        "---\nsource_type: pdf\ntitle: Example\nprocessing:\n"
+        "  pipeline_version: 1\n---\nBody bytes.\n"
+    )
+
+
+def test_stamp_pipeline_version_refuses_a_mismatched_record(tmp_path):
+    record = tmp_path / "record.md"
+    original = "---\nsource_type: web\nprocessing:\n  pipeline_version: 5\n---\nBody.\n"
+    record.write_text(original)
+
+    with pytest.raises(ValueError, match="pipeline_version is 5, expected 6"):
+        stamp_pipeline_version(record, "web", expected_previous=6)
+
+    assert record.read_text() == original

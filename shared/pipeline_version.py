@@ -12,6 +12,7 @@ staleness and backfill, distinct from the on-disk ``schema`` (format) and the
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -67,6 +68,69 @@ def current_version(media_type: str) -> int:
         return CURRENT_VERSIONS[media_type]
     except KeyError as exc:
         raise ValueError(f"unsupported source_type: {media_type!r}") from exc
+
+
+def stamp_pipeline_version(
+    record_path: Path, media_type: str, expected_previous: int | None
+) -> bool:
+    """Compare-and-set only a record's extraction generation.
+
+    This is for audited migrations where the body is already known to match the
+    target generation. It deliberately does not change extraction dates or fine
+    producer provenance, because no extraction took place.
+    """
+    text = record_path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError(f"record has no frontmatter: {record_path}")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError(f"record has unterminated frontmatter: {record_path}")
+    frontmatter = text[4:end]
+    metadata = yaml.safe_load(frontmatter) or {}
+    if not isinstance(metadata, dict) or metadata.get("source_type") != media_type:
+        raise ValueError(f"record source_type is not {media_type!r}: {record_path}")
+
+    processing = metadata.get("processing")
+    if processing is not None and not isinstance(processing, dict):
+        raise ValueError(f"record processing block is malformed: {record_path}")
+    processing = processing or {}
+    has_previous = "pipeline_version" in processing
+    previous = processing.get("pipeline_version")
+    if (expected_previous is None and has_previous) or (
+        expected_previous is not None and previous != expected_previous
+    ):
+        raise ValueError(
+            f"record pipeline_version is {previous!r}, expected {expected_previous!r}: "
+            f"{record_path}"
+        )
+
+    target = current_version(media_type)
+    if previous == target:
+        return False
+    version_line = f"  pipeline_version: {target}"
+    if has_previous:
+        frontmatter, replacements = re.subn(
+            r"^  pipeline_version:.*$", version_line, frontmatter, count=1, flags=re.M
+        )
+        if replacements != 1:
+            raise ValueError(
+                f"pipeline_version is not directly under processing: {record_path}"
+            )
+    elif re.search(r"^processing:\s*$", frontmatter, re.M):
+        frontmatter = re.sub(
+            r"^processing:\s*$",
+            f"processing:\n{version_line}",
+            frontmatter,
+            count=1,
+            flags=re.M,
+        )
+    else:
+        frontmatter = f"{frontmatter.rstrip()}\nprocessing:\n{version_line}"
+
+    record_path.write_text(
+        f"---\n{frontmatter}\n---\n{text[end + 5 :]}", encoding="utf-8"
+    )
+    return True
 
 
 def write_manifest(store_dir: Path) -> Path:
