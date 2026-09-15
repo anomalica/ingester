@@ -1,3 +1,6 @@
+import pytest
+
+from document_type import DOCUMENT_TYPES
 from validator import validate
 
 
@@ -37,6 +40,39 @@ Content here.
 def test_valid_record_no_errors():
     result = validate(VALID_RECORD)
     assert result.errors == []
+
+
+@pytest.mark.parametrize("document_type", DOCUMENT_TYPES)
+def test_every_canonical_document_type_is_valid(document_type):
+    record = VALID_RECORD.replace(
+        "source_type: web\n", f"source_type: web\ndocument_type: {document_type}\n"
+    )
+
+    assert validate(record).errors == []
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "document_type: null",
+        "document_type: []",
+        "document_type:\n  - footage",
+        "document_type: 1",
+        "document_type: true",
+        'document_type: ""',
+        'document_type: "   "',
+        "document_type: Footage",
+        "document_type: screenplay",
+    ],
+)
+def test_invalid_present_document_type_is_rejected_without_coercion(declaration):
+    record = VALID_RECORD.replace(
+        "source_type: web", f"source_type: web\n{declaration}"
+    )
+
+    result = validate(record)
+
+    assert any("Invalid document_type" in error for error in result.errors)
 
 
 def test_body_annotation_in_frontmatter_value_is_rejected():

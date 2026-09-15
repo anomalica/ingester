@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 
 import yaml
 
+try:
+    from document_type import DOCUMENT_TYPES
+except ModuleNotFoundError:
+    from shared.document_type import DOCUMENT_TYPES
+
 
 @dataclass
 class ValidationResult:
@@ -180,6 +185,13 @@ def validate(
         result.errors.append(
             f"Wrong schema version: {frontmatter['schema']} (expected {expected_schema})"
         )
+
+    if "document_type" in frontmatter:
+        document_type = frontmatter["document_type"]
+        if not isinstance(document_type, str) or document_type not in DOCUMENT_TYPES:
+            result.errors.append(
+                "Invalid document_type: expected one of " + ", ".join(DOCUMENT_TYPES)
+            )
 
     # Check body content
     body = parts[2].strip()
