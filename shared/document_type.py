@@ -50,6 +50,7 @@ DOCUMENT_TYPES: tuple[str, ...] = (
     "lecture",
     "broadcast",
     "recording",
+    "footage",
 )
 
 # Audio/video: ordered, first match wins. ONLY patterns that cannot reasonably
@@ -61,6 +62,7 @@ _AV_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("documentary", re.compile(r"Full Documentary|\(Documentary", re.I)),
     ("podcast", re.compile(r"Podcast|\bEp\.?\s*\d+", re.I)),
     ("broadcast", re.compile(r"press conference", re.I)),
+    ("footage", re.compile(r"\bfootage\b", re.I)),
 )
 
 # Text documents (pdf, image): the same test. A form-word must be anchored as a

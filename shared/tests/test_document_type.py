@@ -19,12 +19,15 @@ def test_av_titles_that_state_their_form():
     assert (
         classify_av("LIVE: James Fox UFO press conference on Varginha") == "broadcast"
     )
+    assert classify_av("Unedited Navy Gimbal footage.mp4") == "footage"
 
 
 def test_av_no_stated_form_is_absent():
     # A neutral guess would assert false evidence weight; absence invites a human.
     assert classify_av("Meet the Navy Scientist With UFO Patents") is None
     assert classify_av("NASA-UAP-D013, Mercury Atlas 7, May 24, 1962") is None
+    assert classify_av("Unedited Navy Gimbal video.mp4") is None
+    assert classify_av("A collection of footages") is None
     assert classify_av("") is None
 
 
@@ -34,6 +37,10 @@ def test_debriefed_wins_over_episode_number():
     assert classify_av("The Clearest Video of a Tic Tac UAP! - DEBRIEFED ep. 6") == (
         "interview"
     )
+
+
+def test_organised_programme_wins_over_footage_word():
+    assert classify_av("UFO footage | Full Documentary") == "documentary"
 
 
 def test_text_titles_that_state_their_form():
@@ -71,6 +78,8 @@ def test_a_paper_states_its_topic_not_its_form():
 
 def test_derive_routes_by_source_type():
     assert derive_document_type("video", "... DEBRIEFED ep. 3") == "interview"
+    assert derive_document_type("video", "Archive footage") == "footage"
+    assert derive_document_type("audio", "Archive footage") == "footage"
     assert derive_document_type("audio", "NASA-UAP-D013, Mercury Atlas 7") is None
     assert derive_document_type("pdf", "UAP Sighting Report") == "report"
     assert derive_document_type("image", "AATIP briefing slide 9") == "slide"
@@ -86,6 +95,7 @@ def test_every_derivable_value_is_in_the_closed_set():
         "Full Documentary",
         "Bigelow Podcast Ep. 2",
         "press conference",
+        "Archive footage",
         "Incident Report",
         "Statement to Congress",
         "Debrief Form",
