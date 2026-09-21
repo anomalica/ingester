@@ -37,9 +37,13 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+try:
+    from dates import temporal_scalar, utc_now_rfc3339
+except ModuleNotFoundError:
+    from shared.dates import temporal_scalar, utc_now_rfc3339
 
 # Both import conventions in this repo: flat (`pipeline_version`, shared/ on
 # PYTHONPATH - web, ebook, audio) and `shared.pipeline_version` (the pdf
@@ -750,7 +754,7 @@ def stamp_refusal(record_path: Path, reason: str) -> None:
         "refresh_refused",
         [
             "refresh_refused:",
-            f"  at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            f"  at: {temporal_scalar(utc_now_rfc3339())}",
             f"  reason: {json.dumps(reason, ensure_ascii=False)}",
         ],
     )
@@ -762,7 +766,7 @@ def review_carryover_block(content_hash: str, had_text_edits: bool) -> list[str]
     re-processed text and needs another look."""
     return [
         "review_carryover:",
-        f"  at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"  at: {temporal_scalar(utc_now_rfc3339())}",
         f"  from: {content_hash}",
         f"  had_text_edits: {'true' if had_text_edits else 'false'}",
     ]
@@ -779,13 +783,13 @@ def restamp(
     date_extracted, processing (version, pipeline_version, the tool's version
     when given) and, when `review_carryover` is not None, a review_carryover
     block whose had_text_edits is that value."""
-    now = datetime.now(timezone.utc)
+    now = utc_now_rfc3339()
     lines = frontmatter.split("\n")
     in_processing = False
     has_pipeline_version = False
     for i, line in enumerate(lines):
         if line.startswith("date_extracted:"):
-            lines[i] = f"date_extracted: {now.isoformat()}"
+            lines[i] = f"date_extracted: {temporal_scalar(now)}"
         elif line.startswith("processing:"):
             in_processing = True
         elif in_processing and not line.startswith(" "):
@@ -1042,7 +1046,10 @@ def refresh_record(
     )
     content = stamp_record(f"---\n{stamped}\n---\n{new_body}")
     result = validate(
-        content, extra_required=extra_required, expected_schema=expected_schema
+        content,
+        extra_required=extra_required,
+        expected_schema=expected_schema,
+        allow_legacy_temporal=True,
     )
     if result.fixed:
         content = result.fixed
@@ -1052,7 +1059,10 @@ def refresh_record(
     # frontmatter over unchanged cannot be what makes it invalid.
     already = set(
         validate(
-            text, extra_required=extra_required, expected_schema=expected_schema
+            text,
+            extra_required=extra_required,
+            expected_schema=expected_schema,
+            allow_legacy_temporal=True,
         ).errors
     )
     introduced = [e for e in result.errors if e not in already]

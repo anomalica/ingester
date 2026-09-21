@@ -8,14 +8,19 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from alignment.align import align
 from casing import default_caser
 from copyright import status_or
 from document_type import classify_av, normalise_file_format
-from dates import normalise_published, published_scalar
+from dates import (
+    date_alias,
+    normalise_published,
+    published_scalar,
+    temporal_scalar,
+    utc_now_rfc3339,
+)
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
@@ -307,8 +312,8 @@ def _build_frontmatter(
     lines.append(f"duration: {round(duration, 2)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     if date_accessed:
-        lines.append(f"date_accessed: {date_accessed}")
-    lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"date_accessed: {temporal_scalar(date_accessed)}")
+    lines.append(f"date_extracted: {temporal_scalar(utc_now_rfc3339())}")
     lines.append("copyright:")
     lines.append(f"  status: {copyright_status}")
     tool_versions = _get_tool_versions()
@@ -342,7 +347,8 @@ def _build_frontmatter(
             lines.append(f"        channels: {entry['channels']}")
         lines.append(f"        size_bytes: {entry.get('size_bytes', 0)}")
         lines.append(f"        sha256: {entry.get('sha256', '')}")
-        lines.append(f"        fetched_at: {entry.get('fetched_at', '')}")
+        if entry.get("fetched_at"):
+            lines.append(f"        fetched_at: {temporal_scalar(entry['fetched_at'])}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -492,10 +498,9 @@ def run(
         "channels": audio_info["channels"],
         "size_bytes": audio_info["size_bytes"],
         "sha256": hex_hash,
-        "fetched_at": manifest.get(
-            "fetched_at", datetime.now(timezone.utc).isoformat()
-        ),
     }
+    if manifest.get("fetched_at"):
+        new_audio_entry["fetched_at"] = manifest["fetched_at"]
 
     # Read existing source.audio list and merge (append only if sha256 is new)
     existing_record_path = store_dir / f"{hex_hash}{variant}.md"
@@ -657,6 +662,8 @@ def run(
         print(f"Validation warning: {warning}", file=sys.stderr)
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
+    if result.errors:
+        return 1
 
     if existing_record_path.exists():
         outcome = refresh_record(
@@ -692,7 +699,7 @@ def run(
     # A copy date is not a work publication date, but it is an evidenced date for
     # the human alias. Fall back to acquisition only for a local source carrying
     # neither; never allow Python's ``None`` placeholder into a durable path.
-    alias_date = date_published or posted_date or (date_accessed or "")[:10] or None
+    alias_date = date_alias(date_published or posted_date or date_accessed)
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,

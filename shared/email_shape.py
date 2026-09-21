@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import getaddresses, parsedate_to_datetime
 
+from dates import is_rfc3339_instant
+
 
 @dataclass
 class Participant:
@@ -82,6 +84,8 @@ def parse_headers(raw_message: str) -> EmailHeaders:
     if msg.get("Date"):
         try:
             date = parsedate_to_datetime(msg["Date"])
+            if date.tzinfo is None or date.utcoffset() is None:
+                date = None
         except (TypeError, ValueError):
             date = None
     refs = (msg.get("References") or "").split()
@@ -215,8 +219,22 @@ def segment_thread(body: str, top_author: Participant | None = None) -> list[Seg
             author = Participant(
                 address=m.group("addr"), name=(name or "").strip() or None
             )
-            when = (m.group("when") or "").strip() or None
-            current = []
+            raw_when = (m.group("when") or "").strip() or None
+            when = None
+            if raw_when:
+                try:
+                    parsed_when = parsedate_to_datetime(raw_when)
+                    if (
+                        parsed_when.tzinfo is not None
+                        and parsed_when.utcoffset() is not None
+                    ):
+                        when = parsed_when.isoformat()
+                except (TypeError, ValueError):
+                    pass
+            # If the source wording does not establish an instant, retain that
+            # evidence in the reproduced body instead of laundering it into a
+            # structured timestamp.
+            current = [] if when else [ln]
             quoted = True
             continue
         current.append(ln)
@@ -340,12 +358,8 @@ def render_message_annotation(
     parts = [f"n: {n}"]
     if author:
         parts.append(f"from: {_yaml_quote(author.rendered())}")
-    if when:
-        # This is a YAML FLOW mapping, so any value carrying a comma or brace
-        # must be quoted or it splits into bogus entries. An ISO timestamp is a
-        # safe plain scalar; a free-form attribution date ("Mar 5, 2015 6:08 PM")
-        # is not.
-        parts.append(f"date: {_flow_scalar(when)}")
+    if when and is_rfc3339_instant(when):
+        parts.append(f"date: {_yaml_quote(when)}")
     parts.append(f"quoted: {'true' if quoted else 'false'}")
     return "<!-- message: {" + ", ".join(parts) + "} -->"
 

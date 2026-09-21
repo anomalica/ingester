@@ -231,13 +231,11 @@ def test_wayback_capture_date_not_used_as_publication_date(tmp_path):
     with patch("ingest_webpage.extract_article", return_value=article):
         ingest_webpage.run(staging, output, force=False)
     content = list((output / "store").glob("*.md"))[0].read_text()
-    assert "date_published: 2001-02-27" in content
-    assert "date_published: 2001-04-13" not in content
+    assert 'date_published: "2001-02-27"' in content
+    assert 'date_published: "2001-04-13"' not in content
 
 
-def test_wayback_capture_date_kept_when_no_slug_date(tmp_path):
-    """With no date recoverable from the URL, the capture date is kept (flagged in
-    logs) rather than silently replaced with today - so no regression."""
+def test_wayback_capture_date_omitted_when_no_slug_date(tmp_path):
     url = "http://example.com/story/interview.html"
     fetched = "https://web.archive.org/web/20200101120000/" + url
     article = Article(
@@ -253,7 +251,8 @@ def test_wayback_capture_date_kept_when_no_slug_date(tmp_path):
     with patch("ingest_webpage.extract_article", return_value=article):
         ingest_webpage.run(staging, output, force=False)
     content = list((output / "store").glob("*.md"))[0].read_text()
-    assert "date_published: 2020-01-01" in content
+    assert "date_published:" not in content
+    assert 'date_accessed: "2026-03-28T10:00:00Z"' in content
 
 
 def test_copyright_status_gov_mil_hostname_is_public_domain():

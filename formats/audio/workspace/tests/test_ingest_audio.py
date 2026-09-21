@@ -198,8 +198,8 @@ def test_reingest_preserves_provenance_when_manifest_lacks_it(
     assert "source_id: youtube:ABC" in content
     assert "source_type: video" in content  # NOT flipped to audio
     assert 'posted_by: "chan"' in content
-    assert "posted_date: 2011-04-14" in content
-    assert "date_accessed: 2026-08-16" in content  # original, not re-dated to now
+    assert 'posted_date: "2011-04-14"' in content
+    assert 'date_accessed: "2026-08-16T07:00:00Z"' in content
     assert 'title: "Untitled audio"' not in content
 
 
@@ -414,7 +414,7 @@ def test_fresh_video_keeps_copy_metadata_and_uses_posted_date_for_alias(
     content = record.read_text()
     assert "source_type: video" in content
     assert 'posted_by: "NewsNation"' in content
-    assert "posted_date: 2026-07-26" in content
+    assert 'posted_date: "2026-07-26"' in content
     assert "date_published:" not in content
     assert list((output / "by-name").iterdir())[0].name.startswith(
         "2026-07-26-video-ross-coulthart-q-a"

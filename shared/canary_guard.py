@@ -68,7 +68,11 @@ def validate_candidate(
         )
 
     expected_schema = str(old["schema"])
-    errors = validate(candidate, expected_schema=expected_schema).errors
+    errors = validate(
+        candidate,
+        expected_schema=expected_schema,
+        allow_legacy_temporal=True,
+    ).errors
     if errors:
         raise CanaryError("candidate does not validate: " + "; ".join(errors))
 

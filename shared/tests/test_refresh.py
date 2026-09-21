@@ -50,15 +50,15 @@ image:
 
 FRONTMATTER = """schema: anomalica/record/1
 title: "Late Officer"
-date_published: 2026-04-24
+date_published: "2026-04-24"
 source_type: web
 file_format: html
 source_url: https://www.liberationtimes.com/home/late-officer
 publisher: "Liberation Times"
 content_hash: sha256:{h}
 source_hash: sha256:{sh}
-date_accessed: 2026-08-13T00:48:13+00:00
-date_extracted: 2026-08-13T00:49:01+00:00
+date_accessed: "2026-08-13T00:48:13+00:00"
+date_extracted: "2026-08-13T00:49:01Z"
 copyright:
   status: publicly_accessible
 processing:
@@ -96,7 +96,7 @@ def test_refresh_keeps_identity_and_frontmatter_but_replaces_body(tmp_path):
     text = record.read_text()
     assert record.exists() and list(store.glob("*.md")) == [record]
     assert "content_hash: sha256:" + "a" * 64 in text
-    assert "date_accessed: 2026-08-13T00:48:13+00:00" in text
+    assert 'date_accessed: "2026-08-13T00:48:13+00:00"' in text
     assert 'publisher: "Liberation Times"' in text
     assert "**" not in text
     assert "“grave concerns” that the death appears “suspicious”" in text
@@ -320,14 +320,31 @@ def test_a_broken_image_comment_is_not_counted_as_prose():
     assert words_gone(old, new) == {}
 
 
-def test_a_field_the_stored_record_already_lacked_does_not_refuse_the_refresh(tmp_path):
+def test_an_unevidenced_publication_date_does_not_refuse_the_refresh(tmp_path):
     store, record, source = _store(tmp_path)
-    text = record.read_text().replace("date_published: 2026-04-24\n", "")
+    text = record.read_text().replace('date_published: "2026-04-24"\n', "")
     record.write_text(text)
     outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
     assert outcome.written, outcome.reason
-    assert any("pre-existing" in n for n in outcome.notes)
-    assert "date_published" not in record.read_text()
+    assert "date_published:" not in record.read_text()
+
+
+def test_refresh_preserves_legacy_temporal_tokens_byte_for_byte(tmp_path):
+    store, record, source = _store(tmp_path)
+    text = record.read_text()
+    text = text.replace('date_published: "2026-04-24"', "date_published: 2026-04-24")
+    text = text.replace(
+        'date_accessed: "2026-08-13T00:48:13+00:00"',
+        "date_accessed: 2026-08-13 00:48:13+00:00",
+    )
+    record.write_text(text)
+
+    outcome = refresh_record(record, store, FRESH_BODY, source, media_type="web")
+
+    assert outcome.written, outcome.reason
+    refreshed = record.read_text()
+    assert "date_published: 2026-04-24" in refreshed
+    assert "date_accessed: 2026-08-13 00:48:13+00:00" in refreshed
 
 
 def test_any_reviewed_body_change_stamps_review_carryover(tmp_path):

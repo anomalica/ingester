@@ -7,7 +7,7 @@ from validator import validate
 VALID_RECORD = """---
 schema: anomalica/record/1
 title: Test Document
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 source_url: https://example.com
 ---
@@ -19,7 +19,7 @@ VALID_RECORD_CODE_FENCED = """```markdown
 ---
 schema: anomalica/record/1
 title: Test Document
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 
@@ -29,7 +29,7 @@ Article content here.
 RECORD_WITH_COLON_IN_TITLE = """---
 schema: anomalica/record/1
 title: Document: A Subtitle
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 
@@ -83,7 +83,7 @@ def test_body_annotation_in_frontmatter_value_is_rejected():
     record = """---
 schema: anomalica/record/1
 title: Test Document
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: pdf
 creators:
   - "{{redacted}}"
@@ -101,7 +101,7 @@ def test_body_annotation_detected_at_any_nesting_and_bracketed_forms_pass():
     leaky = """---
 schema: anomalica/record/1
 title: "A {{illegible}} title"
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: pdf
 ---
 
@@ -112,7 +112,7 @@ Body.
     clean = """---
 schema: anomalica/record/1
 title: Test Document
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: pdf
 creators:
   - "[senior US intelligence officer]"
@@ -138,7 +138,7 @@ def test_missing_required_field():
     record = """---
 schema: anomalica/record/1
 title: Test
-date_published: 2023-07-26
+date_published: "2023-07-26"
 ---
 
 Content.
@@ -151,7 +151,7 @@ def test_wrong_schema_version():
     record = """---
 schema: anomalica/record/99
 title: Test
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 
@@ -179,7 +179,7 @@ def test_html_tags_warned():
     record = """---
 schema: anomalica/record/1
 title: Test
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 
@@ -193,7 +193,7 @@ def test_empty_body_warned():
     record = """---
 schema: anomalica/record/1
 title: Test
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 """
@@ -205,7 +205,7 @@ def test_extra_required_field_missing():
     record = """---
 schema: anomalica/record/1
 title: Test
-date_published: 2023-07-26
+date_published: "2023-07-26"
 source_type: web
 ---
 
@@ -218,3 +218,101 @@ Content.
 def test_extra_required_field_present():
     result = validate(VALID_RECORD, extra_required=["source_url"])
     assert result.errors == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "1988",
+        "2020-08",
+        "2020-08-09",
+        "2020-08-09T17:30:00Z",
+        "2020-08-09T17:30:00+09:00",
+        "2020-08-09T17:30:00-04:30",
+    ],
+)
+@pytest.mark.parametrize("field", ["date_published", "posted_date"])
+def test_publication_fields_accept_evidenced_precision_and_offsets(field, value):
+    record = VALID_RECORD.replace('date_published: "2023-07-26"', f'{field}: "{value}"')
+    assert validate(record).errors == []
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "date_published: 2020-08-09",
+        'date_published: "2020-02-30"',
+        'date_published: "2020-08-09T17:30:00"',
+        'posted_date: "2020-13"',
+    ],
+)
+def test_publication_fields_reject_non_strings_invalid_dates_and_naive_times(
+    declaration,
+):
+    record = VALID_RECORD.replace('date_published: "2023-07-26"', declaration)
+    assert any("Invalid" in error for error in validate(record).errors)
+
+
+@pytest.mark.parametrize("value", ["2020-08-09T17:30:00Z", "2020-08-09T17:30:00+09:00"])
+def test_date_accessed_accepts_offset_instants(value):
+    record = VALID_RECORD.replace(
+        "source_type: web", f'source_type: web\ndate_accessed: "{value}"'
+    )
+    assert validate(record).errors == []
+
+
+@pytest.mark.parametrize("value", ["2020-08-09", "2020-08-09T17:30:00"])
+def test_date_accessed_rejects_dates_and_naive_times(value):
+    record = VALID_RECORD.replace(
+        "source_type: web", f'source_type: web\ndate_accessed: "{value}"'
+    )
+    assert any("date_accessed" in error for error in validate(record).errors)
+
+
+def test_date_extracted_requires_quoted_utc_z():
+    valid = VALID_RECORD.replace(
+        "source_type: web", 'source_type: web\ndate_extracted: "2020-08-09T08:30:00Z"'
+    )
+    offset = valid.replace("08:30:00Z", "17:30:00+09:00")
+    bare = valid.replace('"2020-08-09T08:30:00Z"', "2020-08-09T08:30:00Z")
+    assert validate(valid).errors == []
+    assert any("date_extracted" in error for error in validate(offset).errors)
+    assert any("date_extracted" in error for error in validate(bare).errors)
+
+
+def test_release_date_is_a_quoted_full_date_only():
+    valid = VALID_RECORD.replace(
+        "source_type: web",
+        'source_type: web\nrelease:\n  release_date: "2020-08-09"',
+    )
+    partial = valid.replace("2020-08-09", "2020-08")
+    assert validate(valid).errors == []
+    assert any("release.release_date" in error for error in validate(partial).errors)
+
+
+def test_publication_date_is_optional_when_not_evidenced():
+    record = VALID_RECORD.replace('date_published: "2023-07-26"\n', "")
+    assert validate(record).errors == []
+
+
+def test_message_annotation_date_requires_a_quoted_offset_timestamp():
+    valid = VALID_RECORD.replace(
+        "Article content here.",
+        '<!-- message: {n: 1, date: "2020-08-09T17:30:00+09:00", quoted: false} -->\nBody.',
+    )
+    naive = valid.replace("17:30:00+09:00", "17:30:00")
+    bare = valid.replace('"2020-08-09T17:30:00+09:00"', "2020-08-09T17:30:00+09:00")
+    assert validate(valid).errors == []
+    assert any("annotations.message.date" in error for error in validate(naive).errors)
+    assert any("annotations.message.date" in error for error in validate(bare).errors)
+
+
+@pytest.mark.parametrize("path", ["review_carryover", "refresh_refused"])
+def test_machine_event_blocks_require_quoted_utc_z(path):
+    valid = VALID_RECORD.replace(
+        "source_type: web",
+        f'source_type: web\n{path}:\n  at: "2020-08-09T08:30:00Z"',
+    )
+    offset = valid.replace("08:30:00Z", "17:30:00+09:00")
+    assert validate(valid).errors == []
+    assert any(f"{path}.at" in error for error in validate(offset).errors)

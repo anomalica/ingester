@@ -8,13 +8,18 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 from extraction.chunker import extract_page, get_page_count, split_pdf
 from extraction.images import is_image
 from shared.copyright import MISSING_PROVENANCE_DETAIL, resolve
-from shared.dates import published_scalar
+from shared.dates import (
+    date_alias,
+    is_full_date,
+    published_scalar,
+    temporal_scalar,
+    utc_now_rfc3339,
+)
 from shared.document_type import derive_document_type, normalise_file_format
 from shared.hashing import content_hash_label, hash_file, store_exists
 from shared.pipeline_version import current_version
@@ -219,6 +224,7 @@ def _patch_frontmatter(
     source_url: str | None = None,
     source_id: str | None = None,
     fetched_url: str | None = None,
+    date_accessed: str | None = None,
     source_file: str | None = None,
     source_type: str | None = None,
 ) -> str:
@@ -292,6 +298,7 @@ def _patch_frontmatter(
         ("source_url", source_url),
         ("source_id", source_id),
         ("fetched_url", fetched_url),
+        ("date_accessed", temporal_scalar(date_accessed) if date_accessed else None),
         ("source_file", source_file),
     ):
         if value and f"\n{key}:" not in f"\n{frontmatter}":
@@ -321,6 +328,18 @@ def _patch_frontmatter(
                 date_match.group(0), f"date_published: {scalar}", 1
             )
 
+    release_date_match = re.search(
+        r"(?m)^(\s+release_date:)[ \t]*(.+?)[ \t]*$", frontmatter
+    )
+    if release_date_match:
+        raw_release_date = release_date_match.group(2).strip().strip("\"'")
+        if is_full_date(raw_release_date):
+            frontmatter = frontmatter.replace(
+                release_date_match.group(0),
+                f"{release_date_match.group(1)} {temporal_scalar(raw_release_date)}",
+                1,
+            )
+
     # `creators` is the medium-neutral field; the prompt asks for it, but a
     # model-authored frontmatter can still arrive with `authors`. Only when there is
     # no creators list to collide with - two lists is a review problem, not ours.
@@ -332,7 +351,7 @@ def _patch_frontmatter(
     if "date_extracted:" not in frontmatter:
         frontmatter = (
             frontmatter.rstrip("\n")
-            + f"\ndate_extracted: {datetime.now(timezone.utc).isoformat()}\n"
+            + f"\ndate_extracted: {temporal_scalar(utc_now_rfc3339())}\n"
         )
 
     if "copyright:" not in frontmatter:
@@ -731,6 +750,7 @@ def main():
     source_url = None
     source_id = None
     fetched_url = None
+    date_accessed = None
     local_source_name = None
     if args.staging_dir:
         import json
@@ -765,6 +785,7 @@ def main():
         manifest_fetched = manifest.get("fetched_url")
         if manifest_fetched and manifest_fetched != source_url:
             fetched_url = manifest_fetched
+        date_accessed = manifest.get("fetched_at")
         manifest_copyright = default_copyright(manifest)
 
     # Auto-detect mount paths from container-magic
@@ -976,6 +997,7 @@ def main():
         source_url=source_url,
         source_id=source_id,
         fetched_url=fetched_url,
+        date_accessed=date_accessed,
         source_file=source_file,
         source_type=record_source_type,
     )
@@ -1063,6 +1085,7 @@ def main():
                 source_url=source_url,
                 source_id=source_id,
                 fetched_url=fetched_url,
+                date_accessed=date_accessed,
                 source_file=source_file,
                 source_type=record_source_type,
             )
@@ -1097,7 +1120,7 @@ def main():
     raw_date = fm.get("date_published", fm.get("date")) if fm else None
     # A genuinely-null date_published (YAML null) must not become the string
     # "None" in the symlink name - fall back to "undated".
-    date = str(raw_date) if raw_date else "undated"
+    date = date_alias(raw_date) or "undated"
     source_type = fm.get("source_type", "pdf") if fm else "pdf"
     title = clean_title(fm.get("title", "untitled")) if fm else "untitled"
 

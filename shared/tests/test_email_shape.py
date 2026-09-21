@@ -68,18 +68,31 @@ def test_segment_thread_attributes_quoted_message_to_its_own_author():
     # the crux: Fish's words must NOT be attributed to Podesta
     assert segs[1].quoted is True
     assert segs[1].author.address == "robertbfish@earthlink.net"
-    assert segs[1].attributed_when == "Mar 5, 2015 6:08 PM"
+    assert segs[1].attributed_when is None
+    assert 'On Mar 5, 2015 6:08 PM, "Bob Fish"' in segs[1].text
     assert "I know you are busy" in segs[1].text
-    assert ">" not in segs[1].text  # one level of quoting stripped
+    assert not any(line.startswith(">") for line in segs[1].text.splitlines())
 
 
 def test_segment_thread_handles_attribution_without_display_name():
     body = (
-        "reply\n\nOn Tue, 1 Jan 2019 at 10:00, <someone@example.com> wrote:\n> older\n"
+        "reply\n\nOn Tue, 1 Jan 2019 10:00:00 +0900, "
+        "<someone@example.com> wrote:\n> older\n"
     )
     segs = segment_thread(body)
     assert segs[1].author.address == "someone@example.com"
+    assert "On Tue, 1 Jan 2019 10:00:00 +0900" in segs[1].text
+    assert segs[1].attributed_when is None
+
+
+def test_segment_thread_structures_an_offset_attribution_date():
+    body = (
+        'reply\n\nOn Tue, 1 Jan 2019 10:00:00 +0900, "Someone" '
+        "<someone@example.com> wrote:\n> older\n"
+    )
+    segs = segment_thread(body)
     assert segs[1].text.strip() == "older"
+    assert segs[1].attributed_when == "2019-01-01T10:00:00+09:00"
 
 
 def test_segment_thread_single_message_is_one_unquoted_segment():
@@ -95,9 +108,7 @@ def _parse_annotation(ann: str):
     return yaml.safe_load(inner)
 
 
-def test_message_annotation_is_valid_yaml_with_freeform_date():
-    # "Mar 5, 2015 6:08 PM" carries commas - unquoted it would split the flow
-    # mapping into bogus entries.
+def test_message_annotation_omits_freeform_date():
     ann = render_message_annotation(
         2,
         Participant(address="robertbfish@earthlink.net", name="Bob Fish"),
@@ -107,13 +118,14 @@ def test_message_annotation_is_valid_yaml_with_freeform_date():
     got = _parse_annotation(ann)
     assert got["n"] == 2
     assert got["from"] == "Bob Fish <robertbfish@earthlink.net>"
-    assert got["date"] == "Mar 5, 2015 6:08 PM"
+    assert "date" not in got
     assert got["quoted"] is True
 
 
-def test_message_annotation_keeps_iso_date_plain_and_parses():
+def test_message_annotation_quotes_offset_date_and_parses():
     ann = render_message_annotation(1, None, "2015-03-05T18:38:14-05:00", False)
-    assert '"2015-03-05' not in ann  # ISO stays a plain scalar
+    assert 'date: "2015-03-05T18:38:14-05:00"' in ann
+    assert _parse_annotation(ann)["date"] == "2015-03-05T18:38:14-05:00"
     assert _parse_annotation(ann)["quoted"] is False
 
 

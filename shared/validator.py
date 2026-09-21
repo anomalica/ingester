@@ -13,6 +13,23 @@ from dataclasses import dataclass, field
 import yaml
 
 try:
+    from dates import (
+        is_evidenced_date,
+        is_full_date,
+        is_rfc3339_instant,
+        is_utc_instant,
+        normalise_published,
+    )
+except ModuleNotFoundError:
+    from shared.dates import (
+        is_evidenced_date,
+        is_full_date,
+        is_rfc3339_instant,
+        is_utc_instant,
+        normalise_published,
+    )
+
+try:
     from document_type import DOCUMENT_TYPES
 except ModuleNotFoundError:
     from shared.document_type import DOCUMENT_TYPES
@@ -27,14 +44,6 @@ class ValidationResult:
 
 REQUIRED_FRONTMATTER = ["schema", "title", "source_type"]
 
-# A record must evidence WHEN, but either layer satisfies it: `date_published` is the
-# work's date, `posted_date` is when the channel posted the copy the fetcher saw.
-# date_published was unconditionally required until 2026-08-19, which is why the
-# audio handler fabricated one from today's date rather than fail validation - two
-# 1972 Apollo debriefings came out dated 2026-07-11. Requiring "one of" lets a fresh
-# video ingest record only what it observed and leave the work's date absent, per
-# ingest-format's not-evidenced convention.
-REQUIRED_ONE_OF = [("date_published", "posted_date")]
 CURRENT_SCHEMA = "anomalica/record/1"
 
 
@@ -93,16 +102,19 @@ def validate(
     content: str,
     extra_required: list[str] | None = None,
     expected_schema: str = CURRENT_SCHEMA,
+    allow_legacy_temporal: bool = False,
 ) -> ValidationResult:
     """Validate a record against the Anomalica record format.
 
     Args:
         content: The full record file content.
         extra_required: Additional frontmatter fields required beyond the
-            base set (schema, title, date, source_type).
+            base set (schema, title, source_type).
         expected_schema: The schema version this record should declare
             (defaults to the current v1 schema; word-level records pass
             anomalica/record/2).
+        allow_legacy_temporal: Accept documented legacy lexical forms only when
+            preserving an existing record through a non-temporal edit.
 
     Returns:
         ValidationResult with errors, warnings, and optionally fixed content.
@@ -148,6 +160,33 @@ def validate(
         result.errors.append("Frontmatter YAML is not a mapping")
         return result
 
+    def valid_published(value: object) -> bool:
+        if isinstance(value, str) and is_evidenced_date(value):
+            return True
+        if not allow_legacy_temporal:
+            return False
+        if isinstance(value, int) and len(str(value)) == 4:
+            return is_evidenced_date(str(value))
+        return is_evidenced_date(value) or is_evidenced_date(normalise_published(value))
+
+    def valid_offset(value: object, *, date_legacy: bool = False) -> bool:
+        if isinstance(value, str) and is_rfc3339_instant(value):
+            return True
+        if not allow_legacy_temporal:
+            return False
+        if date_legacy and is_full_date(value):
+            return True
+        return is_rfc3339_instant(value) or is_rfc3339_instant(
+            normalise_published(value)
+        )
+
+    def valid_utc(value: object) -> bool:
+        if is_utc_instant(value):
+            return True
+        return allow_legacy_temporal and (
+            is_rfc3339_instant(value) or is_rfc3339_instant(normalise_published(value))
+        )
+
     # A body-annotation ({{...}}) must never appear in a frontmatter value: the
     # grammar is defined for the body, and a frontmatter consumer reads the value as
     # literal text. Reject, never rewrite - {{redacted}} in creators should become
@@ -174,11 +213,108 @@ def validate(
     for field_name in all_required:
         if field_name not in frontmatter:
             result.errors.append(f"Missing required frontmatter field: {field_name}")
-    for group in REQUIRED_ONE_OF:
-        if not any(name in frontmatter for name in group):
+
+    for field_name in ("date_published", "posted_date"):
+        if field_name in frontmatter and not valid_published(frontmatter[field_name]):
             result.errors.append(
-                "Missing required frontmatter field: one of " + " / ".join(group)
+                f"Invalid {field_name}: expected YYYY, YYYY-MM, YYYY-MM-DD, or "
+                "an RFC 3339 timestamp with Z or an explicit offset"
             )
+
+    if "date_accessed" in frontmatter and not valid_offset(
+        frontmatter["date_accessed"], date_legacy=True
+    ):
+        result.errors.append(
+            "Invalid date_accessed: expected an RFC 3339 timestamp with Z or "
+            "an explicit offset"
+        )
+
+    if "date_extracted" in frontmatter:
+        extracted = frontmatter["date_extracted"]
+        if not valid_utc(extracted):
+            result.errors.append(
+                "Invalid date_extracted: expected an RFC 3339 UTC timestamp ending in Z"
+            )
+
+    provenance = frontmatter.get("provenance")
+    if isinstance(provenance, dict):
+        if "published_date" in provenance and not valid_published(
+            provenance["published_date"]
+        ):
+            result.errors.append(
+                "Invalid provenance.published_date: expected YYYY, YYYY-MM, "
+                "YYYY-MM-DD, or an RFC 3339 timestamp with Z or an explicit offset"
+            )
+        if "posted_date" in provenance and not valid_published(
+            provenance["posted_date"]
+        ):
+            result.errors.append(
+                "Invalid provenance.posted_date: expected YYYY, YYYY-MM, "
+                "YYYY-MM-DD, or an RFC 3339 timestamp with Z or an explicit offset"
+            )
+        if "acquired_date" in provenance and not valid_offset(
+            provenance["acquired_date"], date_legacy=True
+        ):
+            result.errors.append(
+                "Invalid provenance.acquired_date: expected an RFC 3339 timestamp "
+                "with Z or an explicit offset"
+            )
+
+    release = frontmatter.get("release")
+    if isinstance(release, dict) and "release_date" in release:
+        release_date = release["release_date"]
+        if not (
+            (isinstance(release_date, str) and is_full_date(release_date))
+            or (
+                allow_legacy_temporal
+                and (is_full_date(release_date) or isinstance(release_date, str))
+            )
+        ):
+            result.errors.append("Invalid release.release_date: expected YYYY-MM-DD")
+
+    copyright_block = frontmatter.get("copyright")
+    if isinstance(copyright_block, dict):
+        for field_name in ("granted_at", "expires"):
+            if field_name in copyright_block and not (
+                (
+                    isinstance(copyright_block[field_name], str)
+                    and is_full_date(copyright_block[field_name])
+                )
+                or (allow_legacy_temporal and is_full_date(copyright_block[field_name]))
+            ):
+                result.errors.append(
+                    f"Invalid copyright.{field_name}: expected YYYY-MM-DD"
+                )
+
+    for block_name in ("review_carryover", "refresh_refused"):
+        block = frontmatter.get(block_name)
+        if isinstance(block, dict) and "at" in block and not valid_utc(block["at"]):
+            result.errors.append(
+                f"Invalid {block_name}.at: expected an RFC 3339 UTC timestamp ending in Z"
+            )
+
+    snapshots = frontmatter.get("snapshots")
+    if isinstance(snapshots, list):
+        for index, snapshot in enumerate(snapshots):
+            if isinstance(snapshot, dict) and "captured_at" in snapshot:
+                if not valid_utc(snapshot["captured_at"]):
+                    result.errors.append(
+                        f"Invalid snapshots[{index}].captured_at: expected an RFC "
+                        "3339 UTC timestamp ending in Z"
+                    )
+
+    processing = frontmatter.get("processing")
+    if isinstance(processing, dict):
+        source = processing.get("source")
+        if isinstance(source, dict) and isinstance(source.get("audio"), list):
+            for index, audio in enumerate(source["audio"]):
+                if isinstance(audio, dict) and "fetched_at" in audio:
+                    if not valid_offset(audio["fetched_at"]):
+                        result.errors.append(
+                            "Invalid processing.source.audio"
+                            f"[{index}].fetched_at: expected an RFC 3339 timestamp "
+                            "with Z or an explicit offset"
+                        )
 
     # Check schema version
     if frontmatter.get("schema") and frontmatter["schema"] != expected_schema:
@@ -198,6 +334,24 @@ def validate(
     if not body:
         result.warnings.append("No content after frontmatter (empty body)")
         return result
+
+    for annotation in re.findall(r"<!--\s*message:\s*(\{.*?\})\s*-->", body):
+        try:
+            message = yaml.safe_load(annotation)
+        except yaml.YAMLError:
+            continue
+        if isinstance(message, dict) and "date" in message:
+            if not (
+                (
+                    isinstance(message["date"], str)
+                    and is_rfc3339_instant(message["date"])
+                )
+                or (allow_legacy_temporal and isinstance(message["date"], str))
+            ):
+                result.errors.append(
+                    "Invalid annotations.message.date: expected a quoted RFC 3339 "
+                    "timestamp with Z or an explicit offset"
+                )
 
     # Check for HTML tags
     html_tags = re.findall(r"<(sup|sub|br|div|span|p|b|i|em|strong)[>\s/]", body)

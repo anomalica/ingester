@@ -7,7 +7,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 from email_shape import (
@@ -20,7 +20,13 @@ from email_shape import (
     trim_raw_source_tail,
 )
 from copyright import status_or
-from dates import normalise_published, published_scalar
+from dates import (
+    date_alias,
+    normalise_published,
+    published_scalar,
+    temporal_scalar,
+    utc_now_rfc3339,
+)
 from dedup import find_by_source_hash, find_by_source_id
 from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
@@ -114,7 +120,7 @@ def _copyright_status(url: str) -> str:
 
 def _build_frontmatter(
     title: str,
-    date_published: str,
+    date_published: str | None,
     url: str,
     source_id: str | None,
     fetched_url: str | None,
@@ -135,10 +141,11 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
         f'title: "{escaped_title}"',
-        f"date_published: {published_scalar(date_published)}",
         "source_type: web",
         "file_format: html",
     ]
+    if date_published:
+        lines.insert(3, f"date_published: {published_scalar(date_published)}")
     # document_type is WHAT the record is; source_type is HOW it was acquired.
     # Set only when the whole record is one message - the email headers are the
     # artefact stating its form, which is derivation. A generic web page states no
@@ -175,8 +182,8 @@ def _build_frontmatter(
             lines.append(f"    hash: {content_hash_label(snap['hash'])}")
             lines.append(f"    content_type: {snap['content_type']}")
     if date_accessed:
-        lines.append(f"date_accessed: {date_accessed}")
-    lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"date_accessed: {temporal_scalar(date_accessed)}")
+    lines.append(f"date_extracted: {temporal_scalar(utc_now_rfc3339())}")
     lines.append("copyright:")
     lines.append(f"  status: {copyright_status or _copyright_status(url)}")
     if media_summary:
@@ -323,7 +330,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
             return 0
 
     if email_headers is not None and email_headers.date:
-        date_published = email_headers.date.date().isoformat()
+        date_published = email_headers.date.isoformat()
     else:
         extracted = article.date
         capture = _wayback_capture_date(fetched_url)
@@ -342,14 +349,12 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
                 extracted = recovered
             else:
                 print(
-                    f"Warning: extracted date {extracted} equals the Wayback "
-                    "capture date and no publication date is recoverable from the "
-                    "URL - it may be the archive's served date, not publication",
+                    f"Discarding Wayback capture date {extracted}; no evidenced "
+                    "publication date is recoverable from the original URL",
                     file=sys.stderr,
                 )
-        date_published = normalise_published(extracted) or datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d")
+                extracted = None
+        date_published = normalise_published(extracted) or None
     date_accessed = manifest.get("fetched_at")
     # The page's own site name is chrome, not part of either field: it rides on the
     # end of the title AND arrives as the publisher with a tagline attached.
@@ -393,13 +398,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation warning: {warning}", file=sys.stderr)
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
+    if result.errors:
+        return 1
 
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
         hex_hash,
         content,
-        date_published,
+        date_alias(date_published or date_accessed),
         "web",
         title,
         force=force,

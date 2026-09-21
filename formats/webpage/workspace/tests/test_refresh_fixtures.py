@@ -37,15 +37,15 @@ image:
 
 FRONTMATTER = """schema: anomalica/record/1
 title: "Late Officer"
-date_published: 2026-04-24
+date_published: "2026-04-24"
 source_type: web
 file_format: html
 source_url: https://www.liberationtimes.com/home/late-officer
 publisher: "Liberation Times"
 content_hash: sha256:{h}
 source_hash: sha256:{sh}
-date_accessed: 2026-08-13T00:48:13+00:00
-date_extracted: 2026-08-13T00:49:01+00:00
+date_accessed: "2026-08-13T00:48:13+00:00"
+date_extracted: "2026-08-13T00:49:01Z"
 copyright:
   status: publicly_accessible
 processing:

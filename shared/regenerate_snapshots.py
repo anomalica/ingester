@@ -40,6 +40,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from dates import temporal_scalar
+except ModuleNotFoundError:
+    from shared.dates import temporal_scalar
+
 INGESTER = Path(__file__).resolve().parent.parent
 INGESTS = INGESTER.parent / "ingests"
 RECORDS = INGESTER.parent / "records"
@@ -161,7 +166,7 @@ def replace_snapshot(
         f"{indent}- role: {role}\n"
         f"{field}hash: sha256:{new_hash}\n"
         f"{field}content_type: text/html\n"
-        f"{field}captured_at: {when}\n"
+        f"{field}captured_at: {temporal_scalar(when)}\n"
     )
     if source:
         entry += f"{field}captured_from: {source}\n"

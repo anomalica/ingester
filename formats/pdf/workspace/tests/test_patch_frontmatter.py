@@ -270,7 +270,7 @@ def test_preserve_identity_holds_stored_title_and_date():
         content, {"title": "Stored Title", "date_published": "2020-05-14"}
     )
     assert 'title: "Stored Title"' in out
-    assert "date_published: 2020-05-14" in out
+    assert 'date_published: "2020-05-14"' in out
     assert out.endswith("body")
 
 
@@ -330,16 +330,33 @@ def test_resequence_noop_when_count_mismatch():
     assert fixed == content
 
 
-def test_model_datetime_is_normalised_to_a_bare_date():
-    """The extraction model authors this field, so the prompt cannot guarantee its
-    shape - it has emitted datetimes where every other handler writes a bare date,
-    and YAML then parses one field as two types across the corpus."""
+def test_model_offset_datetime_preserves_its_precision():
     content = (
         "---\nschema: anomalica/record/1\nsource_type: pdf\n"
         "date_published: 2023-07-26 00:00:00+00:00\npages: 1\n---\n\nBody text."
     )
     result = _patch_frontmatter(content, "abc123", 1)
-    assert "date_published: 2023-07-26\n" in result
+    assert 'date_published: "2023-07-26T00:00:00+00:00"\n' in result
+
+
+def test_acquisition_instant_preserves_its_source_offset():
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        'date_published: "2023-07-26"\npages: 1\n---\n\nBody text.'
+    )
+    result = _patch_frontmatter(
+        content, "abc123", 1, date_accessed="2026-09-21T10:00:00+09:00"
+    )
+    assert 'date_accessed: "2026-09-21T10:00:00+09:00"' in result
+
+
+def test_release_date_is_emitted_as_a_quoted_full_date():
+    content = (
+        "---\nschema: anomalica/record/1\nsource_type: pdf\n"
+        "pages: 1\nrelease:\n  release_date: 2026-03-16\n---\n\nBody text."
+    )
+    result = _patch_frontmatter(content, "abc123", 1)
+    assert '  release_date: "2026-03-16"' in result
 
 
 def test_a_year_only_date_is_left_alone():

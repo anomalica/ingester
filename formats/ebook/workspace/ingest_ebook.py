@@ -6,11 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 from dedup import find_by_source_hash, find_by_source_id
+from dates import (
+    date_alias,
+    normalise_published,
+    published_scalar,
+    temporal_scalar,
+    utc_now_rfc3339,
+)
 from hashing import content_hash_label, hash_file, hash_string, store_exists
 from pipeline_version import current_version
 from record import get_version, write_record
@@ -75,25 +81,9 @@ def _ebooklib_version() -> str:
         return "unknown"
 
 
-def _normalise_date(raw: str | None) -> str:
-    if not raw:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    candidate = raw.strip()
-    for length in (10, 7, 4):
-        prefix = candidate[:length]
-        try:
-            datetime.strptime(
-                prefix, "%Y-%m-%d" if length == 10 else "%Y-%m" if length == 7 else "%Y"
-            )
-            return prefix
-        except ValueError:
-            continue
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
 def _build_frontmatter(
     book: ExtractedBook,
-    date_published: str,
+    date_published: str | None,
     source_url: str | None,
     date_accessed: str | None,
     hex_hash: str,
@@ -107,10 +97,11 @@ def _build_frontmatter(
         "---",
         "schema: anomalica/record/1",
         f'title: "{escaped_title}"',
-        f"date_published: {date_published}",
         "source_type: ebook",
         "file_format: epub",
     ]
+    if date_published:
+        lines.insert(3, f"date_published: {published_scalar(date_published)}")
     # No document_type: an EPUB is a delivery container and states nothing about
     # what it holds, so `book` would be an assumption, not a derivation. A reviewer
     # sets it in the workbench.
@@ -136,8 +127,8 @@ def _build_frontmatter(
     if source_hash:
         lines.append(f"source_hash: {content_hash_label(source_hash)}")
     if date_accessed:
-        lines.append(f"date_accessed: {date_accessed}")
-    lines.append(f"date_extracted: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"date_accessed: {temporal_scalar(date_accessed)}")
+    lines.append(f"date_extracted: {temporal_scalar(utc_now_rfc3339())}")
     lines.append("copyright:")
     lines.append(f"  status: {copyright_status}")
     if media_summary:
@@ -276,7 +267,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
             "total_bytes": sum(len(img.bytes) for img in book.images),
         }
 
-    date_published = _normalise_date(book.date_published)
+    date_published = normalise_published(book.date_published) or None
     frontmatter = _build_frontmatter(
         book,
         date_published,
@@ -295,13 +286,15 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Validation warning: {warning}", file=sys.stderr)
     for error in result.errors:
         print(f"Validation error: {error}", file=sys.stderr)
+    if result.errors:
+        return 1
 
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
         hex_hash,
         content,
-        date_published,
+        date_alias(date_published or date_accessed),
         "ebook",
         book.title,
         force=force,
