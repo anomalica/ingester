@@ -6,7 +6,7 @@ STAGING_DIR="${SCRIPT_DIR}/staging"
 INGESTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/ingests"
 
 usage() {
-	echo "Usage: ingest [--force] [--canary] [--source-url URL [--source-id ID]] [--posted-by NAME --posted-date DATE] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
+	echo "Usage: ingest [--force] [--canary] [--source-url URL [--source-id ID]] [--record-metadata-file PATH] [--posted-by NAME --posted-date DATE] [--run-uuid UUID --result-path PATH] <url-or-path>" >&2
 	echo "" >&2
 	echo "Acquire a URL or local file and route to the appropriate format handler." >&2
 	echo "" >&2
@@ -18,6 +18,7 @@ usage() {
 	echo "                 archived file, e.g. re-transcribing an .opus as record/2" >&2
 	echo "  --source-id    Optional stable id for --source-url; derived from the URL" >&2
 	echo "                 when omitted (youtube:{id} / url:{hash})" >&2
+	echo "  --record-metadata-file  Validated generic record metadata snapshot" >&2
 	echo "  --posted-by    Publisher/channel of the fetched copy" >&2
 	echo "  --posted-date  Publication/upload date of the fetched copy" >&2
 	echo "  --run-uuid     Scheduler-supplied canonical UUID for the result receipt" >&2
@@ -35,6 +36,7 @@ USE_API=0
 INGEST_MODEL="${INGEST_MODEL:-}"
 SOURCE_URL=""
 SOURCE_ID=""
+RECORD_METADATA_FILE=""
 POSTED_BY=""
 POSTED_DATE=""
 RUN_UUID=""
@@ -89,6 +91,14 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--source-id=*)
 		SOURCE_ID="${1#*=}"
+		shift
+		;;
+	--record-metadata-file)
+		RECORD_METADATA_FILE="$2"
+		shift 2
+		;;
+	--record-metadata-file=*)
+		RECORD_METADATA_FILE="${1#*=}"
 		shift
 		;;
 	--posted-by)
@@ -424,6 +434,11 @@ if [[ ! -f "$MANIFEST" ]]; then
 	exit 1
 fi
 
+if [[ -n "$RECORD_METADATA_FILE" ]]; then
+	python3 "${SCRIPT_DIR}/shared/record_metadata.py" manifest \
+		--manifest "$MANIFEST" --metadata-file "$RECORD_METADATA_FILE"
+fi
+
 DETECTED_TYPE="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('detected_type') or '')")"
 ASSET="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('asset') or '')")"
 SOURCE_ID="$(python3 -c "import json; m=json.load(open('${MANIFEST}')); print(m.get('source_id') or '')")"
@@ -641,6 +656,13 @@ else
 		--ingests-dir "$RUN_OUTPUT" \
 		--asset-hash "$ASSET_HASH" \
 		--source-id "$SOURCE_ID")"
+fi
+
+if [[ -n "$RECORD_METADATA_FILE" ]]; then
+	python3 "${SCRIPT_DIR}/shared/record_metadata.py" record \
+		--record "${RUN_OUTPUT}/${RECORD_PATH}" \
+		--by-name-dir "${RUN_OUTPUT}/by-name" \
+		--metadata-file "$RECORD_METADATA_FILE"
 fi
 
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared

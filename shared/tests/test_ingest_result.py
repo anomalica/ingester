@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -60,6 +61,15 @@ def _workspace(tmp_path: Path, asset: bytes, existing: bool = False):
     shutil.copy2(
         PROJECT / "shared/ingest_result.py", ingester / "shared/ingest_result.py"
     )
+    for name in (
+        "dedup.py",
+        "dates.py",
+        "document_type.py",
+        "record.py",
+        "record_metadata.py",
+        "validator.py",
+    ):
+        shutil.copy2(PROJECT / "shared" / name, ingester / "shared" / name)
     (ingester / "acquire/workspace").mkdir(parents=True)
     shutil.copy2(
         PROJECT / "acquire/workspace/detect.py",
@@ -230,6 +240,53 @@ def test_success_emits_result_only_after_record_commit(tmp_path):
         ingests, "show", f"{result['commit_sha']}:{result['record_path']}"
     ).stdout
     assert f"content_hash: sha256:{content_hash}" in committed
+
+
+def test_generic_metadata_reaches_and_validates_the_final_record(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\nmetadata fixture\n")
+    ingester, ingests, source, run_uuid, result_path, env, content_hash = setup
+    metadata_path = tmp_path / "record-metadata.json"
+    description = "Official description.\n\n" + "x" * 2500
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schema": "anomalica/record-metadata/1",
+                "metadata": {
+                    "title": "Official title",
+                    "source_type": "pdf",
+                    "source_url": "https://www.war.gov/report.pdf",
+                    "source_id": "DOW-UAP-D102",
+                    "publisher": "Department of War",
+                    "date_published": "2026-09-18",
+                    "description": description,
+                    "copyright": {"status": "public_domain"},
+                },
+            }
+        )
+    )
+
+    proc = _invoke(
+        ingester,
+        source,
+        run_uuid,
+        result_path,
+        env,
+        "--record-metadata-file",
+        str(metadata_path),
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    result = _result(proc, result_path)
+    committed = _git(
+        ingests, "show", f"{result['commit_sha']}:{result['record_path']}"
+    ).stdout
+    frontmatter = yaml.safe_load(committed.split("---", 2)[1])
+    assert frontmatter["title"] == "Official title"
+    assert frontmatter["description"] == description
+    assert frontmatter["source_id"] == "DOW-UAP-D102"
+    assert frontmatter["copyright"] == {"status": "public_domain"}
+    alias = ingests / "by-name/2026-09-18-pdf-official-title.md"
+    assert alias.resolve() == ingests / f"store/{content_hash}.md"
 
 
 def test_duplicate_emits_verified_no_op_result(tmp_path):
