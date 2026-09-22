@@ -1,16 +1,16 @@
 # Anomalica ingester
 
-The shared instructions in `/home/mark/repos/anomalica/AGENTS.md` apply. If they are not already in the current context, read that file before working here.
+Parent Product and root Core instructions are loaded through `opencode.json` and remain mandatory.
 
 The ingester converts source material such as PDFs, audio, video, ebooks and web pages into Anomalica records: Markdown with YAML frontmatter and body annotations.
 
 ## Contracts and layout
 
-- The canonical output contract is `/home/mark/repos/anomalica/anomalica/architecture/ingest-format.md`. Read it before changing record output and update it in the same change when the contract changes.
+- The canonical output contract is `../anomalica/architecture/ingest-format.md`. Read it before changing record output and update it in the same change when the contract changes.
 - `acquire/` fetches and caches source material and writes a staging manifest.
 - `formats/` contains the format-specific ingestion paths.
 - `shared/` contains common record, hashing and validation utilities.
-- Output records go to the sibling `/home/mark/repos/anomalica/ingests/` repository. Original source files go to `/home/mark/repos/anomalica/records/`.
+- Output records go to the sibling `../ingests/` repository. Original source files go to `/home/mark/repos/anomalica/records/`.
 - Each source produces one record. Do not create separate audio and video records for the same source merely because both tracks exist.
 - Preserve content addressing, source and snapshot hashes, verification sidecars and copyright metadata. Check downstream consumers before changing them.
 
