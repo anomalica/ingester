@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -84,16 +85,16 @@ import os
 import sys
 from pathlib import Path
 
-store = Path(os.environ["TEST_INGESTS_DIR"]) / "store"
+output_arg = next(arg for arg in sys.argv if arg.startswith("output="))
+output_dir = Path(output_arg.removeprefix("output="))
+store = output_dir / "store"
 content_hash = os.environ["TEST_CONTENT_HASH"]
 lock_path = Path(os.environ["TEST_INGESTS_DIR"]) / ".git/anomalica-write.lock"
 with lock_path.open("a+b") as lock:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        pass
-    else:
-        raise SystemExit("ingests writer lock is not held")
+        raise SystemExit("ingests writer lock is held during extraction")
 variant = ".v2" if os.environ.get("TEST_VARIANT") == "v2" else ""
 schema = "anomalica/record/2" if variant else "anomalica/record/1"
 path = store / f"{content_hash}{variant}.md"
@@ -111,6 +112,12 @@ if os.environ.get("TEST_DELETE_ASSET") == "1":
             run_uuid = arg.rsplit("/", 1)[-1]
             staging = Path(os.environ["TEST_INGESTER_DIR"]) / "staging" / run_uuid
             next(staging.glob("asset.*")).unlink()
+if marker := os.environ.get("TEST_HANDLER_MARKER"):
+    Path(marker).write_text("ready")
+if release := os.environ.get("TEST_HANDLER_RELEASE"):
+    while not Path(release).exists():
+        import time
+        time.sleep(0.01)
 """,
         executable=True,
     )
@@ -167,6 +174,14 @@ def _result(proc, result_path):
     stdout_bytes = lines[0][len(PREFIX) :].encode()
     assert result_path.read_bytes() == stdout_bytes + b"\n"
     return json.loads(stdout_bytes)
+
+
+def _wait_for(path: Path):
+    deadline = time.monotonic() + 5
+    while not path.exists():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"timed out waiting for {path}")
+        time.sleep(0.01)
 
 
 def test_local_manifest_preserves_supplied_copy_metadata(tmp_path):
@@ -395,3 +410,114 @@ def test_no_op_verification_waits_for_the_shared_ingests_writer_lock(tmp_path):
         )["outcome"]
         == "no-op"
     )
+
+
+def test_handler_does_not_hold_lock_and_unrelated_commit_is_preserved(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\nconcurrent unrelated\n")
+    ingester, ingests, source, run_uuid, result_path, env, content_hash = setup
+    marker = tmp_path / "handler-ready"
+    release = tmp_path / "handler-release"
+    env["TEST_HANDLER_MARKER"] = str(marker)
+    env["TEST_HANDLER_RELEASE"] = str(release)
+
+    proc = subprocess.Popen(
+        [
+            str(ingester / "ingest"),
+            "--run-uuid",
+            run_uuid,
+            "--result-path",
+            str(result_path),
+            str(source),
+        ],
+        cwd=ingester,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for(marker)
+    lock_path = ingests / ".git/anomalica-write.lock"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _write(ingests / "store/housekeeping.txt", "concurrent\n")
+        _git(ingests, "add", "store/housekeeping.txt")
+        _git(ingests, "commit", "-qm", "concurrent housekeeping")
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    release.touch()
+    stdout, stderr = proc.communicate(timeout=10)
+
+    assert proc.returncode == 0, stderr
+    result = _result(
+        subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr),
+        result_path,
+    )
+    assert result["outcome"] == "committed"
+    assert (ingests / "store/housekeeping.txt").read_text() == "concurrent\n"
+    assert (
+        _git(ingests, "show", "HEAD^:store/housekeeping.txt").stdout == "concurrent\n"
+    )
+    assert _git(ingests, "show", f"HEAD:store/{content_hash}.md").returncode == 0
+
+
+def test_commit_excludes_unrelated_staged_changes(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\nunrelated staged\n")
+    ingester, ingests, source, run_uuid, result_path, env, _ = setup
+    _write(ingests / "store/operator-note.txt", "leave staged\n")
+    _git(ingests, "add", "store/operator-note.txt")
+
+    proc = _invoke(ingester, source, run_uuid, result_path, env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _result(proc, result_path)["outcome"] == "committed"
+    assert (
+        "store/operator-note.txt"
+        not in _git(
+            ingests, "show", "--format=", "--name-only", "HEAD"
+        ).stdout.splitlines()
+    )
+    assert _git(ingests, "diff", "--cached", "--name-only").stdout.splitlines() == [
+        "store/operator-note.txt"
+    ]
+
+
+def test_forced_reprocess_rejects_concurrent_same_record_change(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\nconcurrent same path\n", existing=True)
+    ingester, ingests, source, run_uuid, result_path, env, content_hash = setup
+    marker = tmp_path / "handler-ready"
+    release = tmp_path / "handler-release"
+    env["TEST_HANDLER_MARKER"] = str(marker)
+    env["TEST_HANDLER_RELEASE"] = str(release)
+
+    proc = subprocess.Popen(
+        [
+            str(ingester / "ingest"),
+            "--run-uuid",
+            run_uuid,
+            "--result-path",
+            str(result_path),
+            "--force",
+            str(source),
+        ],
+        cwd=ingester,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for(marker)
+    concurrent = _record(content_hash).replace("Fixture body.", "Reviewed body.")
+    lock_path = ingests / ".git/anomalica-write.lock"
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        (ingests / f"store/{content_hash}.md").write_text(concurrent)
+        _git(ingests, "add", f"store/{content_hash}.md")
+        _git(ingests, "commit", "-qm", "concurrent review")
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    release.touch()
+    stdout, stderr = proc.communicate(timeout=10)
+
+    assert proc.returncode != 0
+    assert stdout == ""
+    assert f"concurrent change to store/{content_hash}.md" in stderr
+    assert (ingests / f"store/{content_hash}.md").read_text() == concurrent
+    assert not result_path.exists()

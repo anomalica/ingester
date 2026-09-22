@@ -738,6 +738,7 @@ def main():
         type=Path,
         help="Path to staging directory (alternative to input_file)",
     )
+    parser.add_argument("--output-dir", type=Path, help="Record output directory")
     parser.add_argument(
         "--confirm-spend",
         action="store_true",
@@ -796,7 +797,7 @@ def main():
         if pdfs:
             args.input_file = pdfs[0]
 
-    output_dir = mnt_output if mnt_output.exists() else OUTPUT_DIR
+    output_dir = args.output_dir or (mnt_output if mnt_output.exists() else OUTPUT_DIR)
 
     if not args.input_file:
         parser.error("input_file is required (or use cm run ingest input=<file>)")

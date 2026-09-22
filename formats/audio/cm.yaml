@@ -7,7 +7,6 @@ runtime:
     - gpu
   volumes:
     - ../../staging:/mnt/staging:ro
-    - ../../../ingests:/mnt/output:rw
     - ../../shared:/mnt/shared:ro
     # Source archive (raw audio + the durable raw transcript archive). The
     # complete whisperx+pyannote output is written here as {hash}.transcript.json
@@ -59,6 +58,10 @@ commands:
   ingest:
     command: python workspace/ingest_audio.py
     description: Transcribe and diarise audio/video into Anomalica record format
+    mounts:
+      output:
+        mode: rw
+        prefix: "--output-dir "
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/mnt/shared"

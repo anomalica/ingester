@@ -6,7 +6,6 @@ runtime:
   features: []
   volumes:
     - ../../staging:/mnt/staging:ro
-    - ../../../ingests:/mnt/output:rw
     - ../../shared:/mnt/shared:ro
 stages:
   base:
@@ -33,6 +32,10 @@ commands:
   ingest:
     command: python workspace/ingest_webpage.py
     description: Extract structured content from a pre-fetched web page
+    mounts:
+      output:
+        mode: rw
+        prefix: "--output-dir "
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: "/mnt/shared"

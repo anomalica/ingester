@@ -330,10 +330,11 @@ def main():
     parser.add_argument(
         "--force", action="store_true", help="Re-extract even if output exists"
     )
+    parser.add_argument("--output-dir", type=Path, help="Record output directory")
     args = parser.parse_args()
 
-    output_dir = Path("/mnt/output")
-    if not output_dir.exists():
+    output_dir = args.output_dir or Path("/mnt/output")
+    if args.output_dir is None and not output_dir.exists():
         output_dir = (
             Path(__file__).resolve().parent.parent.parent.parent.parent / "ingests"
         )

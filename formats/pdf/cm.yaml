@@ -8,7 +8,6 @@ runtime:
     - ~/.local/bin/claude:/usr/local/bin/claude:ro
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
-    - ../../../ingests:/mnt/output:rw
     - ../../../records:/mnt/records:ro
     - ../../.ai/pdf:/mnt/benchmark:rw
     - ../../../anomalica-common/src:/opt/anomalica-common:ro
@@ -40,6 +39,10 @@ commands:
   ingest:
     command: python workspace/ingest_pdf.py
     description: Extract structured content from a PDF
+    mounts:
+      output:
+        mode: rw
+        prefix: "--output-dir "
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: workspace:/opt/anomalica-common
