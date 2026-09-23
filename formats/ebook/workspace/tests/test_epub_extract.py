@@ -6,14 +6,18 @@ from extraction.epub_extract import (
     Chapter,
     FN_TOKEN_PREFIX,
     FN_TOKEN_SUFFIX,
+    KINDLE_TOKEN_PREFIX,
+    KINDLE_TOKEN_SUFFIX,
     PAGE_TOKEN_PREFIX,
     PAGE_TOKEN_SUFFIX,
     _analyse_body,
     _collect_footnotes,
+    _collect_kindle_positions,
     _collect_pagebreaks,
     _disambiguate_page_sequences,
     _enum_to_int,
     _expand_footnote_tokens,
+    _expand_kindle_tokens,
     _is_chapter_number,
     _is_noteref,
     _is_pagebreak,
@@ -108,6 +112,43 @@ def test_expand_page_tokens_roman_and_index_labels():
         _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}I15{PAGE_TOKEN_SUFFIX}")
         == "<!-- printed_page: I15 -->"
     )
+
+
+def test_collect_and_expand_kindle_position_with_element_id():
+    body = _body(
+        '<body><p data-kindle-position="2147" data-kindle-element-id="392">'
+        "Positioned text.</p></body>"
+    )
+
+    annotations = _collect_kindle_positions(body)
+
+    token = f"{KINDLE_TOKEN_PREFIX}0{KINDLE_TOKEN_SUFFIX}"
+    assert annotations == [("2147", "392")]
+    assert token in str(body)
+    assert str(body).index(token) < str(body).index("Positioned text.")
+    assert _expand_kindle_tokens(token, annotations) == (
+        "<!--\nkindle_position: 2147\nelement_id: 392\n-->"
+    )
+
+
+def test_kindle_position_omits_unavailable_element_id():
+    body = _body('<body><p data-kindle-position="89">Text.</p></body>')
+    annotations = _collect_kindle_positions(body)
+
+    token = f"{KINDLE_TOKEN_PREFIX}0{KINDLE_TOKEN_SUFFIX}"
+    assert _expand_kindle_tokens(token, annotations) == (
+        "<!--\nkindle_position: 89\n-->"
+    )
+
+
+def test_kindle_position_rejects_non_numeric_attributes():
+    body = _body(
+        '<body><p data-kindle-position="1\n-->broken" '
+        'data-kindle-element-id="unknown">Text.</p></body>'
+    )
+
+    assert _collect_kindle_positions(body) == []
+    assert KINDLE_TOKEN_PREFIX not in str(body)
 
 
 def test_hoist_single_marker_from_heading():
@@ -333,7 +374,8 @@ def _minimal_epub(path: str) -> str:
     ch = epub.EpubHtml(title="1. First Chapter", file_name="c1.xhtml")
     ch.content = (
         '<html><body><h1><span epub:type="pagebreak" title="7"/>'
-        "1. First Chapter</h1><p>Body one.</p></body></html>"
+        '1. First Chapter</h1><p data-kindle-position="2147" '
+        'data-kindle-element-id="392">Body one.</p></body></html>'
     )
     back = epub.EpubHtml(title="About the Author", file_name="c2.xhtml")
     back.content = "<html><body><h1>About the Author</h1><p>A bio.</p></body></html>"
@@ -356,6 +398,10 @@ def test_extract_book_title_survives_the_chapter_loop(tmp_path):
     numbered = [c for c in book.chapters if c.number]
     assert numbered and numbered[0].number == "1"
     assert "<!-- printed_page: 7 -->" in numbered[0].markdown
+    assert (
+        "<!--\nkindle_position: 2147\nelement_id: 392\n-->\n\nBody one."
+        in numbered[0].markdown
+    )
 
 
 # --- drop-cap rejoin -----------------------------------------------------------

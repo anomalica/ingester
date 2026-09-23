@@ -39,6 +39,13 @@ PRINTED_PAGE_RE = re.compile(r"<!-- printed_page: ([0-9A-Za-z]+) -->")
 # A page label worth emitting: Arabic digits or a roman numeral (front matter).
 PAGE_LABEL_RE = re.compile(r"^[0-9A-Za-z]+$")
 
+# Anomalica Prometheus EPUBs carry Kindle renderer locations as data attributes
+# on paragraphs. As with images and pagebreaks, use an alphanumeric token to
+# preserve each annotation through markdownify.
+KINDLE_TOKEN_PREFIX = "ANOMALICAKINDLE"
+KINDLE_TOKEN_SUFFIX = "KINDLEEND"
+KINDLE_TOKEN_RE = re.compile(rf"{KINDLE_TOKEN_PREFIX}(\d+){KINDLE_TOKEN_SUFFIX}")
+
 # Asterisk-based redaction patterns used in declassified-but-redacted material.
 # Match either:
 #   - five or more consecutive asterisks (a single redacted run), optionally
@@ -726,6 +733,35 @@ def _expand_page_tokens(md: str) -> str:
     return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
 
 
+def _collect_kindle_positions(body) -> list[tuple[str, str | None]]:
+    """Put a durable token immediately before each Kindle-positioned paragraph."""
+    annotations: list[tuple[str, str | None]] = []
+    for paragraph in body.find_all("p"):
+        position = (paragraph.get("data-kindle-position") or "").strip()
+        if not position.isdigit():
+            continue
+        raw_element_id = (paragraph.get("data-kindle-element-id") or "").strip()
+        element_id = raw_element_id if raw_element_id.isdigit() else None
+        index = len(annotations)
+        annotations.append((position, element_id))
+        paragraph.insert_before(
+            f"\n\n{KINDLE_TOKEN_PREFIX}{index}{KINDLE_TOKEN_SUFFIX}\n\n"
+        )
+    return annotations
+
+
+def _expand_kindle_tokens(md: str, annotations: list[tuple[str, str | None]]) -> str:
+    def replace(match: re.Match) -> str:
+        position, element_id = annotations[int(match.group(1))]
+        lines = ["<!--", f"kindle_position: {position}"]
+        if element_id is not None:
+            lines.append(f"element_id: {element_id}")
+        lines.append("-->")
+        return "\n".join(lines)
+
+    return KINDLE_TOKEN_RE.sub(replace, md)
+
+
 def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
     """Add state markers when repeated page labels begin another sequence.
 
@@ -818,12 +854,14 @@ def _xhtml_to_markdown(
     _strip_internal_anchors(body)
     _collect_images(body, chapter_file, book, images)
     _collect_pagebreaks(body)
+    kindle_positions = _collect_kindle_positions(body)
     _replace_redactions_in_soup(body)
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = rejoin_dropcaps(md)
     md = _expand_redaction_tokens(md)
     md = _expand_page_tokens(md)
     md = _expand_footnote_tokens(md)
+    md = _expand_kindle_tokens(md, kindle_positions)
     md = _hoist_heading_page_markers(md)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
