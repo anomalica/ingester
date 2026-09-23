@@ -114,3 +114,20 @@ def test_stamp_pipeline_version_refuses_a_mismatched_record(tmp_path):
         stamp_pipeline_version(record, "web", expected_previous=6)
 
     assert record.read_text() == original
+
+
+def test_stamp_pipeline_version_refuses_record3_without_mutating_it(tmp_path):
+    record = tmp_path / "record.md"
+    original = (
+        "---\nschema: anomalica/record/3\nsource_type: web\nprocessing:\n"
+        "  asset_pipeline_versions:\n"
+        f"  - asset_hash: sha256:{'a' * 64}\n"
+        "    source_type: web\n"
+        "    pipeline_version: 6\n---\nBody.\n"
+    )
+    record.write_text(original)
+
+    with pytest.raises(ValueError, match="record/3 extraction generations"):
+        stamp_pipeline_version(record, "web", expected_previous=None)
+
+    assert record.read_text() == original

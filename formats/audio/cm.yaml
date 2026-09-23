@@ -13,6 +13,9 @@ runtime:
     # complete whisperx+pyannote output is written here as {hash}.transcript.json
     # beside the audio - durable provenance, never discarded.
     - ../../../records:/mnt/records:rw
+    # Benchmarks resolve reviewed Records by the archived Asset hash. Record/3
+    # identity is Selection-derived and therefore cannot be used as an archive key.
+    - ../../../ingests:/mnt/ingests:ro
     # Measurement output (vad-check), kept out of the records archive and out
     # of git - the .ai directory is ignored repo-wide.
     - ../../.ai/vad:/mnt/vad:rw

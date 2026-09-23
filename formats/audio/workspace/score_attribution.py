@@ -29,10 +29,11 @@ obvious:
 
 Usage (inside the audio container, where the workspace modules import):
 
-    cm run python workspace/score_attribution.py <record-hash> [<record-hash> ...]
+    cm run python workspace/score_attribution.py <asset-hash> [<asset-hash> ...]
 
-A record hash is the stem of a reviewed record in the ingests store that has a
-transcript archive beside its audio in records/.
+An Asset hash is the stem of a transcript archive beside its audio in records/.
+The reviewed Record is resolved from that Asset descriptor; its Selection-derived
+identity need not equal the Asset identity.
 """
 
 from __future__ import annotations
@@ -43,20 +44,33 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent / "alignment"))
+_WORKSPACE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_WORKSPACE))
+sys.path.insert(0, str(_WORKSPACE / "alignment"))
+sys.path.insert(0, "/mnt/shared")
+sys.path.insert(0, str(_WORKSPACE.parents[2] / "shared"))
 
 from alignment.align import align  # noqa: E402
+from dedup import find_by_source_hash  # noqa: E402
 from models import Segment, SpeakerSegment, Word  # noqa: E402
 
 RECORDS = Path("/mnt/records")
-STORE = Path("/mnt/output/store")
+STORE = Path("/mnt/ingests/store")
 
 _SPEAKER_RE = re.compile(r"^\s*<!--\s*speaker:\s*(.*?)\s*-->\s*$")
 _WORD_RE = re.compile(r"\{\{t:([0-9.]+)\}\}(\S+)")
 
 #: Reviewer region markers that are not speaker identities. See the module doc.
 NOT_A_SPEAKER = {"[irrelevant]"}
+
+
+def record_path_for_asset(store: Path, asset_hash: str) -> Path | None:
+    """Resolve the preferred reviewed Record for archived audio bytes."""
+    for suffix in (".v2.md", ".md"):
+        legacy = store / f"{asset_hash}{suffix}"
+        if legacy.exists():
+            return legacy
+    return find_by_source_hash(store, asset_hash)
 
 
 def reviewed_words(record_path: Path) -> dict[str, str]:
@@ -156,23 +170,27 @@ def main(argv: list[str]) -> int:
         print(__doc__.strip().split("\n\n")[-1], file=sys.stderr)
         return 1
     totals = [0, 0]
-    for stem in argv:
-        record = STORE / f"{stem}.v2.md"
-        if not record.exists():
-            record = STORE / f"{stem}.md"
-        if not record.exists():
-            print(f"{stem[:12]}: no record in the store", file=sys.stderr)
+    for asset_hash in argv:
+        record = record_path_for_asset(STORE, asset_hash)
+        if record is None:
+            print(
+                f"{asset_hash[:12]}: no live whole-Asset record in the store",
+                file=sys.stderr,
+            )
             continue
         truth = reviewed_words(record)
         if not truth:
-            print(f"{stem[:12]}: no word timings to score against", file=sys.stderr)
+            print(
+                f"{asset_hash[:12]}: no word timings to score against",
+                file=sys.stderr,
+            )
             continue
-        segments, speakers = from_archive(stem)
+        segments, speakers = from_archive(asset_hash)
         result = score(align(segments, speakers, keep_words=True), truth)
         totals[0] += result["wrong_words"]
         totals[1] += result["matched_words"]
         print(
-            f"{stem[:12]}  words {result['wrong_words']}/{result['matched_words']}"
+            f"{asset_hash[:12]}  words {result['wrong_words']}/{result['matched_words']}"
             f" ({result['word_error_pct']}%)  turns {result['wrong_turns']}/{result['turns']}"
             f" ({result['turn_error_pct']}%)  labels={result['labels']}"
         )

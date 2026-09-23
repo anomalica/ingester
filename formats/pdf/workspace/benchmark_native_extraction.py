@@ -15,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 
 import pymupdf
+import yaml
 
 PAGE_MARKER = re.compile(r"<!--\s*file_page:\s*(\d+)\s*-->")
 COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -153,6 +154,69 @@ def benchmark(pdf_path: Path, reviewed_path: Path) -> dict:
     }
 
 
+def benchmark_inputs(
+    record_id: str, records_dir: Path, ingests_dir: Path
+) -> tuple[Path, Path]:
+    """Resolve a reviewed Record and its selected whole PDF Asset.
+
+    Legacy PDF identity was the PDF byte hash. Record/3 identity is instead the
+    canonical Selection hash, so the archive path must come from the embedded
+    Asset descriptor rather than from the Record filename.
+    """
+    reviewed_path = ingests_dir / f"{record_id}.md"
+    try:
+        text = reviewed_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"reviewed record is unavailable: {reviewed_path}") from exc
+    parts = text.split("---", 2)
+    if len(parts) != 3:
+        raise ValueError(f"reviewed record has incomplete frontmatter: {reviewed_path}")
+    try:
+        frontmatter = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"reviewed record has invalid frontmatter: {reviewed_path}"
+        ) from exc
+    if not isinstance(frontmatter, dict):
+        raise ValueError(
+            f"reviewed record frontmatter is not a mapping: {reviewed_path}"
+        )
+    if frontmatter.get("schema") != "anomalica/record/3":
+        return records_dir / f"{record_id}.pdf", reviewed_path
+
+    selection = frontmatter.get("selection")
+    if (
+        not isinstance(selection, list)
+        or len(selection) != 1
+        or not isinstance(selection[0], dict)
+        or selection[0].get("selector") != {"type": "whole"}
+    ):
+        raise ValueError("native extraction benchmark requires one whole PDF Selection")
+    selected_hash = selection[0].get("asset_hash")
+    assets = frontmatter.get("assets")
+    if not isinstance(assets, list):
+        assets = []
+    selected = next(
+        (
+            asset
+            for asset in assets
+            if isinstance(asset, dict) and asset.get("asset_hash") == selected_hash
+        ),
+        None,
+    )
+    if (
+        not isinstance(selected_hash, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", selected_hash)
+        or not isinstance(selected, dict)
+        or selected.get("source_type") != "pdf"
+        or selected.get("archived_ext") != "pdf"
+    ):
+        raise ValueError(
+            "record/3 Selection does not resolve to one archived PDF Asset"
+        )
+    return records_dir / f"{selected_hash.removeprefix('sha256:')}.pdf", reviewed_path
+
+
 def atomic_write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -170,7 +234,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record_id", help="SHA-256 record identity")
     parser.add_argument("--records-dir", type=Path, default=Path("/mnt/records"))
-    parser.add_argument("--ingests-dir", type=Path, default=Path("/mnt/output/store"))
+    parser.add_argument("--ingests-dir", type=Path, default=Path("/mnt/ingests/store"))
     parser.add_argument(
         "--output-dir", type=Path, default=Path("/mnt/benchmark/native")
     )
@@ -178,10 +242,10 @@ def main() -> None:
 
     if not re.fullmatch(r"[0-9a-f]{64}", args.record_id):
         parser.error("record_id must be a lowercase SHA-256 digest")
-    report = benchmark(
-        args.records_dir / f"{args.record_id}.pdf",
-        args.ingests_dir / f"{args.record_id}.md",
+    pdf_path, reviewed_path = benchmark_inputs(
+        args.record_id, args.records_dir, args.ingests_dir
     )
+    report = benchmark(pdf_path, reviewed_path)
     report["record_id"] = args.record_id
     output = args.output_dir / f"{args.record_id}.json"
     atomic_write_json(output, report)

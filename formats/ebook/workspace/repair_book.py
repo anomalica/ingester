@@ -1,4 +1,4 @@
-"""Post-ingestion repair for a stored book record.
+"""Post-ingestion repair for a legacy stored book record.
 
 Applies chapter-boundary DROP-CAP fixes and re-stores the record: the body changes,
 so the content_hash changes, so the record is rewritten at its new hash and the old
@@ -129,8 +129,15 @@ def restore_record(
     """Re-store a repaired record at its new content_hash, retiring the old to v1.
     Returns the new hash."""
     import json
+    import yaml
 
     frontmatter, _ = split_record(record_path.read_text())
+    metadata = yaml.safe_load(frontmatter.removeprefix("---\n").removesuffix("\n---"))
+    if isinstance(metadata, dict) and metadata.get("schema") == "anomalica/record/3":
+        raise ValueError(
+            "record/3 repairs must run through ordinary ingestion so Selection "
+            "identity and extraction provenance remain coherent"
+        )
     # The old sidecar's source fields (the EPUB's sha256/size) describe the source,
     # which has NOT changed - capture them BEFORE write_record retires the old
     # sidecar to v1, then carry them onto the regenerated one. Only the cloze

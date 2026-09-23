@@ -1,15 +1,13 @@
 """In-place refresh of a live record from its own archived source.
 
-A record's `content_hash` is a frozen ingest-time identity (the filename), so a
-body re-extracted from the SAME source bytes keeps its identity: `by-name/`
-symlinks, digests, review and verification sidecars all still resolve
-(decision 0040, "supersession vs in-place re-extraction"). This is how an
-extractor improvement reaches records already in the store: the scheduler
-hands `./ingest --force --source-url URL records/{source_hash}.{ext}` to the
-handler, which lands here instead of minting a second record. Web and ebook
-records (body-hashed, found by `source_hash`) use `refresh_record`; the PDF
-handler, whose record path already IS the source hash, uses `carry_review_work`
-on the body it re-extracted and builds its own frontmatter.
+A record's `content_hash` is a frozen ingest-time identity (the filename). For
+record/3 it derives from the canonical Selection, so a body re-extracted from
+the same Asset and Selection keeps its identity: `by-name/` symlinks, digests,
+review and verification sidecars all still resolve (decision 0040,
+"supersession vs in-place re-extraction"). The scheduler hands the archived
+Asset to `./ingest --force`; the handler lands here instead of minting a second
+Record. Legacy web and ebook records use `refresh_record`; the PDF handler uses
+`carry_review_work` on the body it re-extracted and builds its own frontmatter.
 
 What survives a refresh, and how:
 - the frontmatter, apart from the extraction stamps (`date_extracted`,

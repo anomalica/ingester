@@ -89,6 +89,11 @@ def stamp_pipeline_version(
     metadata = yaml.safe_load(frontmatter) or {}
     if not isinstance(metadata, dict) or metadata.get("source_type") != media_type:
         raise ValueError(f"record source_type is not {media_type!r}: {record_path}")
+    if metadata.get("schema") == "anomalica/record/3":
+        raise ValueError(
+            "record/3 extraction generations are Asset-specific; refresh the record "
+            f"through ordinary ingestion instead: {record_path}"
+        )
 
     processing = metadata.get("processing")
     if processing is not None and not isinstance(processing, dict):

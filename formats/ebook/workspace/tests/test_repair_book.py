@@ -4,12 +4,15 @@ structural findings are reported not applied. No network - the model call is fak
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "shared"))
 
 from repair_book import (  # noqa: E402
     _apply_verified_join,
     repair_body,
+    restore_record,
     split_record,
 )
 
@@ -40,8 +43,6 @@ def test_split_record_round_trips():
 
 
 def test_split_record_rejects_no_frontmatter():
-    import pytest
-
     with pytest.raises(ValueError):
         split_record("no frontmatter here")
 
@@ -79,3 +80,22 @@ def test_repair_skips_reviewed_records():
     _, body = split_record(RECORD)
     out, res = repair_body(body, lambda *a: '{"issues": []}', is_reviewed=True)
     assert out == body and res.changed is False and res.skipped_reason
+
+
+def test_restore_record_refuses_record3_without_mutating_it(tmp_path):
+    record = tmp_path / "record.md"
+    original = RECORD.replace("anomalica/record/1", "anomalica/record/3")
+    record.write_text(original)
+
+    with pytest.raises(ValueError, match="record/3 repairs"):
+        restore_record(
+            record,
+            "changed body",
+            tmp_path / "store",
+            tmp_path / "by-name",
+            "2026-01-01",
+            "Test",
+        )
+
+    assert record.read_text() == original
+    assert not (tmp_path / "store").exists()

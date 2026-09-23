@@ -639,7 +639,7 @@ fi
 
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
 # in the manifest's snapshots[] list. Each is content-addressed by sha256
-# of its own bytes so workbench can resolve via {source_hash} -> sibling.
+# of its own bytes and becomes a distinct Asset descriptor on record/3.
 SNAPSHOT_PATHS="$(python3 -c "
 import json
 m = json.load(open('${MANIFEST}'))

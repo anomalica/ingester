@@ -393,7 +393,7 @@ def trim_raw_source_tail(text: str) -> str:
 
     A page that publishes an email renders the readable message and then repeats
     it as raw source. The rendered copy is the record body; the raw block is
-    provenance and already lives in the archived original via source_hash.
+    provenance and already lives in the content-addressed archived Asset.
     Leaving it in duplicates the whole message and feeds boundary markers and
     quoted-printable escapes to every downstream consumer.
 

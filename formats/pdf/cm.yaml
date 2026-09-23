@@ -9,6 +9,7 @@ runtime:
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
     - ../../../records:/mnt/records:ro
+    - ../../../ingests:/mnt/ingests:ro
     - ../../.ai/pdf:/mnt/benchmark:rw
     - ../../../anomalica-common/src:/opt/anomalica-common:ro
 stages:

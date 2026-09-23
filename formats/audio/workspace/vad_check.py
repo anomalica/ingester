@@ -11,7 +11,7 @@ Diarisation is read from the record's cached transcript archive rather than run
 again: it does not depend on the VAD settings under test, and it is the
 expensive half.
 
-    cm run vad-check <record-hash> <start> <length> <onset> <offset>
+    cm run vad-check <asset-hash> <start> <length> <onset> <offset>
 
 Run it through the `vad-check` command, not a bare `cm run python`: the
 model caches and the GPU batch size are set per command, so a bare run
