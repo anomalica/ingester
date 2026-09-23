@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+import yaml
+
 try:
     from dates import temporal_scalar, utc_now_rfc3339
 except ModuleNotFoundError:
@@ -784,6 +786,69 @@ def restamp(
     when given) and, when `review_carryover` is not None, a review_carryover
     block whose had_text_edits is that value."""
     now = utc_now_rfc3339()
+    try:
+        parsed = yaml.safe_load(frontmatter)
+    except yaml.YAMLError:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("schema") == "anomalica/record/3":
+        processing = parsed.get("processing")
+        processing = dict(processing) if isinstance(processing, dict) else {}
+        existing_versions = {
+            item.get("asset_hash"): item
+            for item in processing.get("asset_pipeline_versions") or []
+            if isinstance(item, dict) and isinstance(item.get("asset_hash"), str)
+        }
+        versions = []
+        for asset in parsed.get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            asset_hash = asset.get("asset_hash")
+            asset_source_type = asset.get("source_type")
+            if not isinstance(asset_hash, str) or not isinstance(
+                asset_source_type, str
+            ):
+                continue
+            previous = existing_versions.get(asset_hash, {})
+            pipeline_version = previous.get("pipeline_version")
+            if asset_source_type == media_type:
+                pipeline_version = current_version(media_type)
+            if (
+                isinstance(pipeline_version, int)
+                and not isinstance(pipeline_version, bool)
+                and pipeline_version > 0
+            ):
+                versions.append(
+                    {
+                        "asset_hash": asset_hash,
+                        "source_type": asset_source_type,
+                        "pipeline_version": pipeline_version,
+                    }
+                )
+        processing.pop("pipeline_version", None)
+        processing["asset_pipeline_versions"] = versions
+        if "version" in processing:
+            processing["version"] = get_version()
+        if tool_version and isinstance(processing.get("tools"), list):
+            processing["tools"] = [
+                {**tool, "version": tool_version} if isinstance(tool, dict) else tool
+                for tool in processing["tools"]
+            ]
+        parsed["processing"] = processing
+        parsed["date_extracted"] = now
+        parsed.pop("refresh_refused", None)
+        if review_carryover is not None:
+            parsed["review_carryover"] = {
+                "at": now,
+                "from": content_hash,
+                "had_text_edits": review_carryover,
+            }
+        return yaml.safe_dump(
+            parsed,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        ).rstrip("\n")
+
     lines = frontmatter.split("\n")
     in_processing = False
     has_pipeline_version = False
@@ -821,7 +886,31 @@ def restamp(
 # --- the refresh --------------------------------------------------------------
 
 
-def _declared_pipeline_version(frontmatter: str) -> int | None:
+def _declared_pipeline_version(frontmatter: str, media_type: str) -> int | None:
+    try:
+        parsed = yaml.safe_load(frontmatter)
+    except yaml.YAMLError:
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("schema") == "anomalica/record/3":
+        processing = parsed.get("processing")
+        versions = (
+            processing.get("asset_pipeline_versions")
+            if isinstance(processing, dict)
+            else None
+        )
+        matching = [
+            item.get("pipeline_version")
+            for item in versions or []
+            if isinstance(item, dict) and item.get("source_type") == media_type
+        ]
+        if matching and all(value == matching[0] for value in matching):
+            value = matching[0]
+            return (
+                value
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0
+                else None
+            )
+        return None
     m = re.search(r"^  pipeline_version:\s*(\d+)", frontmatter, re.M)
     return int(m.group(1)) if m else None
 
@@ -981,6 +1070,15 @@ def refresh_record(
     if split is None:
         return Outcome(False, f"refused: {record_path.name} has no frontmatter")
     frontmatter, old_body = split
+    record_schema_match = re.search(r"^schema:\s*([^\s]+)\s*$", frontmatter, re.M)
+    validation_schema = (
+        record_schema_match.group(1) if record_schema_match else expected_schema
+    )
+    validation_required = (
+        [field for field in (extra_required or []) if field != "source_url"]
+        if validation_schema == "anomalica/record/3"
+        else extra_required
+    )
     content_hash = _content_hash(frontmatter, record_path)
     if content_hash is None:
         return _refuse(
@@ -1021,7 +1119,9 @@ def refresh_record(
     new_body, notes = carry.body, carry.notes
 
     if new_body == old_body:
-        if _declared_pipeline_version(frontmatter) == current_version(media_type):
+        if _declared_pipeline_version(frontmatter, media_type) == current_version(
+            media_type
+        ):
             return Outcome(False, "unchanged", notes)
         # The body already matches; only the record's declared generation is
         # behind - bring the stamps up to date so it stops reading as stale.
@@ -1047,8 +1147,8 @@ def refresh_record(
     content = stamp_record(f"---\n{stamped}\n---\n{new_body}")
     result = validate(
         content,
-        extra_required=extra_required,
-        expected_schema=expected_schema,
+        extra_required=validation_required,
+        expected_schema=validation_schema,
         allow_legacy_temporal=True,
     )
     if result.fixed:
@@ -1060,8 +1160,8 @@ def refresh_record(
     already = set(
         validate(
             text,
-            extra_required=extra_required,
-            expected_schema=expected_schema,
+            extra_required=validation_required,
+            expected_schema=validation_schema,
             allow_legacy_temporal=True,
         ).errors
     )

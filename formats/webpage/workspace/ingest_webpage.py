@@ -27,8 +27,8 @@ from dates import (
     temporal_scalar,
     utc_now_rfc3339,
 )
-from dedup import find_by_source_hash, find_by_source_id
-from hashing import content_hash_label, hash_file, hash_string, store_exists
+from dedup import find_by_source_hash
+from hashing import content_hash_label, hash_file, hash_string
 from pipeline_version import current_version
 from publisher import canonical_publisher, strip_site_suffix
 from record import get_version, write_record
@@ -310,25 +310,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     hex_hash = hash_string(body_text)
 
-    # Web articles are URL-based: use source_id from acquire as the store key.
-    # Falls back to content hash only if source_id is missing for some reason.
-    if not force and store_exists(store_dir, hex_hash):
-        print(
-            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
-            file=sys.stderr,
-        )
-        return 0
-
-    if not force and source_id:
-        existing = find_by_source_id(store_dir, source_id)
-        if existing:
-            print(
-                f"Skipping: source_id '{source_id}' already ingested as "
-                f"{existing.stem[:12]}... (use --force to re-extract)",
-                file=sys.stderr,
-            )
-            return 0
-
     if email_headers is not None and email_headers.date:
         date_published = email_headers.date.isoformat()
     else:
@@ -401,10 +382,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     if result.errors:
         return 1
 
+    # This is a run-private intermediate: use Asset identity for its path so
+    # different fetched copies with identical extracted prose cannot overwrite
+    # one another before the host assigns canonical Selection identity.
+    intermediate_hash = source_hash
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
-        hex_hash,
+        intermediate_hash,
         content,
         date_alias(date_published or date_accessed),
         "web",
@@ -415,7 +400,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     print(f"Symlink: {link_path}", file=sys.stderr)
 
     if article.media:
-        media_dir = output_dir / "media" / hex_hash
+        media_dir = output_dir / "media" / intermediate_hash
         media_dir.mkdir(parents=True, exist_ok=True)
         for img in article.media:
             (media_dir / f"{img.img_hash}.{img.ext}").write_bytes(img.data)
@@ -426,7 +411,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     if needs_sidecar(content):
         sidecar = build_sidecar(content, source_path=asset_path)
-        sidecar_path = write_sidecar(store_dir, hex_hash, sidecar)
+        sidecar_path = write_sidecar(store_dir, intermediate_hash, sidecar)
         print(
             f"Verification: {sidecar_path.name} ({len(sidecar.get('challenges', []))} challenges)",
             file=sys.stderr,

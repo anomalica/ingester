@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import yaml
-from dedup import find_by_source_hash, find_by_source_id
+from dedup import find_by_source_hash
 from dates import (
     date_alias,
     normalise_published,
@@ -17,7 +17,7 @@ from dates import (
     temporal_scalar,
     utc_now_rfc3339,
 )
-from hashing import content_hash_label, hash_file, hash_string, store_exists
+from hashing import content_hash_label, hash_file, hash_string
 from pipeline_version import current_version
 from record import get_version, write_record
 from refresh import refresh_record
@@ -243,23 +243,6 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     hex_hash = hash_string(body)
 
-    if not force and store_exists(store_dir, hex_hash):
-        print(
-            f"Skipping: record already exists (hash: {hex_hash[:12]}...)",
-            file=sys.stderr,
-        )
-        return 0
-
-    if not force and book.identifier:
-        existing = find_by_source_id(store_dir, book.identifier)
-        if existing:
-            print(
-                f"Skipping: source_id '{book.identifier}' already ingested as "
-                f"{existing.stem[:12]}... (use --force to re-extract)",
-                file=sys.stderr,
-            )
-            return 0
-
     media_summary = None
     if book.images:
         media_summary = {
@@ -289,10 +272,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     if result.errors:
         return 1
 
+    # This is a run-private intermediate: use Asset identity for its path so
+    # two different EPUBs that extract to identical prose cannot overwrite one
+    # another before the host assigns canonical Selection identity.
+    intermediate_hash = source_hash
     record_path, link_path = write_record(
         store_dir,
         by_name_dir,
-        hex_hash,
+        intermediate_hash,
         content,
         date_alias(date_published or date_accessed),
         "ebook",
@@ -303,7 +290,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     print(f"Symlink: {link_path}", file=sys.stderr)
 
     if book.images:
-        media_dir = output_dir / "media" / hex_hash
+        media_dir = output_dir / "media" / intermediate_hash
         media_dir.mkdir(parents=True, exist_ok=True)
         for img in book.images:
             (media_dir / f"{img.hash}.{img.ext}").write_bytes(img.bytes)
@@ -314,7 +301,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
 
     if needs_sidecar(content):
         sidecar = build_sidecar(body, source_path=asset_path)
-        sidecar_path = write_sidecar(store_dir, hex_hash, sidecar)
+        sidecar_path = write_sidecar(store_dir, intermediate_hash, sidecar)
         print(
             f"Verification: {sidecar_path.name} ({len(sidecar.get('challenges', []))} challenges)",
             file=sys.stderr,

@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from anomalica_common.identity import record_identity
+from anomalica_common.pre_digest import prepare_page_record, store_source_map
+from ingest_result import resolve_record
+
 
 PROJECT = Path(__file__).resolve().parents[2]
 PREFIX = "ANOMALICA_INGEST_RESULT "
@@ -47,6 +51,59 @@ def _record(content_hash: str) -> str:
     )
 
 
+def _record3(asset_hash: str, acquired_at: str = "2026-09-22T09:00:00Z") -> str:
+    labelled_asset = f"sha256:{asset_hash}"
+    content_hash = record_identity(
+        [{"asset_hash": labelled_asset, "selector": {"type": "whole"}}]
+    )
+    frontmatter = {
+        "schema": "anomalica/record/3",
+        "content_hash": content_hash,
+        "title": "Fixture",
+        "source_types": ["pdf"],
+        "source_type": "pdf",
+        "file_format": "pdf",
+        "assets": [
+            {
+                "asset_hash": labelled_asset,
+                "file_format": "pdf",
+                "archived_ext": "pdf",
+                "source_type": "pdf",
+                "pages": 1,
+                "acquisition": {
+                    "acquired_at": acquired_at,
+                    "source_file": "fixture.pdf",
+                },
+                "copyright": {"status": "licensed"},
+            }
+        ],
+        "selection": [{"asset_hash": labelled_asset, "selector": {"type": "whole"}}],
+        "page_map": [
+            {
+                "record_page": 1,
+                "asset_hash": labelled_asset,
+                "asset_file_page": 1,
+            }
+        ],
+        "provenance": {"published_date": "2026-01-01"},
+        "processing": {
+            "handler": "pdf",
+            "asset_pipeline_versions": [
+                {
+                    "asset_hash": labelled_asset,
+                    "source_type": "pdf",
+                    "pipeline_version": 1,
+                }
+            ],
+        },
+    }
+    return (
+        "---\n"
+        + yaml.safe_dump(frontmatter, sort_keys=False).rstrip()
+        + "\n---\n<!-- file_page: 1 -->\nFixture body.\n"
+    )
+
+
 def _workspace(tmp_path: Path, asset: bytes, existing: bool = False):
     root = tmp_path / "anomalica"
     ingester = root / "ingester"
@@ -62,12 +119,15 @@ def _workspace(tmp_path: Path, asset: bytes, existing: bool = False):
         PROJECT / "shared/ingest_result.py", ingester / "shared/ingest_result.py"
     )
     for name in (
+        "archive.py",
         "dedup.py",
         "dates.py",
         "document_type.py",
         "record.py",
         "record_metadata.py",
+        "record3.py",
         "validator.py",
+        "verification.py",
     ):
         shutil.copy2(PROJECT / "shared" / name, ingester / "shared" / name)
     (ingester / "acquire/workspace").mkdir(parents=True)
@@ -86,7 +146,15 @@ def _workspace(tmp_path: Path, asset: bytes, existing: bool = False):
         "name: pdf\nhandles:\n  - application/pdf\n",
     )
 
-    content_hash = hashlib.sha256(asset).hexdigest()
+    asset_hash = hashlib.sha256(asset).hexdigest()
+    record_hash = record_identity(
+        [
+            {
+                "asset_hash": f"sha256:{asset_hash}",
+                "selector": {"type": "whole"},
+            }
+        ]
+    ).removeprefix("sha256:")
     _write(
         binary / "cm",
         """#!/usr/bin/env python3
@@ -94,6 +162,8 @@ import fcntl
 import os
 import sys
 from pathlib import Path
+
+import yaml
 
 output_arg = next(arg for arg in sys.argv if arg.startswith("output="))
 output_dir = Path(output_arg.removeprefix("output="))
@@ -108,11 +178,27 @@ with lock_path.open("a+b") as lock:
 variant = ".v2" if os.environ.get("TEST_VARIANT") == "v2" else ""
 schema = "anomalica/record/2" if variant else "anomalica/record/1"
 path = store / f"{content_hash}{variant}.md"
+run_uuid = next(
+    arg.rsplit("/", 1)[-1] for arg in sys.argv if arg.startswith("/mnt/staging/")
+)
+manifest = Path(os.environ["TEST_INGESTER_DIR"]) / "staging" / run_uuid / "manifest.json"
+fetched_at = __import__("json").loads(manifest.read_text())["fetched_at"]
+for candidate in store.glob("*.md"):
+    raw = candidate.read_text()
+    if not raw.startswith("---\\n"):
+        continue
+    existing = yaml.safe_load(raw.split("---", 2)[1])
+    for descriptor in existing.get("assets", []):
+        if descriptor.get("asset_hash") == "sha256:" + content_hash:
+            fetched_at = descriptor["acquisition"]["acquired_at"]
 path.write_text(
     "---\\nschema: " + schema + "\\ntitle: \\\"Fixture\\\"\\n"
-    "date_published: 2026-01-01\\nsource_type: pdf\\ncontent_hash: sha256:" + content_hash
-    + "\\n---\\n\\nFixture body.\\n"
+    "date_published: \\\"2026-01-01\\\"\\nsource_type: pdf\\nfile_format: pdf\\npages: 1\\n"
+    "content_hash: sha256:" + content_hash + "\\ndate_accessed: \\\"" + fetched_at
+    + "\\\"\\nsource_file: fixture.pdf\\ncopyright:\\n  status: licensed\\nprocessing:\\n  handler: pdf\\n  pipeline_version: 1"
+    + "\\n---\\n<!-- file_page: 1 -->\\nFixture body.\\n"
 )
+(store / "_pipeline_versions.yaml").write_text("pdf: 1\\n")
 with (Path(os.environ["TEST_INGESTER_DIR"]) / "cm-calls").open("a") as calls:
     calls.write("called\\n")
 print(f"Written: {path}", file=sys.stderr)
@@ -141,7 +227,14 @@ if release := os.environ.get("TEST_HANDLER_RELEASE"):
     for path in (ingests / "store", ingests / "by-name", ingests / "media"):
         _write(path / ".gitkeep", "")
     if existing:
-        _write(ingests / "store" / f"{content_hash}.md", _record(content_hash))
+        record = _record3(asset_hash)
+        _write(ingests / "store" / f"{record_hash}.md", record)
+        _write(ingests / "store/_pipeline_versions.yaml", "pdf: 1\n")
+        frontmatter = yaml.safe_load(record.split("---", 2)[1])
+        body = record.split("---", 2)[2].removeprefix("\n")
+        store_source_map(
+            ingests / "source-maps", prepare_page_record(frontmatter, body)
+        )
     _git(ingests, "add", ".")
     _git(ingests, "commit", "-qm", "initial")
     _git(ingester, "add", ".")
@@ -155,8 +248,11 @@ if release := os.environ.get("TEST_HANDLER_RELEASE"):
     env["PATH"] = f"{binary}:{env['PATH']}"
     env["TEST_INGESTS_DIR"] = str(ingests)
     env["TEST_INGESTER_DIR"] = str(ingester)
-    env["TEST_CONTENT_HASH"] = content_hash
-    return ingester, ingests, source, run_uuid, result_path, env, content_hash
+    env["TEST_CONTENT_HASH"] = asset_hash
+    env["PYTHONPATH"] = f"{PROJECT.parent / 'anomalica-common/src'}:" + env.get(
+        "PYTHONPATH", ""
+    )
+    return ingester, ingests, source, run_uuid, result_path, env, record_hash
 
 
 def _invoke(ingester, source, run_uuid, result_path, env, *extra):
@@ -192,6 +288,56 @@ def _wait_for(path: Path):
         if time.monotonic() >= deadline:
             raise AssertionError(f"timed out waiting for {path}")
         time.sleep(0.01)
+
+
+def test_exact_asset_match_takes_precedence_over_locator_candidates(tmp_path):
+    ingests = tmp_path / "ingests"
+    store = ingests / "store"
+    store.mkdir(parents=True)
+    asset_hash = "a" * 64
+    exact = store / f"{asset_hash}.md"
+    exact.write_text(_record(asset_hash))
+    candidate_hash = "b" * 64
+    (store / f"{candidate_hash}.md").write_text(
+        _record(candidate_hash).replace(
+            "source_type: pdf\n",
+            "source_type: pdf\nsource_id: candidate:1\n",
+        )
+    )
+
+    assert (
+        resolve_record(ingests, asset_hash, "candidate:1") == f"store/{asset_hash}.md"
+    )
+
+
+def test_exact_asset_resolves_default_whole_record_not_page_child(tmp_path):
+    ingests = tmp_path / "ingests"
+    store = ingests / "store"
+    store.mkdir(parents=True)
+    asset_hash = "a" * 64
+    whole = _record3(asset_hash)
+    whole_fm = yaml.safe_load(whole.split("---", 2)[1])
+    whole_path = store / f"{whole_fm['content_hash'].removeprefix('sha256:')}.md"
+    whole_path.write_text(whole)
+
+    labelled = f"sha256:{asset_hash}"
+    page_selection = [
+        {"asset_hash": labelled, "selector": {"type": "pdf_page", "page": 1}}
+    ]
+    child_fm = dict(whole_fm)
+    child_fm["content_hash"] = record_identity(page_selection)
+    child_fm["selection"] = page_selection
+    child_path = store / f"{child_fm['content_hash'].removeprefix('sha256:')}.md"
+    child_path.write_text(
+        "---\n"
+        + yaml.safe_dump(child_fm, sort_keys=False)
+        + "---\n<!-- file_page: 1 -->\nFixture body.\n"
+    )
+
+    assert (
+        resolve_record(ingests, asset_hash, "")
+        == whole_path.relative_to(ingests).as_posix()
+    )
 
 
 def test_local_manifest_preserves_supplied_copy_metadata(tmp_path):
@@ -239,7 +385,30 @@ def test_success_emits_result_only_after_record_commit(tmp_path):
     committed = _git(
         ingests, "show", f"{result['commit_sha']}:{result['record_path']}"
     ).stdout
-    assert f"content_hash: sha256:{content_hash}" in committed
+    frontmatter = yaml.safe_load(committed.split("---", 2)[1])
+    asset_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    labelled_asset = f"sha256:{asset_hash}"
+    assert frontmatter["schema"] == "anomalica/record/3"
+    assert frontmatter["content_hash"] == f"sha256:{content_hash}"
+    assert frontmatter["assets"][0]["asset_hash"] == labelled_asset
+    assert frontmatter["selection"] == [
+        {"asset_hash": labelled_asset, "selector": {"type": "whole"}}
+    ]
+    assert frontmatter["page_map"] == [
+        {
+            "record_page": 1,
+            "asset_hash": labelled_asset,
+            "asset_file_page": 1,
+        }
+    ]
+    source_maps = list((ingests / "source-maps").glob("*.json"))
+    assert len(source_maps) == 1
+    source_map = json.loads(source_maps[0].read_text())
+    assert source_map["record_hash"] == f"sha256:{content_hash}"
+    assert source_map["entries"][0]["asset_hash"] == labelled_asset
+    assert (
+        source.parent / "records" / f"{asset_hash}.pdf"
+    ).read_bytes() == source.read_bytes()
 
 
 def test_generic_metadata_reaches_and_validates_the_final_record(tmp_path):
@@ -282,9 +451,9 @@ def test_generic_metadata_reaches_and_validates_the_final_record(tmp_path):
     ).stdout
     frontmatter = yaml.safe_load(committed.split("---", 2)[1])
     assert frontmatter["title"] == "Official title"
-    assert frontmatter["description"] == description
-    assert frontmatter["source_id"] == "DOW-UAP-D102"
-    assert frontmatter["copyright"] == {"status": "public_domain"}
+    assert frontmatter["provenance"]["description"] == description
+    assert frontmatter["provenance"]["identifiers"]["source_id"] == "DOW-UAP-D102"
+    assert frontmatter["assets"][0]["copyright"] == {"status": "public_domain"}
     alias = ingests / "by-name/2026-09-18-pdf-official-title.md"
     assert alias.resolve() == ingests / f"store/{content_hash}.md"
 
@@ -333,7 +502,7 @@ def test_existing_result_path_is_not_replaced(tmp_path):
     assert result_path.read_text() == "existing bytes\n"
 
 
-def test_ambiguous_duplicate_emits_no_result(tmp_path):
+def test_source_url_candidates_do_not_skip_acquisition(tmp_path):
     setup = _workspace(tmp_path, b"%PDF-1.4\nambiguous\n", existing=True)
     ingester, ingests, _, run_uuid, result_path, env, content_hash = setup
     source_url = "https://example.test/same-source"
@@ -356,13 +525,22 @@ def test_ambiguous_duplicate_emits_no_result(tmp_path):
     proc = _invoke(ingester, source_url, run_uuid, result_path, env)
 
     assert proc.returncode != 0
+    assert f"Acquiring: {source_url}" in proc.stderr
     assert proc.stdout == ""
     assert not result_path.exists()
 
 
 def test_forced_existing_record_update_is_committed(tmp_path):
     setup = _workspace(tmp_path, b"%PDF-1.4\nforced update\n", existing=True)
-    ingester, _, source, run_uuid, result_path, env, _ = setup
+    ingester, ingests, source, run_uuid, result_path, env, content_hash = setup
+    record_path = ingests / "store" / f"{content_hash}.md"
+    record_path.write_text(
+        record_path.read_text()
+        .replace("Fixture body.", "Old body.")
+        .replace("pipeline_version: 1", "pipeline_version: 0")
+    )
+    _git(ingests, "add", ".")
+    _git(ingests, "commit", "-qm", "change body")
 
     proc = _invoke(ingester, source, run_uuid, result_path, env, "--force")
 
@@ -382,18 +560,23 @@ def test_missing_archived_asset_emits_no_result(tmp_path):
     assert not result_path.exists()
 
 
+def test_corrupt_existing_asset_archive_emits_no_result(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\narchive collision\n")
+    ingester, _, source, run_uuid, result_path, env, _ = setup
+    asset_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    (source.parent / "records" / f"{asset_hash}.pdf").write_bytes(b"corrupt")
+
+    proc = _invoke(ingester, source, run_uuid, result_path, env)
+
+    assert proc.returncode != 0
+    assert "does not match its content-addressed path" in proc.stderr
+    assert proc.stdout == ""
+    assert not result_path.exists()
+
+
 def test_unchanged_forced_refresh_emits_no_op(tmp_path):
     setup = _workspace(tmp_path, b"%PDF-1.4\nunchanged refresh\n", existing=True)
-    ingester, ingests, source, run_uuid, result_path, env, content_hash = setup
-    record_path = ingests / "store" / f"{content_hash}.md"
-    record_path.write_text(
-        _record(content_hash).replace(
-            f"content_hash: sha256:{content_hash}\n",
-            f"content_hash: sha256:{content_hash}\narchived_ext: pdf\n",
-        )
-    )
-    _git(ingests, "add", ".")
-    _git(ingests, "commit", "-qm", "archive source extension")
+    ingester, ingests, source, run_uuid, result_path, env, _ = setup
     head_before = _git(ingests, "rev-parse", "HEAD").stdout.strip()
 
     proc = _invoke(ingester, source, run_uuid, result_path, env, "--force")
@@ -404,9 +587,46 @@ def test_unchanged_forced_refresh_emits_no_op(tmp_path):
     assert result["commit_sha"] == head_before
 
 
-def test_reprocess_receipt_retry_resolves_committed_v2_without_extraction(tmp_path):
+def test_operator_refresh_can_commit_only_a_missing_source_map(tmp_path):
+    setup = _workspace(tmp_path, b"%PDF-1.4\nsource map only\n", existing=True)
+    ingester, ingests, source, _, _, env, content_hash = setup
+    for source_map in (ingests / "source-maps").iterdir():
+        source_map.unlink()
+    _git(ingests, "add", "-A")
+    _git(ingests, "commit", "-qm", "remove source map")
+    data_dir = tmp_path / "data"
+    env["ANOMALICA_DATA_DIR"] = str(data_dir)
+
+    proc = subprocess.run(
+        [str(ingester / "ingest"), "--force", str(source)],
+        cwd=ingester,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.removeprefix(PREFIX))
+    assert payload["outcome"] == "committed"
+    assert payload["record_path"] == f"store/{content_hash}.md"
+    result_path = data_dir / "ingest-results" / f"{payload['run_uuid']}.json"
+    assert json.loads(result_path.read_text()) == payload
+    changed = _git(ingests, "show", "--format=", "--name-only", "HEAD").stdout
+    assert f"store/{content_hash}.md" not in changed.splitlines()
+    assert any(line.startswith("source-maps/") for line in changed.splitlines())
+
+
+def test_reprocess_receipt_retry_resolves_canonical_record_without_extraction(tmp_path):
     setup = _workspace(tmp_path, b"%PDF-1.4\nreprocess retry\n", existing=True)
     ingester, ingests, source, first_uuid, first_path, env, content_hash = setup
+    record_path = ingests / "store" / f"{content_hash}.md"
+    record_path.write_text(
+        record_path.read_text()
+        .replace("Fixture body.", "Old body.")
+        .replace("pipeline_version: 1", "pipeline_version: 0")
+    )
+    _git(ingests, "add", ".")
+    _git(ingests, "commit", "-qm", "change body")
     env["TEST_VARIANT"] = "v2"
 
     first = _invoke(ingester, source, first_uuid, first_path, env, "--force")
@@ -415,8 +635,9 @@ def test_reprocess_receipt_retry_resolves_committed_v2_without_extraction(tmp_pa
     head_after_commit = _git(ingests, "rev-parse", "HEAD").stdout.strip()
     assert (ingester / "cm-calls").read_text().splitlines() == ["called"]
 
-    # Simulate receipt loss after the record commit. Scheduler retries the same
-    # reprocess job with a fresh UUID and result path, still using --force.
+    # Simulate receipt loss after the record commit. Record/3 refreshes retain
+    # Selection identity, so the retry uses the committed per-Asset pipeline
+    # generation rather than a legacy filename variant to recognise completion.
     first_path.unlink()
     retry_uuid = str(uuid.uuid4())
     retry_path = first_path.with_name(f"{retry_uuid}.json")
@@ -425,7 +646,7 @@ def test_reprocess_receipt_retry_resolves_committed_v2_without_extraction(tmp_pa
     assert retry.returncode == 0, retry.stderr
     result = _result(retry, retry_path)
     assert result["outcome"] == "no-op"
-    assert result["record_path"] == f"store/{content_hash}.v2.md"
+    assert result["record_path"] == f"store/{content_hash}.md"
     assert result["commit_sha"] == head_after_commit
     assert _git(ingests, "rev-parse", "HEAD").stdout.strip() == head_after_commit
     assert (ingester / "cm-calls").read_text().splitlines() == ["called"]
@@ -544,6 +765,12 @@ def test_forced_reprocess_rejects_concurrent_same_record_change(tmp_path):
     release = tmp_path / "handler-release"
     env["TEST_HANDLER_MARKER"] = str(marker)
     env["TEST_HANDLER_RELEASE"] = str(release)
+    record_path = ingests / "store" / f"{content_hash}.md"
+    record_path.write_text(
+        record_path.read_text().replace("pipeline_version: 1", "pipeline_version: 0")
+    )
+    _git(ingests, "add", ".")
+    _git(ingests, "commit", "-qm", "mark extraction stale")
 
     proc = subprocess.Popen(
         [

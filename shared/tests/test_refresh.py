@@ -2,6 +2,8 @@ import hashlib
 import json
 import re
 
+import yaml
+
 from refresh import (
     carry_review_work,
     port_irrelevant_markers,
@@ -201,6 +203,59 @@ def test_restamp_inserts_pipeline_version_when_absent():
     assert "processing:\n  pipeline_version: 7\n  handler: webpage" in out
     assert 'version: "2.2.0"' in out
     assert "review_carryover" not in out
+
+
+def test_restamp_updates_record3_asset_version_without_legacy_scalar():
+    asset_hash = "sha256:" + "b" * 64
+    fm = yaml.safe_dump(
+        {
+            "schema": "anomalica/record/3",
+            "content_hash": "sha256:" + "a" * 64,
+            "title": "Fixture",
+            "source_types": ["web"],
+            "source_type": "web",
+            "file_format": "html",
+            "assets": [
+                {
+                    "asset_hash": asset_hash,
+                    "file_format": "html",
+                    "archived_ext": "html",
+                    "source_type": "web",
+                    "acquisition": {"acquired_at": "2026-09-22T09:00:00Z"},
+                    "copyright": {"status": "publicly_accessible"},
+                }
+            ],
+            "selection": [{"asset_hash": asset_hash, "selector": {"type": "whole"}}],
+            "processing": {
+                "handler": "webpage",
+                "version": "old",
+                "pipeline_version": 1,
+                "asset_pipeline_versions": [
+                    {
+                        "asset_hash": asset_hash,
+                        "source_type": "web",
+                        "pipeline_version": 1,
+                    }
+                ],
+                "tools": [{"name": "extractor", "version": "old"}],
+            },
+        },
+        sort_keys=False,
+    )
+
+    stamped = yaml.safe_load(
+        restamp(fm, "a" * 64, None, media_type="web", tool_version="2.2.0")
+    )
+
+    assert "pipeline_version" not in stamped["processing"]
+    assert stamped["processing"]["asset_pipeline_versions"] == [
+        {
+            "asset_hash": asset_hash,
+            "source_type": "web",
+            "pipeline_version": 7,
+        }
+    ]
+    assert stamped["processing"]["tools"][0]["version"] == "2.2.0"
 
 
 def test_transplant_keeps_the_stored_file_for_the_same_picture():

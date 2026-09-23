@@ -10,9 +10,11 @@ every record already in the store, without re-ingesting:
   The one legacy `document_type: article` written by the old web default is
   stripped, so the column means "derived or human-set", never "defaulted".
 
-Frontmatter-only: it never touches the body or the content_hash, so no record's
-identity changes and nothing downstream repoints. Idempotent - a second run is a
-no-op. Runs on the host; scans store + store/v1. Dry-run by default; --apply writes.
+Frontmatter-only: it never touches the body or the content_hash, so no legacy
+record's identity changes and nothing downstream repoints. Explicit Asset
+descriptors already own these fields in `record/3`, which this legacy backfill
+leaves untouched. Idempotent - a second run is a no-op. Runs on the host; scans
+store + store/v1. Dry-run by default; --apply writes.
 """
 
 from __future__ import annotations
@@ -142,8 +144,10 @@ def main() -> int:
             split = _split(text)
             if not split:
                 continue
-            total += 1
             fm, rest = split
+            if _field(fm, "schema") == "anomalica/record/3":
+                continue
+            total += 1
             hash_before = _field(fm, "content_hash")
 
             inserts, file_format, strip_article = plan(fm)

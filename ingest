@@ -192,7 +192,8 @@ emit_result() {
 	if [[ -z "$commit_sha" ]]; then
 		commit_sha="$(git -C "$INGESTS_DIR" rev-parse HEAD)"
 	fi
-	python3 "${SCRIPT_DIR}/shared/ingest_result.py" publish \
+	PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/ingest_result.py" publish \
 		--ingests-dir "$INGESTS_DIR" \
 		--result-path "$RESULT_PATH" \
 		--run-uuid "$UUID" \
@@ -263,6 +264,30 @@ is_url() {
 	[[ "$1" =~ ^https?:// ]]
 }
 
+record3_asset_is_current() {
+	RECORD_PATH="$1" ASSET_HASH_VALUE="$2" python3 -c "
+import os, pathlib, sys, yaml
+record = pathlib.Path(os.environ['RECORD_PATH'])
+versions_path = record.parent / '_pipeline_versions.yaml'
+if not record.is_file() or not versions_path.is_file():
+    raise SystemExit(1)
+frontmatter = yaml.safe_load(record.read_text().split('---', 2)[1]) or {}
+if frontmatter.get('schema') != 'anomalica/record/3':
+    raise SystemExit(1)
+labelled = 'sha256:' + os.environ['ASSET_HASH_VALUE']
+asset = next((item for item in frontmatter.get('assets', []) if isinstance(item, dict) and item.get('asset_hash') == labelled), None)
+if not isinstance(asset, dict):
+    raise SystemExit(1)
+source_type = asset.get('source_type')
+processing = frontmatter.get('processing') or {}
+if not isinstance(processing, dict):
+    raise SystemExit(1)
+recorded = next((item.get('pipeline_version') for item in processing.get('asset_pipeline_versions', []) if isinstance(item, dict) and item.get('asset_hash') == labelled and item.get('source_type') == source_type), None)
+current = (yaml.safe_load(versions_path.read_text()) or {}).get(source_type)
+raise SystemExit(0 if type(recorded) is int and recorded > 0 and recorded == current else 1)
+"
+}
+
 # For local files, pre-hash and check if already in the ingests repo
 if ! is_url "$INPUT"; then
 	if [[ ! -f "$INPUT" ]]; then
@@ -270,60 +295,24 @@ if ! is_url "$INPUT"; then
 		exit 1
 	fi
 	FILE_HASH="$(sha256sum "$INPUT" | cut -d' ' -f1)"
-	# Scheduler reprocess upgrades legacy audio/video to the parallel v2 record.
-	# If that v2 is already committed, a previous attempt may have lost only its
-	# receipt after commit. Resolve it now instead of repeating GPU extraction.
-	if [[ "$SCHEDULER_RESULT" -eq 1 ]] && [[ "$FORCE_FLAG" -eq 1 ]] &&
-		[[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
-		acquire_ingests_write_lock
-		if [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
-			release_ingests_write_lock
-		else
-			echo "Skipping: reprocess output already committed (hash: ${FILE_HASH:0:12}...)" >&2
-			emit_result "no-op" "store/${FILE_HASH}.v2.md"
-			exit 0
-		fi
-	fi
-	if { [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] || [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; } && [[ "$FORCE_FLAG" -eq 0 ]]; then
-		acquire_ingests_write_lock
-		if [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.md" ]] && [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
-			release_ingests_write_lock
-		else
-			echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
-			if [[ -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
-				EXISTING="store/${FILE_HASH}.v2.md"
-			else
-				EXISTING="store/${FILE_HASH}.md"
-			fi
-			emit_result "no-op" "$EXISTING"
-			exit 0
-		fi
-	fi
-fi
-
-# For URLs, pre-fetch dedup by exact source_url match
-if is_url "$INPUT" && [[ "$FORCE_FLAG" -eq 0 ]]; then
 	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
-from dedup import find_by_source_url
-match = find_by_source_url(Path('${INGESTS_DIR}/store'), '${INPUT}')
+from dedup import find_by_source_hash
+match = find_by_source_hash(Path('${INGESTS_DIR}/store'), '${FILE_HASH}')
 print(match if match else '')
-")"
-	if [[ -n "$EXISTING" ]]; then
+	")"
+	if [[ -n "$EXISTING" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
 		acquire_ingests_write_lock
 		EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
-from dedup import find_by_source_url
-match = find_by_source_url(Path('${INGESTS_DIR}/store'), '${INPUT}')
+from dedup import find_by_source_hash
+match = find_by_source_hash(Path('${INGESTS_DIR}/store'), '${FILE_HASH}')
 print(match if match else '')
-")"
+		")"
 		if [[ -z "$EXISTING" ]]; then
 			release_ingests_write_lock
 		else
-			echo "Skipping: URL already ingested" >&2
-			echo "Existing record: ${EXISTING}" >&2
-			EXISTING="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
-				--ingests-dir "$INGESTS_DIR" --source-url "$INPUT")"
+			echo "Skipping: already ingested (hash: ${FILE_HASH:0:12}...)" >&2
 			emit_result "no-op" "$EXISTING"
 			exit 0
 		fi
@@ -435,7 +424,8 @@ if [[ ! -f "$MANIFEST" ]]; then
 fi
 
 if [[ -n "$RECORD_METADATA_FILE" ]]; then
-	python3 "${SCRIPT_DIR}/shared/record_metadata.py" manifest \
+	PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/record_metadata.py" manifest \
 		--manifest "$MANIFEST" --metadata-file "$RECORD_METADATA_FILE"
 fi
 
@@ -449,34 +439,59 @@ if [[ -z "$DETECTED_TYPE" || -z "$ASSET" ]]; then
 	exit 1
 fi
 
-# Post-acquire dedup by source_id (e.g. youtube:ZBtMbBPzqHY). Catches the
-# case where the same video re-downloaded with a fresh container has a new
-# byte hash but is logically the same source.
-if [[ -n "$SOURCE_ID" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
-	EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+ASSET_PATH="${RUN_DIR}/${ASSET}"
+if [[ ! -f "$ASSET_PATH" ]]; then
+	echo "Error: no asset at ${ASSET_PATH}" >&2
+	exit 1
+fi
+ASSET_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
+EXISTING_ASSET="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
-from dedup import find_by_source_id
-match = find_by_source_id(Path('${INGESTS_DIR}/store'), '${SOURCE_ID}')
+from dedup import find_by_source_hash
+match = find_by_source_hash(Path('${INGESTS_DIR}/store'), '${ASSET_HASH}')
 print(match if match else '')
 ")"
-	if [[ -n "$EXISTING" ]]; then
+if [[ -n "$EXISTING_ASSET" ]] && [[ "$FORCE_FLAG" -eq 0 ]]; then
+	acquire_ingests_write_lock
+	EXISTING_ASSET="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+from pathlib import Path
+from dedup import find_by_source_hash
+match = find_by_source_hash(Path('${INGESTS_DIR}/store'), '${ASSET_HASH}')
+print(match if match else '')
+	")"
+	if [[ -z "$EXISTING_ASSET" ]]; then
+		release_ingests_write_lock
+	else
+		echo "Skipping: acquired Asset already has its default whole-Asset Record" >&2
+		emit_result "no-op" "$EXISTING_ASSET"
+		exit 0
+	fi
+fi
+if [[ -n "$EXISTING_ASSET" ]] && [[ "$FORCE_FLAG" -eq 1 ]]; then
+	EXISTING_SCHEMA="$(python3 -c "import pathlib,yaml; p=pathlib.Path('${EXISTING_ASSET}'); print((yaml.safe_load(p.read_text().split('---',2)[1]) or {}).get('schema',''))")"
+	if [[ "$EXISTING_SCHEMA" != "anomalica/record/3" ]]; then
+		echo "Error: --force cannot refresh a legacy ${EXISTING_SCHEMA} envelope in place." >&2
+		echo "Migrate it deterministically from held bytes with scripts/migrate-record3.py first; no provider was called." >&2
+		exit 1
+	fi
+	# A scheduler retry after commit can lose only its result receipt. Record/3
+	# keeps Selection identity across extraction revisions, so recognise completion
+	# from the matching Asset's committed pipeline generation rather than a legacy
+	# filename variant. An ordinary operator --force remains an unconditional run.
+	if [[ "$SCHEDULER_RESULT" -eq 1 ]] && [[ "$CANARY" -eq 0 ]] && record3_asset_is_current "$EXISTING_ASSET" "$ASSET_HASH"; then
 		acquire_ingests_write_lock
-		EXISTING="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
+		EXISTING_ASSET="$(PYTHONPATH="${SCRIPT_DIR}/shared" python3 -c "
 from pathlib import Path
-from dedup import find_by_source_id
-match = find_by_source_id(Path('${INGESTS_DIR}/store'), '${SOURCE_ID}')
+from dedup import find_by_source_hash
+match = find_by_source_hash(Path('${INGESTS_DIR}/store'), '${ASSET_HASH}')
 print(match if match else '')
-")"
-		if [[ -z "$EXISTING" ]]; then
-			release_ingests_write_lock
-		else
-			echo "Skipping: source_id already ingested (${SOURCE_ID})" >&2
-			echo "Existing record: ${EXISTING}" >&2
-			EXISTING="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
-				--ingests-dir "$INGESTS_DIR" --source-id "$SOURCE_ID")"
-			emit_result "no-op" "$EXISTING"
+		")"
+		if [[ -n "$EXISTING_ASSET" ]] && record3_asset_is_current "$EXISTING_ASSET" "$ASSET_HASH"; then
+			echo "Skipping: scheduler reprocess generation already committed" >&2
+			emit_result "no-op" "$EXISTING_ASSET"
 			exit 0
 		fi
+		release_ingests_write_lock
 	fi
 fi
 
@@ -509,10 +524,11 @@ if [[ "$CANARY" -eq 1 ]]; then
 		echo "Error: --canary currently supports existing audio/video rerenders only" >&2
 		exit 1
 	fi
-	if is_url "$INPUT" || [[ ! -f "${INGESTS_DIR}/store/${FILE_HASH}.v2.md" ]]; then
-		echo "Error: --canary requires a local source with an existing v2 record" >&2
+	if is_url "$INPUT" || [[ -z "$EXISTING_ASSET" ]] || [[ "$EXISTING_SCHEMA" != "anomalica/record/3" ]]; then
+		echo "Error: --canary requires a local source with an existing record/3" >&2
 		exit 1
 	fi
+	CANARY_RECORD="${EXISTING_ASSET#${INGESTS_DIR}/}"
 fi
 
 echo "Routing to: ${HANDLER}" >&2
@@ -552,10 +568,11 @@ esac
 wait
 
 if [[ "$CANARY" -eq 1 ]] && [[ "$HANDLER" == "audio" ]]; then
-	HANDLER_RECORD="store/${FILE_HASH}.v2.md"
-	CANDIDATE_PATH="${RUN_OUTPUT}/.ai/canary-candidates/${UUID}/${FILE_HASH}.v2.md"
+	HANDLER_RECORD="$CANARY_RECORD"
+	CANDIDATE_PATH="${RUN_OUTPUT}/.ai/canary-candidates/${UUID}/$(basename "$CANARY_RECORD")"
 else
-	HANDLER_RECORD="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" written \
+	HANDLER_RECORD="$(PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/ingest_result.py" written \
 		--ingests-dir "$RUN_OUTPUT" --log-path "$HANDLER_LOG")"
 fi
 
@@ -564,7 +581,8 @@ if [[ "$CANARY" -eq 1 ]]; then
 		echo "Error: canary handler did not report one written record" >&2
 		exit 1
 	fi
-	python3 "${SCRIPT_DIR}/shared/canary_guard.py" \
+	PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/canary_guard.py" \
 		--ingests-dir "$INGESTS_DIR" \
 		--parent "$INGESTS_BASE_HEAD" \
 		--record-path "$HANDLER_RECORD" \
@@ -576,10 +594,15 @@ fi
 echo "Done. Staging: ${RUN_DIR}" >&2
 
 # Archive original source file and any sibling snapshots for workbench access
-RECORDS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/records"
+# Product components now live one level below the control-plane root that owns
+# the off-Git archive. Keep the sibling fallback for standalone/test layouts.
+CONTROL_RECORDS_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)/records"
+if [[ -d "${SCRIPT_DIR}/../anomalica-common" ]]; then
+	RECORDS_DIR="$CONTROL_RECORDS_DIR"
+else
+	RECORDS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/records"
+fi
 mkdir -p "$RECORDS_DIR"
-ASSET_PATH="${RUN_DIR}/${ASSET}"
-ASSET_HASH=""
 if [[ ! -f "$ASSET_PATH" ]]; then
 	# A record with no archived original cannot be served for review, and this
 	# must never pass silently: a month-old record with no source on disk was
@@ -587,82 +610,31 @@ if [[ ! -f "$ASSET_PATH" ]]; then
 	echo "Error: no asset at ${ASSET_PATH} - ingest is partial and has no archived original" >&2
 	exit 1
 else
-	CONTENT_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
-	ASSET_HASH="$CONTENT_HASH"
+	CURRENT_ASSET_HASH="$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)"
+	if [[ "$CURRENT_ASSET_HASH" != "$ASSET_HASH" ]]; then
+		echo "Error: staged Asset bytes changed while the handler ran" >&2
+		exit 1
+	fi
 	ASSET_EXT="${ASSET##*.}"
-	TARGET="${RECORDS_DIR}/${CONTENT_HASH}.${ASSET_EXT}"
-	if [[ ! -f "$TARGET" ]]; then
-		cp "$ASSET_PATH" "$TARGET"
+	ASSET_EXT="${ASSET_EXT,,}"
+	TARGET="${RECORDS_DIR}/${ASSET_HASH}.${ASSET_EXT}"
+	ARCHIVE_RESULT="$(python3 "${SCRIPT_DIR}/shared/archive.py" \
+		--source "$ASSET_PATH" --target "$TARGET" --expected-hash "$ASSET_HASH")"
+	if [[ "$ARCHIVE_RESULT" == "created" ]]; then
 		echo "Source archived: ${TARGET}" >&2
 	fi
-
-	# Stamp the archived object's extension onto the record - the archive and this
-	# stamp are ONE statement: an archived file whose record lacks archived_ext
-	# cannot be addressed and reads as sourceless (the codec/container describe the
-	# STREAM; the extension is a property of the FILE - yt-dlp writes .opus while
-	# reporting container: ogg - so consumers must not guess). Parse the whole
-	# frontmatter, never a fixed-size window (source_hash falls past a long ebook
-	# blurb), and be LOUD when nothing matches so a miss surfaces here, not months
-	# later in an audit.
-	INGESTS_DIR="${RUN_OUTPUT}" CONTENT_HASH="${CONTENT_HASH}" ASSET_EXT="${ASSET_EXT}" python3 -c "
-import os, re, sys
-from pathlib import Path
-store = Path(os.environ['INGESTS_DIR']) / 'store'
-h, ext = os.environ['CONTENT_HASH'], os.environ['ASSET_EXT']
-
-
-def frontmatter(p):
-    t = p.read_text(errors='replace')
-    m = re.match(r'^(---\n)(.*?)(\n---\n)', t, re.S)
-    return t, m
-
-
-# audio/video/pdf: record is named by the asset hash. web/ebook: the record is
-# body-hashed and the asset hash is its source_hash - found by parsing each
-# record's frontmatter, never by windowing the file.
-cands = [store / f'{h}.v2.md', store / f'{h}.md']
-for p in store.glob('*.md'):
-    _, m = frontmatter(p)
-    if m and f'source_hash: sha256:{h}' in m.group(2):
-        cands.append(p)
-for p in cands:
-    if not p.exists():
-        continue
-    t, m = frontmatter(p)
-    if not m:
-        continue
-    fmv = m.group(2)
-    if re.search(r'^archived_ext:', fmv, re.M):
-        fmv = re.sub(r'^archived_ext:.*$', f'archived_ext: {ext}', fmv, flags=re.M)
-    elif re.search(r'^content_hash:.*$', fmv, re.M):
-        fmv = re.sub(r'^(content_hash:.*)$', r'\1' + f'\narchived_ext: {ext}', fmv, count=1, flags=re.M)
-    else:
-        fmv = fmv + f'\narchived_ext: {ext}'
-    p.write_text(m.group(1) + fmv + m.group(3) + t[m.end():])
-    print(f'Stamped archived_ext: {ext} -> {p.name}', file=sys.stderr)
-    break
-else:
-    print(f'WARNING: archived {h[:12]}.{ext} but found NO record to stamp archived_ext on', file=sys.stderr)
-" || echo "WARNING: archived_ext stamp step errored for ${CONTENT_HASH:0:12}" >&2
 fi
 
-# Resolve the handler's exact live output before committing. PDF/audio records use
-# the asset hash; web/ebook records expose it as source_hash. source_id is only the
-# fallback. Ambiguity is a hard failure: the scheduler must never infer identity.
+# Resolve the handler's exact intermediate output. The record/3 finaliser below
+# changes its path to canonical Selection identity; ambiguity here is a hard error.
 if [[ -n "$HANDLER_RECORD" ]]; then
 	RECORD_PATH="$HANDLER_RECORD"
 else
-	RECORD_PATH="$(python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
+	RECORD_PATH="$(PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/ingest_result.py" resolve \
 		--ingests-dir "$RUN_OUTPUT" \
 		--asset-hash "$ASSET_HASH" \
 		--source-id "$SOURCE_ID")"
-fi
-
-if [[ -n "$RECORD_METADATA_FILE" ]]; then
-	python3 "${SCRIPT_DIR}/shared/record_metadata.py" record \
-		--record "${RUN_OUTPUT}/${RECORD_PATH}" \
-		--by-name-dir "${RUN_OUTPUT}/by-name" \
-		--metadata-file "$RECORD_METADATA_FILE"
 fi
 
 # Archive any sibling snapshots (e.g. PDF render of an HTML page) declared
@@ -680,13 +652,42 @@ if [[ -n "$SNAPSHOT_PATHS" ]]; then
 		SNAP_PATH="${RUN_DIR}/${SNAP_NAME}"
 		[[ ! -f "$SNAP_PATH" ]] && continue
 		SNAP_HASH="$(sha256sum "$SNAP_PATH" | cut -d' ' -f1)"
+		SNAP_EXT="${SNAP_EXT,,}"
 		SNAP_TARGET="${RECORDS_DIR}/${SNAP_HASH}.${SNAP_EXT}"
-		if [[ ! -f "$SNAP_TARGET" ]]; then
-			cp "$SNAP_PATH" "$SNAP_TARGET"
+		ARCHIVE_RESULT="$(python3 "${SCRIPT_DIR}/shared/archive.py" \
+			--source "$SNAP_PATH" --target "$SNAP_TARGET" --expected-hash "$SNAP_HASH")"
+		if [[ "$ARCHIVE_RESULT" == "created" ]]; then
 			echo "Snapshot archived: ${SNAP_TARGET}" >&2
 		fi
 	done <<<"$SNAPSHOT_PATHS"
 fi
+
+# Handlers preserve their format-specific extraction and currently render a
+# legacy-shaped intermediate. Finalise it once, from the exact staged bytes, into
+# the shared Asset/Selection contract. PDF/image output also emits its immutable
+# preparation-version-9 source map; failure to establish exact page mapping blocks
+# publication rather than silently downgrading the Record.
+RECORD_PATH="$(PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+	python3 "${SCRIPT_DIR}/shared/record3.py" finalise \
+	--record "${RUN_OUTPUT}/${RECORD_PATH}" \
+	--asset "$ASSET_PATH" \
+	--manifest "$MANIFEST" \
+	--output-dir "$RUN_OUTPUT")"
+echo "Finalised record/3: ${RECORD_PATH}" >&2
+
+if [[ -n "$RECORD_METADATA_FILE" ]]; then
+	PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/record_metadata.py" record \
+		--record "${RUN_OUTPUT}/${RECORD_PATH}" \
+		--by-name-dir "${RUN_OUTPUT}/by-name" \
+		--metadata-file "$RECORD_METADATA_FILE"
+fi
+
+# The canonical nested Asset rights are authoritative after metadata merging.
+# Rebuild the possession gate at Selection identity, or remove a stale gate when
+# the final rights permit open serving; legacy handler sidecars are not authority.
+python3 "${SCRIPT_DIR}/shared/verification.py" \
+	--record "${RUN_OUTPUT}/${RECORD_PATH}" --source "$ASSET_PATH" >/dev/null
 
 # Stamp source-quality labels onto the records produced this run. Host-side
 # because the substitution detector's wordlist lives here, not in the format
@@ -703,12 +704,13 @@ if [[ -n "$QUALITY_TARGETS" ]]; then
 	done <<<"$QUALITY_TARGETS"
 fi
 
-# Back up each new source to the Bunny storage zones and stamp a storage: pointer
-# (the push-at-archive contract). A sibling of the local archive step above, NOT a
-# gate: non-fatal by design - a push failure leaves the record without a storage:
-# block for `shared/audit_sources.py --bunny` to catch and retry, and the local
-# archive stays the source of truth. Routes open/gated by copyright.status; audio
-# and video are backed up too (a re-fetch can't reproduce the transcribed bytes).
+# Back up every retained Asset to the Bunny storage zones (the push-at-archive
+# contract). A sibling of the local archive step above, NOT a gate: non-fatal by
+# design - `shared/audit_sources.py --bunny` catches and retries a failure, and the
+# local archive stays the source of truth. Singular records retain the legacy
+# storage pointer; composite and snapshot-bearing records have one independently
+# addressed object per Asset. Routes open/gated by each Asset's copyright.status;
+# audio and video are backed up too (a re-fetch cannot reproduce exact bytes).
 if [[ -n "$QUALITY_TARGETS" ]]; then
 	while IFS= read -r REC; do
 		[[ -z "$REC" ]] && continue
@@ -729,15 +731,26 @@ fi
 # Build one patch containing only this run's repository outputs. Intent-to-add
 # makes untracked output visible to `git diff` without changing the live index.
 git -C "$RUN_OUTPUT" add -N -- store/ by-name/ media/
+OUTPUT_PATHS=(store/ by-name/ media/)
+if [[ -d "${RUN_OUTPUT}/source-maps" ]]; then
+	git -C "$RUN_OUTPUT" add -N -- source-maps/
+	OUTPUT_PATHS+=(source-maps/)
+fi
 PATCH_PATH="${RUN_DIR}/output.patch"
-git -C "$RUN_OUTPUT" diff --binary HEAD -- store/ by-name/ media/ >"$PATCH_PATH"
-mapfile -d '' CHANGED_PATHS < <(git -C "$RUN_OUTPUT" diff --name-only -z HEAD -- store/ by-name/ media/)
+git -C "$RUN_OUTPUT" diff --binary HEAD -- "${OUTPUT_PATHS[@]}" >"$PATCH_PATH"
+mapfile -d '' CHANGED_PATHS < <(git -C "$RUN_OUTPUT" diff --name-only -z HEAD -- "${OUTPUT_PATHS[@]}")
+
+# Guard the resolved Record even when finalisation produced byte-identical output.
+# Otherwise a concurrent review can replace that path after extraction, leave no
+# local patch to trigger the loop below, and then be misreported as this run's
+# successful commit.
+GUARD_PATHS=("${CHANGED_PATHS[@]}" "$RECORD_PATH")
 
 # The shared lock covers only publication. Each path must still equal the base
 # snapshot in both HEAD and the live worktree; otherwise a concurrent review or
 # housekeeping change wins and this run fails without overwriting it.
 acquire_ingests_write_lock
-for path in "${CHANGED_PATHS[@]}"; do
+for path in "${GUARD_PATHS[@]}"; do
 	if ! git -C "$INGESTS_DIR" diff --quiet "$INGESTS_BASE_HEAD" HEAD -- "$path" ||
 		! git -C "$INGESTS_DIR" diff --quiet HEAD -- "$path" ||
 		{ ! git -C "$INGESTS_DIR" cat-file -e "HEAD:${path}" 2>/dev/null && [[ -e "${INGESTS_DIR}/${path}" || -L "${INGESTS_DIR}/${path}" ]]; }; then
@@ -759,6 +772,7 @@ if [[ "$NO_COMMIT" -eq 1 ]]; then
 	exit 0
 fi
 cd "$INGESTS_DIR"
+RUN_COMMITTED=0
 if [[ "${#CHANGED_PATHS[@]}" -gt 0 ]]; then
 	echo "" >&2
 	echo "Committing new records to ingests..." >&2
@@ -774,6 +788,7 @@ if [[ "${#CHANGED_PATHS[@]}" -gt 0 ]]; then
 		GIT_COMMITTER_NAME="Anomalica Ingester" \
 		GIT_COMMITTER_EMAIL="ingester@anomalica.is" \
 		git commit --only -m "$COMMIT_MSG" -- "${CHANGED_PATHS[@]}" >&2
+	RUN_COMMITTED=1
 	echo "Committed. Run 'git push' from ${INGESTS_DIR} to publish." >&2
 else
 	echo "No new records to commit." >&2
@@ -781,12 +796,8 @@ fi
 
 INGESTS_HEAD_AFTER="$(git rev-parse HEAD)"
 OUTCOME="no-op"
-if [[ "$INGESTS_HEAD_AFTER" != "$INGESTS_HEAD_BEFORE" ]] &&
-	git diff-tree --no-commit-id --name-only -r "$INGESTS_HEAD_AFTER" -- "$RECORD_PATH" | grep -Fxq "$RECORD_PATH"; then
+if [[ "$RUN_COMMITTED" -eq 1 ]]; then
 	OUTCOME="committed"
-elif [[ "$INGESTS_HEAD_AFTER" != "$INGESTS_HEAD_BEFORE" ]]; then
-	echo "Error: ingest created a commit that does not contain ${RECORD_PATH}" >&2
-	exit 1
 fi
 emit_result "$OUTCOME" "$RECORD_PATH" "$INGESTS_HEAD_AFTER"
 release_ingests_write_lock

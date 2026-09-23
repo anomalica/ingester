@@ -1,6 +1,9 @@
 import json
 
+import yaml
+
 import ingest_ebook
+from record3 import finalise_handler_record
 
 
 def _epub(path, body_one="Body one."):
@@ -42,10 +45,13 @@ def _staging(tmp_path, name):
 
 def test_reingesting_the_same_epub_refreshes_the_record_in_place(tmp_path):
     output = tmp_path / "output"
-    assert ingest_ebook.run(_staging(tmp_path, "first"), output, force=False) == 0
+    first = _staging(tmp_path, "first")
+    assert ingest_ebook.run(first, output, force=False) == 0
     records = list((output / "store").glob("*.md"))
     assert len(records) == 1
-    record = records[0]
+    record = finalise_handler_record(
+        records[0], first / "asset.epub", first / "manifest.json", output
+    ).record_path
     before = record.read_text()
     # A human edit to the body must survive a forced re-extraction.
     record.write_text(
@@ -64,5 +70,8 @@ def test_reingesting_the_same_epub_refreshes_the_record_in_place(tmp_path):
     assert "<!-- irrelevant: start -->" in after
     from pipeline_version import current_version
 
-    assert f"  pipeline_version: {current_version('ebook')}" in after
+    frontmatter = yaml.safe_load(after.split("---", 2)[1])
+    assert frontmatter["processing"]["asset_pipeline_versions"][0][
+        "pipeline_version"
+    ] == current_version("ebook")
     assert not (output / "store" / "v1").exists()

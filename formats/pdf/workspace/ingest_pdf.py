@@ -20,8 +20,9 @@ from shared.dates import (
     temporal_scalar,
     utc_now_rfc3339,
 )
+from shared.dedup import find_by_source_hash
 from shared.document_type import derive_document_type, normalise_file_format
-from shared.hashing import content_hash_label, hash_file, store_exists
+from shared.hashing import content_hash_label, hash_file
 from shared.pipeline_version import current_version
 from shared.record import (
     clean_title,
@@ -817,8 +818,13 @@ def main():
 
     input_hash = hash_file(args.input_file)
 
-    if not args.force and store_exists(store_dir, input_hash):
-        print(f"Skipping: {input_hash}.md already exists in store", file=sys.stderr)
+    existing_record = find_by_source_hash(store_dir, input_hash) or (
+        store_dir / f"{input_hash}.md"
+    )
+    if not args.force and existing_record.exists():
+        print(
+            f"Skipping: {existing_record.name} already exists in store", file=sys.stderr
+        )
         sys.exit(0)
 
     # Copyright precedence: an existing record's block (preserved on
@@ -828,7 +834,6 @@ def main():
     existing_copyright = manifest_copyright
     preserved: dict = {}
     existing_fm: dict | None = None
-    existing_record = store_dir / f"{input_hash}.md"
     # Loud at ingest, not silent forever: a fresh drop with no provenance is gated
     # and nobody is told. Say so, naming the file and what it needs.
     if (
@@ -846,22 +851,84 @@ def main():
     if existing_record.exists():
         existing_fm = _extract_frontmatter(existing_record.read_text())
         if existing_fm:
+            matching = None
             if "copyright" in existing_fm:
                 existing_copyright = existing_fm["copyright"]
+            elif existing_fm.get("schema") == "anomalica/record/3":
+                assets = existing_fm.get("assets") or []
+                matching = next(
+                    (
+                        asset
+                        for asset in assets
+                        if isinstance(asset, dict)
+                        and asset.get("asset_hash") == f"sha256:{input_hash}"
+                    ),
+                    None,
+                )
+                if matching:
+                    existing_copyright = matching.get("copyright")
             # A re-ingest of the same source keeps its human-facing identity and
             # provenance STABLE. The model re-derives title/date from the page and
             # can regress them (drop a date, invent a day, rename); provenance
             # (source_url/file/id) cannot be re-derived at all. Carry the stored
             # values forward so a re-extraction updates only the body + new fields.
-            for key in (
-                "title",
-                "date_published",
-                "source_url",
-                "source_file",
-                "source_id",
-            ):
-                if existing_fm.get(key) is not None:
-                    preserved[key] = existing_fm[key]
+            provenance = existing_fm.get("provenance")
+            acquisition = (
+                matching.get("acquisition")
+                if existing_fm.get("schema") == "anomalica/record/3" and matching
+                else None
+            )
+            identifiers = (
+                provenance.get("identifiers") if isinstance(provenance, dict) else None
+            )
+            existing_values = {
+                "title": existing_fm.get("title"),
+                "date_published": existing_fm.get("date_published")
+                or (
+                    provenance.get("published_date")
+                    if isinstance(provenance, dict)
+                    else None
+                ),
+                "source_url": existing_fm.get("source_url")
+                or (
+                    provenance.get("source_url")
+                    if isinstance(provenance, dict)
+                    else None
+                ),
+                "source_file": existing_fm.get("source_file")
+                or (
+                    acquisition.get("source_file")
+                    if isinstance(acquisition, dict)
+                    else None
+                ),
+                "source_id": existing_fm.get("source_id")
+                or (
+                    identifiers.get("source_id")
+                    if isinstance(identifiers, dict)
+                    else None
+                )
+                or (
+                    acquisition.get("copy_identifiers", {}).get("source_id")
+                    if isinstance(acquisition, dict)
+                    and isinstance(acquisition.get("copy_identifiers"), dict)
+                    else None
+                ),
+                "date_accessed": existing_fm.get("date_accessed")
+                or (
+                    acquisition.get("acquired_at")
+                    if isinstance(acquisition, dict)
+                    else None
+                ),
+                "fetched_url": existing_fm.get("fetched_url")
+                or (
+                    acquisition.get("fetched_url")
+                    if isinstance(acquisition, dict)
+                    else None
+                ),
+            }
+            for key, value in existing_values.items():
+                if value is not None:
+                    preserved[key] = value
     if existing_record.exists():
         # Re-ingest: provenance comes ONLY from the stored record, never the
         # manifest. The input is a sources/{hash} file whose basename is the
@@ -870,6 +937,8 @@ def main():
         source_url = preserved.get("source_url")
         source_file = preserved.get("source_file")
         source_id = preserved.get("source_id")
+        date_accessed = preserved.get("date_accessed")
+        fetched_url = preserved.get("fetched_url")
 
     _default_model = os.environ.get(
         "INGEST_DEFAULT_MODEL", "openai/gpt-5.6-luna"
@@ -1126,17 +1195,29 @@ def main():
     title = clean_title(fm.get("title", "untitled")) if fm else "untitled"
 
     # Write to store and create symlink
-    record_path, symlink_path = write_record(
-        store_dir=store_dir,
-        by_name_dir=by_name_dir,
-        hex_hash=input_hash,
-        content=content,
-        date=date,
-        source_type=source_type,
-        title=title,
-    )
+    legacy_output = store_dir / f"{input_hash}.md"
+    if existing_record.exists() and existing_record != legacy_output:
+        # record/3 is named by Selection identity rather than Asset hash. Write
+        # the handler's legacy-shaped intermediate without minting a competing
+        # alias; the host finaliser replaces the existing canonical envelope.
+        legacy_output.write_text(content)
+        from shared.pipeline_version import write_manifest
+
+        write_manifest(store_dir)
+        record_path, symlink_path = legacy_output, None
+    else:
+        record_path, symlink_path = write_record(
+            store_dir=store_dir,
+            by_name_dir=by_name_dir,
+            hex_hash=input_hash,
+            content=content,
+            date=date,
+            source_type=source_type,
+            title=title,
+        )
     print(f"Written: {record_path}", file=sys.stderr)
-    print(f"Symlink: {symlink_path}", file=sys.stderr)
+    if symlink_path is not None:
+        print(f"Symlink: {symlink_path}", file=sys.stderr)
 
     if needs_sidecar(content):
         sidecar = build_sidecar(

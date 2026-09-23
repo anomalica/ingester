@@ -60,9 +60,32 @@ def validate_candidate(
         raise CanaryError("identity, provenance, rights, or curated metadata changed")
 
     processing = new.get("processing")
-    if not isinstance(processing, dict) or processing.get(
-        "pipeline_version"
-    ) != current_version(str(new["source_type"])):
+    generation_is_current = False
+    if isinstance(processing, dict) and new.get("schema") == "anomalica/record/3":
+        assets = new.get("assets")
+        versions = processing.get("asset_pipeline_versions")
+        if (
+            isinstance(assets, list)
+            and len(assets) == 1
+            and isinstance(assets[0], dict)
+            and isinstance(versions, list)
+            and len(versions) == 1
+            and isinstance(versions[0], dict)
+        ):
+            asset = assets[0]
+            declared = versions[0]
+            source_type = asset.get("source_type")
+            generation_is_current = (
+                isinstance(source_type, str)
+                and declared.get("asset_hash") == asset.get("asset_hash")
+                and declared.get("source_type") == source_type
+                and declared.get("pipeline_version") == current_version(source_type)
+            )
+    elif isinstance(processing, dict):
+        generation_is_current = processing.get("pipeline_version") == current_version(
+            str(new["source_type"])
+        )
+    if not generation_is_current:
         raise CanaryError(
             "candidate does not declare the current extraction generation"
         )

@@ -21,6 +21,7 @@ from dates import (
     temporal_scalar,
     utc_now_rfc3339,
 )
+from dedup import find_by_source_hash
 from diarisation.pyannote_diarise import diarise, DIARISATION_MODEL
 from hashing import content_hash_label, hash_file, store_exists, store_path
 from models import TimedSentence, Turn, detect_source_type, format_time_precise
@@ -475,7 +476,15 @@ def run(
 
     # In word/v2 mode, dedup against the parallel .v2 record only, so a source
     # already ingested as v1 is still (re)processed into v2 without touching v1.
-    already = (
+    matching_record = find_by_source_hash(store_dir, hex_hash)
+    canonical_existing = (
+        matching_record
+        if matching_record is not None
+        and (_read_existing_frontmatter(matching_record) or {}).get("schema")
+        == "anomalica/record/3"
+        else None
+    )
+    already = canonical_existing is not None or (
         store_path(store_dir, hex_hash, f"{variant}.md").exists()
         if word_timestamps
         else store_exists(store_dir, hex_hash)
@@ -503,7 +512,7 @@ def run(
         new_audio_entry["fetched_at"] = manifest["fetched_at"]
 
     # Read existing source.audio list and merge (append only if sha256 is new)
-    existing_record_path = store_dir / f"{hex_hash}{variant}.md"
+    existing_record_path = canonical_existing or store_dir / f"{hex_hash}{variant}.md"
     existing_audio_list = _read_existing_source_audio(existing_record_path)
     source_audio_list = _merge_audio_entry(existing_audio_list, new_audio_entry)
 
@@ -512,6 +521,12 @@ def run(
     existing_fm = _read_existing_frontmatter(existing_record_path)
     if existing_fm and not source_id:
         source_id = existing_fm.get("source_id")
+        provenance = existing_fm.get("provenance")
+        identifiers = (
+            provenance.get("identifiers") if isinstance(provenance, dict) else None
+        )
+        if not source_id and isinstance(identifiers, dict):
+            source_id = identifiers.get("source_id")
 
     apath = archive_path(records_dir, hex_hash)
     if use_cache and apath.exists():
@@ -598,7 +613,35 @@ def run(
     # Provenance: manifest wins, else carry it forward from the stored record on a
     # re-ingest (an archived source has no manifest), else the sane default.
     def _ex(key):
-        return existing_fm.get(key) if existing_fm else None
+        if not existing_fm:
+            return None
+        direct = existing_fm.get(key)
+        if direct is not None:
+            return direct
+        provenance = existing_fm.get("provenance")
+        if isinstance(provenance, dict):
+            mapped = {
+                "date_published": "published_date",
+                "source_url": "source_url",
+                "publisher": "publisher",
+                "creators": "creators",
+                "posted_by": "posted_by",
+                "posted_date": "posted_date",
+            }.get(key)
+            if mapped and provenance.get(mapped) is not None:
+                return provenance[mapped]
+        if key == "date_accessed":
+            assets = existing_fm.get("assets") or []
+            for asset in assets:
+                if (
+                    not isinstance(asset, dict)
+                    or asset.get("asset_hash") != f"sha256:{hex_hash}"
+                ):
+                    continue
+                acquisition = asset.get("acquisition")
+                if isinstance(acquisition, dict):
+                    return acquisition.get("acquired_at")
+        return None
 
     source_url = (
         manifest.get("source_url") or (source if is_url else None) or _ex("source_url")

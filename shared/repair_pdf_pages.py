@@ -13,8 +13,9 @@ _resequence_pages_sequential, applied to records already on disk.
 
 It does NOT touch records with FEWER markers than pages (a genuinely missing or
 merged page - that needs re-extraction, not renumbering) - those are only
-reported. file_page lives in the body, and a PDF record's identity is its source
-bytes, so a renumber changes no content_hash. Dry-run by default; --apply writes.
+reported. It also leaves `record/3` untouched because a body-only edit would
+stale that Record's preparation-version-9 source map; repair the legacy envelope
+before deterministic migration instead. Dry-run by default; --apply writes.
 """
 
 from __future__ import annotations
@@ -75,6 +76,8 @@ def main() -> int:
             if len(parts) < 3:
                 continue
             fm, body = parts[1], parts[2]
+            if _field(fm, "schema") == "anomalica/record/3":
+                continue
             if _field(fm, "source_type") not in ("pdf", "image"):
                 continue
             markers = re.findall(r"file_page: (\d+)", body)

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import date
 from unittest.mock import patch
@@ -49,6 +50,8 @@ def test_ingest_writes_record_to_store(mock_extract, tmp_path):
     assert "source_type: web" in content
     assert "source_url: https://example.com/article" in content
     assert "Test Article" in content
+    expected = hashlib.sha256(b"<html><body>Article</body></html>").hexdigest()
+    assert md_files[0].name == f"{expected}.md"
 
 
 @patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
@@ -97,6 +100,30 @@ def test_ingest_skips_when_exists(mock_extract, tmp_path):
     ingest_webpage.run(staging, output, force=False)
     md_files = list((output / "store").glob("*.md"))
     assert len(md_files) == 1
+
+
+@patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
+def test_source_id_candidate_does_not_suppress_different_asset(mock_extract, tmp_path):
+    staging = _create_staging(tmp_path, html="<html>new copy bytes</html>")
+    manifest_path = staging / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["source_id"] = "url:fixture"
+    manifest_path.write_text(json.dumps(manifest))
+    output = tmp_path / "output"
+    store = output / "store"
+    store.mkdir(parents=True)
+    (store / f"{'b' * 64}.md").write_text(
+        "---\n"
+        "schema: anomalica/record/1\n"
+        "title: Existing copy\n"
+        "source_type: web\n"
+        "source_id: url:fixture\n"
+        f"content_hash: sha256:{'b' * 64}\n"
+        "---\nExisting body.\n"
+    )
+
+    assert ingest_webpage.run(staging, output, force=False) == 0
+    assert len(list(store.glob("*.md"))) == 2
 
 
 @patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)

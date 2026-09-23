@@ -42,7 +42,7 @@ class ValidationResult:
     fixed: str | None = None
 
 
-REQUIRED_FRONTMATTER = ["schema", "title", "source_type"]
+REQUIRED_FRONTMATTER = ["schema", "title"]
 
 CURRENT_SCHEMA = "anomalica/record/1"
 
@@ -210,6 +210,8 @@ def validate(
 
     # Check required fields
     all_required = REQUIRED_FRONTMATTER + (extra_required or [])
+    if frontmatter.get("schema") != "anomalica/record/3":
+        all_required = all_required + ["source_type"]
     for field_name in all_required:
         if field_name not in frontmatter:
             result.errors.append(f"Missing required frontmatter field: {field_name}")
@@ -286,6 +288,31 @@ def validate(
                     f"Invalid copyright.{field_name}: expected YYYY-MM-DD"
                 )
 
+    assets = frontmatter.get("assets")
+    if isinstance(assets, list):
+        for index, asset in enumerate(assets):
+            if not isinstance(asset, dict):
+                continue
+            acquisition = asset.get("acquisition")
+            if isinstance(acquisition, dict) and not valid_offset(
+                acquisition.get("acquired_at")
+            ):
+                result.errors.append(
+                    f"Invalid assets[{index}].acquisition.acquired_at: expected an "
+                    "RFC 3339 timestamp with Z or an explicit offset"
+                )
+            rights = asset.get("copyright")
+            if isinstance(rights, dict):
+                for field_name in ("granted_at", "expires"):
+                    if field_name in rights and not (
+                        isinstance(rights[field_name], str)
+                        and is_full_date(rights[field_name])
+                    ):
+                        result.errors.append(
+                            f"Invalid assets[{index}].copyright.{field_name}: "
+                            "expected YYYY-MM-DD"
+                        )
+
     for block_name in ("review_carryover", "refresh_refused"):
         block = frontmatter.get(block_name)
         if isinstance(block, dict) and "at" in block and not valid_utc(block["at"]):
@@ -321,6 +348,35 @@ def validate(
         result.errors.append(
             f"Wrong schema version: {frontmatter['schema']} (expected {expected_schema})"
         )
+
+    if frontmatter.get("schema") == "anomalica/record/3":
+        try:
+            from anomalica_common.records import Record3Structure
+
+            try:
+                from record3 import validate_record3_snapshots
+            except ModuleNotFoundError:
+                from shared.record3 import validate_record3_snapshots
+
+            Record3Structure.from_frontmatter(frontmatter)
+            validate_record3_snapshots(frontmatter)
+        except (ImportError, ValueError) as exc:
+            result.errors.append(f"Invalid record/3 structure: {exc}")
+        source_types = frontmatter.get("source_types")
+        derived_source_types = []
+        for asset in assets if isinstance(assets, list) else []:
+            source_type = asset.get("source_type") if isinstance(asset, dict) else None
+            if source_type and source_type not in derived_source_types:
+                derived_source_types.append(source_type)
+        if not source_types or source_types != derived_source_types:
+            result.errors.append(
+                "Invalid source_types: expected selected Asset source types in first-use order"
+            )
+        for forbidden in ("source_hash", "archived_ext", "copyright"):
+            if forbidden in frontmatter:
+                result.errors.append(
+                    f"Invalid record/3 legacy authority projection: {forbidden}"
+                )
 
     if "document_type" in frontmatter:
         document_type = frontmatter["document_type"]

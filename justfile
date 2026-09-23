@@ -30,7 +30,7 @@ test-ebook:
     #!/usr/bin/env bash
     set -euo pipefail
     cd formats/ebook
-    cm run pytest workspace/tests/ -v
+    cm run test -v
 
 test-shared:
     #!/usr/bin/env bash
@@ -54,6 +54,10 @@ test-all:
     echo ""
     echo "=== pdf ==="
     cd formats/pdf && cm run test -v
+    cd ../..
+    echo ""
+    echo "=== ebook ==="
+    cd formats/ebook && cm run test -v
 
 download-test-corpus: download-test-corpus-pdf
 

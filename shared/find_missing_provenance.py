@@ -23,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 
 def _store() -> Path:
     override = os.environ.get("INGESTS_STORE")
@@ -42,6 +44,36 @@ def _field(fm: str, key: str) -> str | None:
     return m.group(1).strip().strip('"') if m else None
 
 
+def _record3_missing_provenance(frontmatter: dict) -> bool:
+    assets = frontmatter.get("assets")
+    if not isinstance(assets, list) or not assets:
+        return False
+    statuses = [
+        asset.get("copyright", {}).get("status")
+        for asset in assets
+        if isinstance(asset, dict) and isinstance(asset.get("copyright"), dict)
+    ]
+    if "restricted" not in statuses:
+        return False
+    provenance = frontmatter.get("provenance")
+    if isinstance(provenance, dict):
+        if provenance.get("source_url"):
+            return False
+        identifiers = provenance.get("identifiers")
+        if isinstance(identifiers, dict) and any(identifiers.values()):
+            return False
+    for asset in assets:
+        acquisition = asset.get("acquisition") if isinstance(asset, dict) else None
+        if not isinstance(acquisition, dict):
+            continue
+        if acquisition.get("fetched_url"):
+            return False
+        identifiers = acquisition.get("copy_identifiers")
+        if isinstance(identifiers, dict) and any(identifiers.values()):
+            return False
+    return True
+
+
 def find(store: Path) -> list[tuple[str, str, str]]:
     hits = []
     for path in sorted(store.glob("*.md")):
@@ -49,6 +81,30 @@ def find(store: Path) -> list[tuple[str, str, str]]:
         if name.endswith((".verification.json", ".housekeeping.json")):
             continue
         fm = _frontmatter(path.read_text())
+        try:
+            frontmatter = yaml.safe_load(fm)
+        except yaml.YAMLError:
+            frontmatter = None
+        if (
+            isinstance(frontmatter, dict)
+            and frontmatter.get("schema") == "anomalica/record/3"
+        ):
+            if not _record3_missing_provenance(frontmatter):
+                continue
+            source_types = frontmatter.get("source_types")
+            source_type = (
+                source_types[0]
+                if isinstance(source_types, list) and source_types
+                else "?"
+            )
+            hits.append(
+                (
+                    name.split(".")[0][:16],
+                    source_type,
+                    str(frontmatter.get("title") or "(no title)"),
+                )
+            )
+            continue
         if not re.search(r"(?m)^\s*status:\s*restricted\b", fm):
             continue
         if re.search(r"(?m)^source_url:", fm) or re.search(r"(?m)^source_id:", fm):

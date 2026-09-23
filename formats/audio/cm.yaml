@@ -8,6 +8,7 @@ runtime:
   volumes:
     - ../../staging:/mnt/staging:ro
     - ../../shared:/mnt/shared:ro
+    - ../../../anomalica-common/src:/opt/anomalica-common:ro
     # Source archive (raw audio + the durable raw transcript archive). The
     # complete whisperx+pyannote output is written here as {hash}.transcript.json
     # beside the audio - durable provenance, never discarded.
@@ -44,6 +45,7 @@ stages:
             - huggingface-hub<1.0.0
             - soundfile
             - pyyaml
+            - pydantic
   development:
     from: base
     steps:
@@ -64,7 +66,7 @@ commands:
         prefix: "--output-dir "
     env:
       PYTHONUNBUFFERED: "1"
-      PYTHONPATH: "/mnt/shared"
+      PYTHONPATH: "/mnt/shared:/opt/anomalica-common"
       # Point all HuggingFace downloads (Whisper CT2 weights, pyannote
       # diarisation) at the mounted persistent cache.
       HF_HOME: "/mnt/hfcache"

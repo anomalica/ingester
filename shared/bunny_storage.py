@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Push a record's archived ORIGINAL to the Bunny storage zone at archive time, and
-stamp a `storage:` pointer so consumers never guess where it lives.
+"""Push a record's archived Assets to the Bunny storage zone at archive time.
 
 The write side of the sources zone (scheduler's push-at-archive contract). Routing
 is imported from `anomalica_common.publishing.zone_for` - never re-derived - so the
-open/gated decision cannot drift from operations' backfill. The per-type "which file
-is the original" resolution is shared with the audit (`audit_sources.original_of`)
-for the same reason. Object key is `sources/{hash}.{ext}` - the key the workbench
-edge signs.
+open/gated decision cannot drift from operations' backfill. Archive resolution is
+shared with the audit (`audit_sources.archived_assets`) for the same reason. Every
+record/3 Asset has its own `sources/{asset-hash}.{ext}` object.
 
 FAIL CLOSED: unknown/missing status routes GATED (via zone_for). NON-FATAL: a push
-failure never fails the ingest - the local archive is the source of truth; the
-record is left without a `storage:` block so the audit/reconcile retries it.
+failure never fails the ingest - the local archive is the source of truth and the
+audit/reconcile retries it. Singular records retain the legacy `storage:` pointer;
+multi-Asset and snapshot-bearing records are addressed per Asset without one.
 Idempotent: LIST the zone (Bunny has no HEAD) and skip if the key is present.
 
 Usage: bunny_storage.py <record.md> [--dry-run]
@@ -32,22 +31,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from audit_sources import (  # noqa: E402  reuse resolution - no drift
     STORAGE_API,
     ZONE_ENV,
-    _bare,
-    _field,
     _fm,
     _sops,
-    _status,
+    archived_assets,
+    archived_storage_key,
     local_file,
-    original_of,
 )
 
-sys.path.insert(0, "/home/mark/repos/anomalica/anomalica-common/src")
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[2] / "anomalica-common" / "src")
+)
 from anomalica_common.publishing import OPEN_ZONE, zone_for  # noqa: E402
 
 MIME = {
     "pdf": "application/pdf",
     "epub": "application/epub+zip",
     "html": "text/html",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
     "opus": "audio/opus",
     "ogg": "audio/ogg",
     "mp3": "audio/mpeg",
@@ -105,32 +108,50 @@ def _stamp(md: Path, zone: str, key: str) -> None:
 
 
 def push_record(md: Path, dry_run: bool = False) -> str:
-    """Push the record's original if not already on Bunny; stamp `storage:`.
+    """Push every archived Asset if absent; stamp singular legacy storage.
+
+    Composite record/3 envelopes do not get a misleading singular pointer: their
+    Asset hashes and rights determine each independently addressed object.
+
     Returns one of: pushed | exists | no-original | no-cred | failed."""
     fm = _fm(md.read_text(errors="replace"))
-    content_hash = _bare(_field(fm, "content_hash"))
-    h, ext = original_of(fm)  # locates the local file (web/ebook sit under a
-    lf = local_file(h, ext)  # different hash than content_hash)
-    if lf is None:
+    resolved = []
+    for hash_, ext, status, _ in archived_assets(fm):
+        lf = local_file(hash_, ext)
+        if lf is None or hash_ is None:
+            return "no-original"
+        real_ext = lf.suffix.lstrip(".")
+        zone = zone_for(status, real_ext)
+        key = archived_storage_key(fm, hash_, real_ext)
+        if key is None:
+            return "no-original"
+        resolved.append((lf, real_ext, key, zone))
+
+    if not resolved:
         return "no-original"
-    real_ext = lf.suffix.lstrip(".")
-    # Remote key is content_hash + ext for EVERY type - the key the workbench edge
-    # signs - even where the local file's name is the single_file/source hash.
-    key = f"sources/{content_hash}.{real_ext}"
-    zone = zone_for(_status(fm), real_ext)
-    pw = _sops(ZONE_ENV[zone])
-    if not pw:
-        return "no-cred"
+    credentials = {}
+    for *_, zone in resolved:
+        if zone not in credentials:
+            credentials[zone] = _sops(ZONE_ENV[zone])
+        if not credentials[zone]:
+            return "no-cred"
     if dry_run:
         return "would-push"
-    if _zone_has(zone, key, pw):
+
+    pushed = False
+    for lf, real_ext, key, zone in resolved:
+        pw = credentials[zone]
+        if _zone_has(zone, key, pw):
+            continue
+        code = _put(zone, key, pw, lf.read_bytes(), real_ext)
+        if code not in (200, 201):
+            return f"failed({code})"
+        pushed = True
+
+    if len(resolved) == 1:
+        _, _, key, zone = resolved[0]
         _stamp(md, zone, key)
-        return "exists"
-    code = _put(zone, key, pw, lf.read_bytes(), real_ext)
-    if code in (200, 201):
-        _stamp(md, zone, key)
-        return "pushed"
-    return f"failed({code})"
+    return "pushed" if pushed else "exists"
 
 
 def main() -> int:

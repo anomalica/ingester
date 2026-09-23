@@ -44,6 +44,14 @@ COPYRIGHT_STATUSES = frozenset(
     }
 )
 IDENTITY_FIELDS = ("source_type", "source_url", "source_id")
+COPY_IDENTIFIER_PREFIXES = (
+    "youtube:",
+    "dvids:",
+    "url:",
+    "vimeo:",
+    "twitch:",
+    "archiveorg:",
+)
 
 
 class MetadataError(ValueError):
@@ -151,11 +159,27 @@ def _record_parts(path: Path) -> tuple[dict, str]:
 def _reconcile_alias(record_path: Path, by_name_dir: Path, frontmatter: dict) -> None:
     by_name_dir.mkdir(parents=True, exist_ok=True)
     variant = ".v2" if record_path.name.endswith(".v2.md") else ""
+    provenance = frontmatter.get("provenance")
+    assets = frontmatter.get("assets") or []
+    acquisition = (
+        assets[0].get("acquisition") if assets and isinstance(assets[0], dict) else None
+    )
     alias_date = (
         date_alias(
             frontmatter.get("date_published")
             or frontmatter.get("posted_date")
             or frontmatter.get("date_accessed")
+            or (
+                provenance.get("published_date")
+                if isinstance(provenance, dict)
+                else None
+            )
+            or (provenance.get("posted_date") if isinstance(provenance, dict) else None)
+            or (
+                acquisition.get("acquired_at")
+                if isinstance(acquisition, dict)
+                else None
+            )
         )
         or "undated"
     )
@@ -190,8 +214,40 @@ def merge_record(record_path: Path, metadata_path: Path, by_name_dir: Path) -> N
     """Merge trusted intake fields into one handler output and validate it."""
     metadata = load_metadata(metadata_path)
     frontmatter, body = _record_parts(record_path)
+    record3 = frontmatter.get("schema") == "anomalica/record/3"
+    provenance = frontmatter.get("provenance")
+    provenance = dict(provenance) if isinstance(provenance, dict) else {}
+    identifiers = provenance.get("identifiers")
+    identifiers = dict(identifiers) if isinstance(identifiers, dict) else {}
+    assets = frontmatter.get("assets") or []
+    primary_acquisition = (
+        assets[0].get("acquisition")
+        if len(assets) == 1 and isinstance(assets[0], dict)
+        else None
+    )
+    copy_identifiers = (
+        primary_acquisition.get("copy_identifiers")
+        if isinstance(primary_acquisition, dict)
+        else None
+    )
+    existing_identity = {
+        "source_type": frontmatter.get("source_type"),
+        "source_url": provenance.get("source_url")
+        if record3
+        else frontmatter.get("source_url"),
+        "source_id": (
+            identifiers.get("source_id")
+            or (
+                copy_identifiers.get("source_id")
+                if isinstance(copy_identifiers, dict)
+                else None
+            )
+        )
+        if record3
+        else frontmatter.get("source_id"),
+    }
     for field in IDENTITY_FIELDS:
-        existing = frontmatter.get(field)
+        existing = existing_identity[field]
         supplied = metadata.get(field)
         if existing and supplied and existing != supplied:
             raise MetadataError(
@@ -199,13 +255,89 @@ def merge_record(record_path: Path, metadata_path: Path, by_name_dir: Path) -> N
             )
 
     for field, value in metadata.items():
-        if field == "copyright":
+        if record3 and field == "copyright":
+            assets = frontmatter.get("assets")
+            if (
+                not isinstance(assets, list)
+                or len(assets) != 1
+                or not isinstance(assets[0], dict)
+            ):
+                raise MetadataError(
+                    "ordinary metadata merge requires one record/3 Asset"
+                )
+            asset = dict(assets[0])
+            existing = asset.get("copyright")
+            copyright_block = dict(existing) if isinstance(existing, dict) else {}
+            copyright_block["status"] = value["status"]
+            asset["copyright"] = copyright_block
+            frontmatter["assets"] = [asset]
+            snapshots = frontmatter.get("snapshots")
+            if snapshots is not None:
+                if not isinstance(snapshots, list):
+                    raise MetadataError("record/3 snapshots must be a list")
+                updated_snapshots = []
+                for snapshot in snapshots:
+                    if not isinstance(snapshot, dict) or not isinstance(
+                        snapshot.get("asset"), dict
+                    ):
+                        raise MetadataError(
+                            "record/3 snapshot must contain an Asset descriptor"
+                        )
+                    updated = dict(snapshot)
+                    derivative = dict(updated["asset"])
+                    derivative_rights = derivative.get("copyright")
+                    derivative_rights = (
+                        dict(derivative_rights)
+                        if isinstance(derivative_rights, dict)
+                        else {}
+                    )
+                    derivative_rights["status"] = value["status"]
+                    derivative["copyright"] = derivative_rights
+                    updated["asset"] = derivative
+                    updated_snapshots.append(updated)
+                frontmatter["snapshots"] = updated_snapshots
+        elif record3 and field in {
+            "source_url",
+            "publisher",
+            "date_published",
+            "description",
+        }:
+            target = "published_date" if field == "date_published" else field
+            provenance[target] = value
+        elif record3 and field == "source_id":
+            if value.startswith(COPY_IDENTIFIER_PREFIXES):
+                assets = frontmatter.get("assets")
+                if (
+                    not isinstance(assets, list)
+                    or len(assets) != 1
+                    or not isinstance(assets[0], dict)
+                ):
+                    raise MetadataError(
+                        "ordinary metadata merge requires one record/3 Asset"
+                    )
+                asset = dict(assets[0])
+                acquisition = asset.get("acquisition")
+                acquisition = dict(acquisition) if isinstance(acquisition, dict) else {}
+                copied = acquisition.get("copy_identifiers")
+                copied = dict(copied) if isinstance(copied, dict) else {}
+                copied["source_id"] = value
+                acquisition["copy_identifiers"] = copied
+                asset["acquisition"] = acquisition
+                frontmatter["assets"] = [asset]
+            else:
+                identifiers["source_id"] = value
+        elif field == "copyright":
             existing = frontmatter.get("copyright")
             copyright_block = dict(existing) if isinstance(existing, dict) else {}
             copyright_block["status"] = value["status"]
             frontmatter[field] = copyright_block
         else:
             frontmatter[field] = value
+    if record3:
+        if identifiers:
+            provenance["identifiers"] = identifiers
+        if provenance:
+            frontmatter["provenance"] = provenance
 
     content = (
         "---\n"

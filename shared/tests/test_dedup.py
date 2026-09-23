@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dedup import find_by_source_id, find_by_source_url
+from dedup import find_by_source_hash, find_by_source_id, find_by_source_url
 
 
 def _write_record(store: Path, hex_hash: str, **frontmatter: str) -> Path:
@@ -167,3 +167,44 @@ def test_finds_an_alias_inside_a_provenance_block(tmp_path):
     )
 
     assert find_by_source_url(store, "https://www.youtube.com/watch?v=REPOST") == path
+
+
+def test_record3_dedup_reads_whole_asset_and_nested_copy_metadata(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    asset_hash = "a" * 64
+    record = store / "record.md"
+    record.write_text(
+        "---\n"
+        "schema: anomalica/record/3\n"
+        "assets:\n"
+        f"  - asset_hash: sha256:{asset_hash}\n"
+        "    acquisition:\n"
+        '      fetched_url: "https://example.test/fetched"\n'
+        "selection:\n"
+        f"  - asset_hash: sha256:{asset_hash}\n"
+        "    selector: {type: whole}\n"
+        "provenance:\n"
+        "  identifiers: {source_id: fixture:1}\n"
+        "---\n\nbody\n"
+    )
+
+    assert find_by_source_hash(store, asset_hash) == record
+    assert find_by_source_id(store, "fixture:1") == record
+    assert find_by_source_url(store, "https://example.test/fetched") == record
+
+
+def test_record3_page_selection_does_not_block_default_whole_record(tmp_path):
+    store = tmp_path / "store"
+    store.mkdir()
+    asset_hash = "b" * 64
+    (store / "child.md").write_text(
+        "---\n"
+        "schema: anomalica/record/3\n"
+        "selection:\n"
+        f"  - asset_hash: sha256:{asset_hash}\n"
+        "    selector: {type: pdf_page, page: 1}\n"
+        "---\n\nbody\n"
+    )
+
+    assert find_by_source_hash(store, asset_hash) is None

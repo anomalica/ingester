@@ -20,7 +20,11 @@ SCHEMA = "anomalica/ingest-result/1"
 PREFIX = "ANOMALICA_INGEST_RESULT "
 HASH_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
-RECORD_SCHEMAS = {"anomalica/record/1", "anomalica/record/2"}
+RECORD_SCHEMAS = {
+    "anomalica/record/1",
+    "anomalica/record/2",
+    "anomalica/record/3",
+}
 
 
 class ResultError(RuntimeError):
@@ -90,17 +94,47 @@ def _relative_record_path(ingests_dir: Path, value: str) -> str:
     return normalised
 
 
-def _record_values(path: Path) -> tuple[str, str | None, str | None, set[str]]:
+def _record_values(path: Path) -> tuple[str, set[str], set[str], set[str]]:
     fm = _frontmatter(path.read_bytes())
     content_hash = str(fm.get("content_hash") or "")
-    source_hash = str(fm.get("source_hash") or "") or None
-    source_id = str(fm.get("source_id") or "") or None
     _validate_record_fields(fm, f"record {path.name}")
     if not HASH_RE.fullmatch(content_hash):
         raise ResultError(f"record {path.name} has no canonical content_hash")
-    if fm.get("superseded_by"):
+    if fm.get("superseded_by") or fm.get("retired_into"):
         raise ResultError(f"record {path.name} is retired")
     urls: set[str] = set()
+    asset_hashes: set[str] = set()
+    source_ids: set[str] = set()
+    if fm.get("schema") == "anomalica/record/3":
+        selection = fm.get("selection")
+        if (
+            isinstance(selection, list)
+            and len(selection) == 1
+            and isinstance(selection[0], dict)
+            and selection[0].get("selector") == {"type": "whole"}
+            and isinstance(selection[0].get("asset_hash"), str)
+        ):
+            asset_hashes.add(selection[0]["asset_hash"])
+        for asset in fm.get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            acquisition = asset.get("acquisition")
+            if isinstance(acquisition, dict):
+                fetched_url = acquisition.get("fetched_url")
+                if isinstance(fetched_url, str) and fetched_url.strip():
+                    urls.add(fetched_url.strip())
+                identifiers = acquisition.get("copy_identifiers")
+                if isinstance(identifiers, dict):
+                    source_id = identifiers.get("source_id")
+                    if isinstance(source_id, str) and source_id.strip():
+                        source_ids.add(source_id.strip())
+    else:
+        implicit = fm.get("source_hash") or fm.get("content_hash")
+        if isinstance(implicit, str):
+            asset_hashes.add(implicit)
+    source_id = fm.get("source_id")
+    if isinstance(source_id, str) and source_id.strip():
+        source_ids.add(source_id.strip())
     provenance = fm.get("provenance")
     for fields in [fm, provenance] if isinstance(provenance, dict) else [fm]:
         for key in ("source_url", "fetched_url", "also_published_at"):
@@ -108,7 +142,14 @@ def _record_values(path: Path) -> tuple[str, str | None, str | None, set[str]]:
             for item in value if isinstance(value, list) else [value]:
                 if isinstance(item, str) and item.strip():
                     urls.add(item.strip())
-    return content_hash, source_hash, source_id, urls
+    if isinstance(provenance, dict):
+        identifiers = provenance.get("identifiers")
+        source_id = (
+            identifiers.get("source_id") if isinstance(identifiers, dict) else None
+        )
+        if isinstance(source_id, str) and source_id.strip():
+            source_ids.add(source_id.strip())
+    return content_hash, asset_hashes, source_ids, urls
 
 
 def resolve_record(
@@ -122,21 +163,27 @@ def resolve_record(
     urls: dict[Path, str] = {}
     for path in sorted(store.glob("*.md")):
         try:
-            content_hash, source_hash, record_source_id, record_urls = _record_values(
+            content_hash, asset_hashes, record_source_ids, record_urls = _record_values(
                 path
             )
         except (OSError, ResultError):
             continue
-        bare_content = content_hash.removeprefix("sha256:")
-        bare_source = (source_hash or "").removeprefix("sha256:")
         relative = path.relative_to(ingests_dir).as_posix()
-        if asset_hash and asset_hash in {bare_content, bare_source}:
+        bare_assets = {value.removeprefix("sha256:") for value in asset_hashes}
+        if asset_hash and asset_hash in bare_assets:
             exact[path] = relative
-        if source_id and record_source_id == source_id:
+        if source_id and source_id in record_source_ids:
             logical[path] = relative
         if source_url and source_url in record_urls:
             urls[path] = relative
-    matches = {**exact, **logical, **urls}
+    if len(exact) == 1:
+        return next(iter(exact.values()))
+    if len(exact) > 1:
+        raise ResultError(
+            "could not resolve exactly one live record from the exact Asset hash: "
+            f"found {len(exact)}"
+        )
+    matches = {**logical, **urls}
     if len(matches) != 1:
         raise ResultError(
             "could not resolve exactly one live record from the supplied identities: "
@@ -184,6 +231,14 @@ def _verify_record(
         raise ResultError("content_hash does not match the committed record")
     if fm.get("superseded_by"):
         raise ResultError("committed record is retired")
+    if fm.get("retired_into"):
+        raise ResultError("committed record is structurally retired")
+    expected_name = committed_hash.removeprefix("sha256:") + ".md"
+    if (
+        fm.get("schema") == "anomalica/record/3"
+        and Path(record_path).name != expected_name
+    ):
+        raise ResultError("record/3 path does not match its canonical content_hash")
     working_path = ingests_dir / record_path
     if not working_path.is_file() or working_path.read_bytes() != blob:
         raise ResultError("live record does not exactly match the committed record")
@@ -193,9 +248,20 @@ def _verify_record(
 def _validate_record_fields(fm: dict, label: str) -> None:
     if fm.get("schema") not in RECORD_SCHEMAS:
         raise ResultError(f"{label} has an unsupported record schema")
-    for field in ("title", "source_type"):
-        if not isinstance(fm.get(field), str) or not fm[field].strip():
-            raise ResultError(f"{label} has no {field}")
+    if not isinstance(fm.get("title"), str) or not fm["title"].strip():
+        raise ResultError(f"{label} has no title")
+    if fm.get("schema") == "anomalica/record/3":
+        try:
+            from anomalica_common.records import Record3Structure
+
+            Record3Structure.from_frontmatter(fm)
+        except (ImportError, ValueError) as exc:
+            raise ResultError(f"{label} has invalid record/3 structure: {exc}") from exc
+        source_types = fm.get("source_types")
+        if not isinstance(source_types, list) or not source_types:
+            raise ResultError(f"{label} has no source_types")
+    elif not isinstance(fm.get("source_type"), str) or not fm["source_type"].strip():
+        raise ResultError(f"{label} has no source_type")
 
 
 def _encode(payload: dict) -> bytes:

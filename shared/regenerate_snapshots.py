@@ -9,6 +9,10 @@ operation from re-ingesting, and this tool does only the former: the body, the
 `content_hash` and every other field stay exactly as they are, so no identity
 rotates, no digest is orphaned and no review is disturbed.
 
+This legacy frontmatter editor does not write derivative Asset descriptors. It
+leaves `record/3` untouched; refresh those snapshots through ordinary
+`./ingest --force` finalisation, which hashes the new bytes and records lineage.
+
 The page is fetched LIVE, because a frozen page can only be built from a live
 page - the archived raw HTML names external stylesheets and images that no
 longer resolve offline. The re-captured snapshot is therefore the site as it
@@ -202,6 +206,8 @@ def stored_css(text: str) -> int | None:
 
 def regenerate(path: Path, write: bool, from_url: str | None = None) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
+    if re.search(r"(?m)^schema:\s*anomalica/record/3\s*$", text):
+        return "record/3 snapshots refresh through ./ingest --force - left alone"
     url = from_url or source_url(text)
     if not url:
         return "no source_url"

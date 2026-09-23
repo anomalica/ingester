@@ -16,7 +16,7 @@ ingester/
   (records land in the sibling ../ingests/ repo, not here)
     ingests/store/    - hash-named record files (source of truth)
     ingests/by-name/  - human-readable symlinks
-    ../records/       - archived original source files
+    ../../records/    - archived original Assets, named by Asset hash
   test-corpus/        - test input files (gitignored, downloaded via justfile)
   docs/
     specs/            - format handler design specifications
@@ -32,7 +32,21 @@ ingester/
 ./ingest --force https://example.com/article    # re-process even if already in store
 ```
 
-The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in the sibling `ingests/` repo: record files in `ingests/store/` (the source of truth) and a human-readable symlink in `ingests/by-name/`; the original source file is archived in `../records/`.
+The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in the sibling `ingests/` repo: record files in `ingests/store/` are named by canonical Selection identity, with human-readable symlinks in `ingests/by-name/`. Exact acquired bytes are archived as Assets in `../../records/`, named by Asset hash.
+
+### Legacy envelope migration
+
+Migrate one `anomalica/record/1` or `/2` envelope from its held Asset bytes without reacquisition:
+
+```bash
+scripts/migrate-record3.py \
+  --ingests-dir ../ingests \
+  --records-dir ../../records \
+  --record store/LEGACY-HASH.md \
+  --expected-head "$(git -C ../ingests rev-parse HEAD)"
+```
+
+The command requires a clean `ingests` worktree, verifies the held bytes and authority metadata, and publishes the migration as one compare-and-swap-bound commit. It does not call a provider. Resolve any collision or missing authority manually rather than reacquiring the source.
 
 ## Record format
 
@@ -73,6 +87,7 @@ just test-acquire     # acquisition layer
 just test-webpage     # webpage handler
 just test-audio       # audio handler
 just test-pdf         # PDF handler (runs in container)
+just test-ebook       # ebook handler (runs in container)
 just test-all         # everything
 ```
 

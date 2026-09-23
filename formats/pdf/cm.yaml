@@ -22,6 +22,7 @@ stages:
           install:
             - anthropic
             - pikepdf
+            - pydantic
             - pyyaml
             - pymupdf
             - requests

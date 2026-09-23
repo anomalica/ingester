@@ -2,8 +2,11 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 
+from anomalica_common.identity import record_identity
 from canary_guard import CanaryError, main, validate_candidate
+from pipeline_version import current_version
 
 
 HASH = "a" * 64
@@ -41,6 +44,48 @@ processing:
 {carry}---
 {body}
 """
+
+
+def _record3(generation, body="Old"):
+    asset_hash = "sha256:" + "b" * 64
+    content_hash = record_identity(
+        [{"asset_hash": asset_hash, "selector": {"type": "whole"}}]
+    )
+    frontmatter = {
+        "schema": "anomalica/record/3",
+        "content_hash": content_hash,
+        "title": "Reviewed audio",
+        "source_types": ["audio"],
+        "source_type": "audio",
+        "file_format": "opus",
+        "assets": [
+            {
+                "asset_hash": asset_hash,
+                "file_format": "opus",
+                "archived_ext": "opus",
+                "source_type": "audio",
+                "acquisition": {"acquired_at": "2026-09-23T08:00:00Z"},
+                "copyright": {"status": "public_domain"},
+            }
+        ],
+        "selection": [{"asset_hash": asset_hash, "selector": {"type": "whole"}}],
+        "processing": {
+            "handler": "audio",
+            "asset_pipeline_versions": [
+                {
+                    "asset_hash": asset_hash,
+                    "source_type": "audio",
+                    "pipeline_version": generation,
+                }
+            ],
+        },
+    }
+    return (
+        content_hash.removeprefix("sha256:"),
+        "---\n"
+        + yaml.safe_dump(frontmatter, sort_keys=False).rstrip()
+        + f"\n---\n{body}\n",
+    )
 
 
 def test_reviewed_candidate_requires_carryover_and_preserves_protected_fields():
@@ -83,6 +128,13 @@ def test_reviewed_audio_candidate_must_preserve_the_exact_body():
 
     unchanged = _record(generation=2, body="<!-- speaker: Person -->\n{{t:0.00}}A word")
     validate_candidate(parent, unchanged, content_hash=HASH, reviewed=True)
+
+
+def test_record3_candidate_uses_asset_pipeline_generation():
+    content_hash, parent = _record3(1)
+    _, candidate = _record3(current_version("audio"))
+
+    validate_candidate(parent, candidate, content_hash=content_hash, reviewed=False)
 
 
 def test_isolated_guard_accepts_or_refuses_without_touching_live_parent(

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from anomalica_common.identity import record_identity
 from record_metadata import MetadataError, load_metadata, merge_manifest, merge_record
 
 
@@ -127,3 +128,140 @@ def test_merge_record_fails_closed_on_identity_conflict(tmp_path):
         merge_record(record, metadata, tmp_path / "by-name")
 
     assert "DOW-UAP-DIFFERENT" in record.read_text()
+
+
+def test_merge_record3_places_metadata_in_authoritative_nested_blocks(tmp_path):
+    asset_hash = "sha256:" + "b" * 64
+    content_hash = record_identity(
+        [{"asset_hash": asset_hash, "selector": {"type": "whole"}}]
+    )
+    frontmatter = {
+        "schema": "anomalica/record/3",
+        "content_hash": content_hash,
+        "title": "Handler title",
+        "source_types": ["pdf"],
+        "source_type": "pdf",
+        "file_format": "pdf",
+        "assets": [
+            {
+                "asset_hash": asset_hash,
+                "file_format": "pdf",
+                "archived_ext": "pdf",
+                "source_type": "pdf",
+                "pages": 1,
+                "acquisition": {"acquired_at": "2026-09-22T09:00:00Z"},
+                "copyright": {"status": "restricted", "detail": "preserved"},
+            }
+        ],
+        "selection": [{"asset_hash": asset_hash, "selector": {"type": "whole"}}],
+        "page_map": [
+            {
+                "record_page": 1,
+                "asset_hash": asset_hash,
+                "asset_file_page": 1,
+            }
+        ],
+        "snapshots": [
+            {
+                "role": "page_render",
+                "asset": {
+                    "asset_hash": "sha256:" + "c" * 64,
+                    "file_format": "pdf",
+                    "archived_ext": "pdf",
+                    "source_type": "pdf",
+                    "pages": 1,
+                    "acquisition": {"acquired_at": "2026-09-22T09:00:00Z"},
+                    "copyright": {"status": "restricted", "detail": "snapshot"},
+                    "derived_from": {
+                        "asset_hash": asset_hash,
+                        "transform": "chromium-page-render-v1",
+                    },
+                },
+            }
+        ],
+    }
+    store = tmp_path / "store"
+    store.mkdir()
+    record = store / f"{content_hash.removeprefix('sha256:')}.md"
+    record.write_text(
+        "---\n"
+        + yaml.safe_dump(frontmatter, sort_keys=False).strip()
+        + "\n---\n<!-- file_page: 1 -->\nBody.\n"
+    )
+    metadata = _metadata(
+        tmp_path / "metadata.json",
+        title="Official title",
+        source_type="pdf",
+        source_url="https://example.test/report.pdf",
+        source_id="DOW-UAP-D102",
+        publisher="Department of War",
+        date_published="2026-09-18",
+        description="Verbatim description.",
+        copyright={"status": "public_domain"},
+    )
+
+    merge_record(record, metadata, tmp_path / "by-name")
+
+    merged = yaml.safe_load(record.read_text().split("---", 2)[1])
+    assert merged["provenance"] == {
+        "source_url": "https://example.test/report.pdf",
+        "identifiers": {"source_id": "DOW-UAP-D102"},
+        "publisher": "Department of War",
+        "published_date": "2026-09-18",
+        "description": "Verbatim description.",
+    }
+    assert merged["assets"][0]["copyright"] == {
+        "status": "public_domain",
+        "detail": "preserved",
+    }
+    assert merged["snapshots"][0]["asset"]["copyright"] == {
+        "status": "public_domain",
+        "detail": "snapshot",
+    }
+    assert "copyright" not in merged
+
+
+def test_merge_record3_keeps_known_copy_id_on_asset(tmp_path):
+    asset_hash = "sha256:" + "b" * 64
+    content_hash = record_identity(
+        [{"asset_hash": asset_hash, "selector": {"type": "whole"}}]
+    )
+    frontmatter = {
+        "schema": "anomalica/record/3",
+        "content_hash": content_hash,
+        "title": "Fixture",
+        "source_types": ["audio"],
+        "source_type": "audio",
+        "file_format": "opus",
+        "assets": [
+            {
+                "asset_hash": asset_hash,
+                "file_format": "opus",
+                "archived_ext": "opus",
+                "source_type": "audio",
+                "acquisition": {
+                    "acquired_at": "2026-09-22T09:00:00Z",
+                    "copy_identifiers": {"source_id": "youtube:fixture"},
+                },
+                "copyright": {"status": "publicly_accessible"},
+            }
+        ],
+        "selection": [{"asset_hash": asset_hash, "selector": {"type": "whole"}}],
+    }
+    store = tmp_path / "store"
+    store.mkdir()
+    record = store / f"{content_hash.removeprefix('sha256:')}.md"
+    record.write_text(
+        "---\n"
+        + yaml.safe_dump(frontmatter, sort_keys=False).strip()
+        + "\n---\nBody.\n"
+    )
+    metadata = _metadata(tmp_path / "metadata.json", source_id="youtube:fixture")
+
+    merge_record(record, metadata, tmp_path / "by-name")
+
+    merged = yaml.safe_load(record.read_text().split("---", 2)[1])
+    assert merged["assets"][0]["acquisition"]["copy_identifiers"] == {
+        "source_id": "youtube:fixture"
+    }
+    assert "provenance" not in merged

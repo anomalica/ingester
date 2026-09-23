@@ -6,9 +6,12 @@ that doesn't already have one. Reads the record's body directly - does not
 re-run any format-specific extraction (so safe to run without API keys, GPU,
 or container builds).
 
-The source file (for sha256 + size) is looked up in the sources/ directory by
-content_hash field in the record's frontmatter. Records without an archived
-source still get a sidecar with cloze challenges only.
+The source file (for SHA-256 + size) is resolved through the record's Asset
+binding: `assets[0]` for an ordinary record/3, otherwise the legacy implicit
+Asset rule (`source_hash` when present, else `content_hash`). Legacy records
+without an archived source still get cloze-only sidecars. A composite record/3
+fails closed because the legacy sidecar shape cannot prove possession of several
+independently governed Assets.
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ import argparse
 import re
 import sys
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "shared"))
 
@@ -32,21 +37,55 @@ def _frontmatter(record: str) -> dict:
     m = FRONTMATTER_RE.match(record)
     if not m:
         return {}
-    fm: dict = {}
-    for line in m.group(1).splitlines():
-        if ":" not in line or line.startswith(" "):
-            continue
-        key, _, value = line.partition(":")
-        fm[key.strip()] = value.strip().strip('"')
-    return fm
+    try:
+        value = yaml.safe_load(m.group(1))
+    except yaml.YAMLError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
-def _find_record(records_dir: Path, content_hash: str | None) -> Path | None:
-    if not content_hash:
+def _find_record(
+    records_dir: Path, asset_hash: str | None, archived_ext: str | None = None
+) -> Path | None:
+    if not asset_hash:
         return None
-    bare = content_hash.removeprefix("sha256:")
-    matches = list(records_dir.glob(f"{bare}.*"))
-    return matches[0] if matches else None
+    bare = asset_hash.removeprefix("sha256:")
+    if archived_ext:
+        expected = records_dir / f"{bare}.{archived_ext}"
+        if expected.is_file():
+            return expected
+    matches = sorted(
+        path
+        for path in records_dir.glob(f"{bare}.*")
+        if path.is_file() and path.stem == bare
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+def _archive_binding(fm: dict) -> tuple[str | None, str | None, int | None]:
+    if fm.get("schema") == "anomalica/record/3":
+        assets = fm.get("assets")
+        if (
+            not isinstance(assets, list)
+            or len(assets) != 1
+            or not isinstance(assets[0], dict)
+        ):
+            raise ValueError(
+                "record/3 sidecar backfill requires exactly one selected Asset"
+            )
+        asset = assets[0]
+        pages = asset.get("pages")
+        return (
+            asset.get("asset_hash"),
+            asset.get("archived_ext"),
+            pages if isinstance(pages, int) and not isinstance(pages, bool) else None,
+        )
+    pages = fm.get("pages")
+    return (
+        fm.get("source_hash") or fm.get("content_hash"),
+        fm.get("archived_ext"),
+        pages if isinstance(pages, int) and not isinstance(pages, bool) else None,
+    )
 
 
 def _page_count_from_record(record: str) -> int | None:
@@ -94,11 +133,14 @@ def backfill(ingests_dir: Path, records_dir: Path, force: bool) -> int:
                 continue
 
             fm = _frontmatter(record)
-            source_path = _find_record(records_dir, fm.get("content_hash"))
+            asset_hash, archived_ext, page_count = _archive_binding(fm)
+            source_path = _find_record(records_dir, asset_hash, archived_ext)
+            if fm.get("schema") == "anomalica/record/3" and source_path is None:
+                raise ValueError("record/3 held Asset is missing or ambiguous")
             sidecar = build_sidecar(
                 record,
                 source_path=source_path,
-                page_count=_page_count_from_record(record),
+                page_count=page_count or _page_count_from_record(record),
                 duration_seconds=_duration_from_record(record),
             )
             write_sidecar(store_dir, hex_hash, sidecar)

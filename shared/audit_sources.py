@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Audit that every record's archived ORIGINAL is present - locally and (optionally)
+"""Audit that every record's archived Assets are present locally and, optionally,
 in the Bunny storage zones. The blind-spot guard for source preservation.
 
-Walks `ingests/store` RECURSIVELY (top level AND store/v1/) and reports the record
-count it covered, so a future sweep that silently misses a third of the corpus -
-as a non-recursive glob of store/*.md does - announces itself instead of reporting
-success. A record is anything carrying a `content_hash`; intake stubs (no hash) key
-to nothing and are counted separately, never as covered records.
+Walks the live `ingests/store` roots (top level and historical `store/v1/`) and
+reports the record count it covered, while excluding retired
+`store/legacy-identities/` audit history. A record is anything carrying a
+`content_hash`; intake stubs (no hash) key to nothing and are counted separately.
 
 Local check uses the workbench's own rule: the served file's stem is exactly the
 hash (a `{hash}.transcript.json` sidecar does NOT count). The remote check lists
@@ -30,6 +29,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2] / "anomalica"
 if not (ROOT / "ingests").exists():  # fallback: sibling layout
     ROOT = Path("/home/mark/repos/anomalica")
@@ -37,9 +38,9 @@ STORE = ROOT / "ingests" / "store"
 RECORDS = ROOT / "records"
 
 sys.path.insert(
-    0, str(Path(__file__).resolve().parents[1] / "anomalica-common" / "src")
+    0, str(Path(__file__).resolve().parents[2] / "anomalica-common" / "src")
 )
-sys.path.insert(0, "/home/mark/repos/anomalica/anomalica-common/src")
+sys.path.insert(0, "/home/mark/repos/anomalica/product/anomalica-common/src")
 from anomalica_common.publishing import zone_for  # noqa: E402
 
 MEDIA_EXT = (".opus", ".ogg", ".mp3", ".m4a", ".webm", ".mp4")
@@ -67,6 +68,12 @@ def _bare(v: str | None) -> str | None:
 
 
 def _status(fm: str) -> str | None:
+    primary = _record3_primary(fm)
+    if primary is not None:
+        rights = primary.get("copyright")
+        return rights.get("status") if isinstance(rights, dict) else None
+    if _record3_assets(fm) is not None:
+        return None
     m = re.search(r"^copyright:\s*\n\s*status:\s*(\S+)", fm, re.M)
     return m.group(1) if m else None
 
@@ -76,16 +83,42 @@ def _single_file_hash(fm: str) -> str | None:
     return m.group(1) if m else None
 
 
-def original_of(fm: str):
-    """(hash, ext) of the record's archived original, matching operations'
-    resolve_original: pdf/audio/video keyed by content_hash; ebook by
-    content_hash|source_hash; web by its single_file snapshot, falling back to
-    the raw fetch.
+def _record3_assets(fm: str) -> list[dict] | None:
+    try:
+        value = yaml.safe_load(fm)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(value, dict) or value.get("schema") != "anomalica/record/3":
+        return None
+    assets = value.get("assets")
+    if not isinstance(assets, list) or any(
+        not isinstance(asset, dict) for asset in assets
+    ):
+        return []
+    return assets
 
-    The web fallback matters: a record ingested before frozen-page snapshots
-    existed has no single_file entry, and keying it by one reports the original
-    as missing when the raw fetch is sitting on disk under source_hash. Two
-    records read as lost that way."""
+
+def _record3_primary(fm: str) -> dict | None:
+    assets = _record3_assets(fm)
+    return assets[0] if assets is not None and len(assets) == 1 else None
+
+
+def original_of(fm: str):
+    """Return the one archived original usable by the legacy storage pointer.
+
+    A composite record/3 deliberately has no singular original or synthetic
+    Record-hash object, so this returns ``(None, None)`` for composites. The web
+    fallback matters for legacy records: pre-snapshot records retain only the raw
+    fetch under ``source_hash``.
+    """
+    primary = _record3_primary(fm)
+    if primary is not None:
+        return (
+            _bare(primary.get("asset_hash")),
+            primary.get("archived_ext"),
+        )
+    if _record3_assets(fm) is not None:
+        return (None, None)
     st = _field(fm, "source_type")
     ch = _bare(_field(fm, "content_hash"))
     sh = _bare(_field(fm, "source_hash"))
@@ -98,6 +131,77 @@ def original_of(fm: str):
     if st == "web":
         return (_single_file_hash(fm) or sh, "html")
     return (ch, _field(fm, "archived_ext"))
+
+
+def storage_key(fm: str, real_ext: str) -> str | None:
+    """Canonical remote key: Asset identity for /3, legacy Record key otherwise."""
+    primary = _record3_primary(fm)
+    if _record3_assets(fm) is not None and primary is None:
+        return None
+    identity = (
+        _bare(primary.get("asset_hash"))
+        if primary is not None
+        else _bare(_field(fm, "content_hash"))
+    )
+    return f"sources/{identity}.{real_ext}" if identity else None
+
+
+def archived_storage_key(fm: str, asset_hash: str | None, real_ext: str) -> str | None:
+    """Remote key for one resolved archive binding across schema generations."""
+    if _record3_assets(fm) is not None:
+        return f"sources/{asset_hash}.{real_ext}" if asset_hash else None
+    return storage_key(fm, real_ext)
+
+
+def archived_assets(
+    fm: str,
+) -> list[tuple[str | None, str | None, str | None, str | None]]:
+    """Every authoritative archive binding as ``(hash, ext, rights, type)``."""
+    assets = _record3_assets(fm)
+    if assets is not None:
+        if not assets:
+            return [(None, None, None, None)]
+        result = []
+        for asset in assets:
+            rights = asset.get("copyright")
+            result.append(
+                (
+                    _bare(asset.get("asset_hash")),
+                    asset.get("archived_ext"),
+                    rights.get("status") if isinstance(rights, dict) else None,
+                    asset.get("source_type"),
+                )
+            )
+        try:
+            frontmatter = yaml.safe_load(fm)
+        except yaml.YAMLError:
+            frontmatter = {}
+        snapshots = (
+            frontmatter.get("snapshots") if isinstance(frontmatter, dict) else None
+        )
+        if snapshots is not None:
+            if not isinstance(snapshots, list):
+                result.append((None, None, None, None))
+            else:
+                for snapshot in snapshots:
+                    derivative = (
+                        snapshot.get("asset") if isinstance(snapshot, dict) else None
+                    )
+                    if not isinstance(derivative, dict):
+                        result.append((None, None, None, None))
+                        continue
+                    rights = derivative.get("copyright")
+                    result.append(
+                        (
+                            _bare(derivative.get("asset_hash")),
+                            derivative.get("archived_ext"),
+                            rights.get("status") if isinstance(rights, dict) else None,
+                            derivative.get("source_type"),
+                        )
+                    )
+        return result
+    hash_, ext = original_of(fm)
+    return [(hash_, ext, _status(fm), _field(fm, "source_type"))]
 
 
 def local_file(hash_: str | None, ext: str | None) -> Path | None:
@@ -155,7 +259,11 @@ def main() -> int:
     ap.add_argument("--bunny", action="store_true", help="also check the Bunny zones")
     args = ap.parse_args()
 
-    files = sorted(STORE.rglob("*.md"))
+    files = sorted(
+        path
+        for path in STORE.rglob("*.md")
+        if "legacy-identities" not in path.relative_to(STORE).parts
+    )
     records = 0
     stubs = 0
     local_missing = []
@@ -165,12 +273,10 @@ def main() -> int:
             stubs += 1  # intake stub: keys to nothing
             continue
         records += 1
-        h, ext = original_of(fm)
-        lf = local_file(h, ext)
-        if lf is None:
-            local_missing.append(
-                (f.relative_to(STORE), _field(fm, "source_type"), _status(fm), h)
-            )
+        for h, ext, status, source_type in archived_assets(fm):
+            lf = local_file(h, ext)
+            if lf is None:
+                local_missing.append((f.relative_to(STORE), source_type, status, h))
 
     zone_keys = {}
     bunny_missing = []
@@ -182,20 +288,17 @@ def main() -> int:
             content_hash = _bare(_field(fm, "content_hash"))
             if not content_hash:
                 continue
-            h, ext = original_of(fm)
-            lf = local_file(h, ext)
-            if lf is None:
-                continue
-            # The remote key is content_hash + ext for EVERY type - the key the
-            # workbench edge signs - even though the local FILE for web/ebook sits
-            # under a different hash (single_file hash / source_hash). Keying the
-            # remote lookup on the local hash false-alarms "not backed up" on
-            # exactly web and ebook, in the dangerous direction.
-            real_ext = lf.suffix.lstrip(".")
-            key = f"sources/{content_hash}.{real_ext}"
-            zone = zone_for(_status(fm), real_ext)
-            if key not in zone_keys.get(zone, set()):
-                bunny_missing.append((f.relative_to(STORE), zone, key))
+            for h, ext, status, _ in archived_assets(fm):
+                lf = local_file(h, ext)
+                if lf is None or not h:
+                    continue
+                real_ext = lf.suffix.lstrip(".")
+                key = archived_storage_key(fm, h, real_ext)
+                if key is None:
+                    continue
+                zone = zone_for(status, real_ext)
+                if key not in zone_keys.get(zone, set()):
+                    bunny_missing.append((f.relative_to(STORE), zone, key))
 
     print(f"store files:        {len(files)}")
     print(f"records (content_hash): {records}")
