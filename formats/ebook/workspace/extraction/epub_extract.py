@@ -733,31 +733,23 @@ def _expand_page_tokens(md: str) -> str:
     return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
 
 
-def _collect_kindle_positions(body) -> list[tuple[str, str | None]]:
-    """Put a durable token immediately before each Kindle-positioned paragraph."""
-    annotations: list[tuple[str, str | None]] = []
+def _collect_kindle_positions(body) -> list[str]:
+    """Put a durable token at the start of each Kindle-positioned paragraph."""
+    positions: list[str] = []
     for paragraph in body.find_all("p"):
         position = (paragraph.get("data-kindle-position") or "").strip()
         if not position.isdigit():
             continue
-        raw_element_id = (paragraph.get("data-kindle-element-id") or "").strip()
-        element_id = raw_element_id if raw_element_id.isdigit() else None
-        index = len(annotations)
-        annotations.append((position, element_id))
-        paragraph.insert_before(
-            f"\n\n{KINDLE_TOKEN_PREFIX}{index}{KINDLE_TOKEN_SUFFIX}\n\n"
-        )
-    return annotations
+        index = len(positions)
+        positions.append(position)
+        paragraph.insert(0, f"{KINDLE_TOKEN_PREFIX}{index}{KINDLE_TOKEN_SUFFIX}")
+    return positions
 
 
-def _expand_kindle_tokens(md: str, annotations: list[tuple[str, str | None]]) -> str:
+def _expand_kindle_tokens(md: str, positions: list[str]) -> str:
     def replace(match: re.Match) -> str:
-        position, element_id = annotations[int(match.group(1))]
-        lines = ["<!--", f"kindle_position: {position}"]
-        if element_id is not None:
-            lines.append(f"element_id: {element_id}")
-        lines.append("-->")
-        return "\n".join(lines)
+        position = positions[int(match.group(1))]
+        return f"{{{{_kindle_position: {position}}}}}"
 
     return KINDLE_TOKEN_RE.sub(replace, md)
 

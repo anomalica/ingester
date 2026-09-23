@@ -51,7 +51,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # six chapters of one book on a failed lookup).
     # v6: retain a print-page anchor nested inside a discarded chapter-number
     # heading, and identify distinct sequences when page labels repeat.
-    "ebook": 6,
+    # v7: write Kindle source positions as hidden inline point markers and omit
+    # renderer element ids, which remain available in the archived EPUB.
+    "ebook": 7,
     # v2: a transcription segment is split where its own words change speaker,
     # so an interjection is no longer attributed to whoever was talking around
     # it (misattributed words 4.75% -> 3.88% over three reviewed interviews).

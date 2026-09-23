@@ -114,7 +114,7 @@ def test_expand_page_tokens_roman_and_index_labels():
     )
 
 
-def test_collect_and_expand_kindle_position_with_element_id():
+def test_collect_and_expand_kindle_position_ignores_element_id():
     body = _body(
         '<body><p data-kindle-position="2147" data-kindle-element-id="392">'
         "Positioned text.</p></body>"
@@ -123,22 +123,18 @@ def test_collect_and_expand_kindle_position_with_element_id():
     annotations = _collect_kindle_positions(body)
 
     token = f"{KINDLE_TOKEN_PREFIX}0{KINDLE_TOKEN_SUFFIX}"
-    assert annotations == [("2147", "392")]
+    assert annotations == ["2147"]
     assert token in str(body)
     assert str(body).index(token) < str(body).index("Positioned text.")
-    assert _expand_kindle_tokens(token, annotations) == (
-        "<!--\nkindle_position: 2147\nelement_id: 392\n-->"
-    )
+    assert _expand_kindle_tokens(token, annotations) == "{{_kindle_position: 2147}}"
 
 
-def test_kindle_position_omits_unavailable_element_id():
+def test_kindle_position_does_not_require_element_id():
     body = _body('<body><p data-kindle-position="89">Text.</p></body>')
     annotations = _collect_kindle_positions(body)
 
     token = f"{KINDLE_TOKEN_PREFIX}0{KINDLE_TOKEN_SUFFIX}"
-    assert _expand_kindle_tokens(token, annotations) == (
-        "<!--\nkindle_position: 89\n-->"
-    )
+    assert _expand_kindle_tokens(token, annotations) == "{{_kindle_position: 89}}"
 
 
 def test_kindle_position_rejects_non_numeric_attributes():
@@ -398,10 +394,8 @@ def test_extract_book_title_survives_the_chapter_loop(tmp_path):
     numbered = [c for c in book.chapters if c.number]
     assert numbered and numbered[0].number == "1"
     assert "<!-- printed_page: 7 -->" in numbered[0].markdown
-    assert (
-        "<!--\nkindle_position: 2147\nelement_id: 392\n-->\n\nBody one."
-        in numbered[0].markdown
-    )
+    assert "{{_kindle_position: 2147}}Body one." in numbered[0].markdown
+    assert "element_id" not in numbered[0].markdown
 
 
 # --- drop-cap rejoin -----------------------------------------------------------
