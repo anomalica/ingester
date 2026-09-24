@@ -32,6 +32,7 @@ from anomalica_common.pre_digest import (
     prepare_page_record,
     store_source_map,
 )
+from anomalica_common.repository_privacy import newly_unsafe
 from anomalica_common.records import (
     AssetDescriptor,
     PageMapEntry,
@@ -623,6 +624,10 @@ def build_default_record3(
     except ValidationError as exc:
         raise Record3Error(f"invalid record/3 structure: {exc}") from exc
     validate_record3_snapshots(result)
+    if fields := newly_unsafe(result):
+        raise Record3Error(
+            "local machine location in record metadata: " + ", ".join(fields)
+        )
     return result, _record_text(result, body)
 
 
@@ -803,6 +808,11 @@ def finalise_handler_record(
             staging_dir=manifest_path.parent,
         )
         asset_hash = frontmatter["assets"][0]["asset_hash"]
+
+    if fields := newly_unsafe(frontmatter, document.frontmatter):
+        raise Record3Error(
+            "local machine location in record metadata: " + ", ".join(fields)
+        )
 
     content_hash = frontmatter["content_hash"]
     bare = content_hash.removeprefix("sha256:")

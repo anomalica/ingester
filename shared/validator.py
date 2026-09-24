@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 
 import yaml
+from anomalica_common.repository_privacy import newly_unsafe
 
 try:
     from dates import (
@@ -159,6 +160,9 @@ def validate(
     if not isinstance(frontmatter, dict):
         result.errors.append("Frontmatter YAML is not a mapping")
         return result
+
+    for field_path in newly_unsafe(frontmatter):
+        result.errors.append(f"Local machine location in frontmatter: {field_path}")
 
     def valid_published(value: object) -> bool:
         if isinstance(value, str) and is_evidenced_date(value):

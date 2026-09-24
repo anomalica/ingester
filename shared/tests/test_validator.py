@@ -124,6 +124,27 @@ Body.
     assert not any("Body-annotation" in e for e in validate(clean).errors)
 
 
+def test_local_machine_location_in_frontmatter_is_rejected_without_echoing_value():
+    local_url = "file:///home/reviewer/inbox/report.pdf"
+    record = VALID_RECORD.replace("https://example.com", local_url)
+
+    errors = validate(record).errors
+
+    assert "Local machine location in frontmatter: source_url" in errors
+    assert all(local_url not in error for error in errors)
+
+
+def test_local_machine_location_in_source_body_remains_evidence():
+    record = VALID_RECORD.replace(
+        "Article content here.",
+        "The source quotes file:///home/reviewer/inbox/report.pdf as evidence.",
+    )
+
+    assert not any(
+        "Local machine location" in error for error in validate(record).errors
+    )
+
+
 def test_missing_frontmatter():
     result = validate("No frontmatter here")
     assert any("No YAML frontmatter" in e for e in result.errors)

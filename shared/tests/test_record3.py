@@ -142,6 +142,20 @@ def test_local_manifest_path_becomes_filename_not_asset_provenance(tmp_path):
     assert "/home/reviewer" not in content
 
 
+def test_rejects_home_path_in_canonical_provenance(tmp_path):
+    asset = tmp_path / "asset.pdf"
+    asset.write_bytes(b"%PDF-1.7")
+    path = tmp_path / "record.md"
+    path.write_text(
+        _legacy(_sha(asset.read_bytes())).replace(
+            "https://example.test/work", "file:///home/reviewer/inbox/lecture.pdf"
+        )
+    )
+    document = read_record(path)
+    with pytest.raises(Record3Error, match="provenance.source_url"):
+        build_default_record3(document.frontmatter, document.body, asset, None)
+
+
 def test_legacy_yaml_timestamp_is_normalised_to_rfc3339(tmp_path):
     asset = tmp_path / "asset.html"
     asset.write_bytes(b"held web bytes")
