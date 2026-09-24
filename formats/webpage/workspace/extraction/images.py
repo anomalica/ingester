@@ -515,10 +515,12 @@ def render_images(
 
         # Fold the printed caption into the annotation. Look past blank lines to
         # the next content line and consume it when it is the caption: either a
-        # whole-line italic (the caption when the image has no figcaption), or a
+        # whole-line italic (the caption when the image has no figcaption), a
         # line (italic or plain) that duplicates the figcaption we already have
         # - trafilatura emits the figcaption as body prose too, which would
-        # otherwise leave the caption in both places.
+        # otherwise leave the caption in both places - or a plain line that
+        # copies the img alt (Daily Mail prints the figure caption as plain
+        # prose and the alt mirrors it).
         next_i = i + 1
         while next_i < len(lines) and not lines[next_i].strip():
             next_i += 1
@@ -532,6 +534,9 @@ def render_images(
                 consume_to = next_i  # duplicate of the figcaption - drop from prose
             elif cap_match and not caption:
                 caption = candidate  # trailing italic line is the caption
+                consume_to = next_i
+            elif not caption and alt and _norm(candidate) == _norm(alt):
+                caption = candidate  # plain prose copying the alt is the caption
                 consume_to = next_i
 
         mi = resolve(url)
@@ -560,17 +565,23 @@ def render_images(
             continue
         # The caption trafilatura kept as loose prose right where the image goes
         # moves into the annotation, as it does for an image trafilatura emitted.
-        if img.caption:
-            nxt = at
-            while nxt < len(output) and not output[nxt].strip():
-                nxt += 1
-            if nxt < len(output) and _norm(
-                _ITALIC_LINE_RE.sub(r"\1", output[nxt]).strip()
-            ) == _norm(img.caption):
+        # That includes a plain line copying the alt (the Daily Mail pattern).
+        img_caption = img.caption
+        nxt = at
+        while nxt < len(output) and not output[nxt].strip():
+            nxt += 1
+        if nxt < len(output):
+            candidate = _ITALIC_LINE_RE.sub(r"\1", output[nxt]).strip()
+            if img_caption and _norm(candidate) == _norm(img_caption):
                 del output[at : nxt + 1]
                 while at < len(output) and not output[at].strip():
                     del output[at]
-        output[at:at] = [_format_image_annotation(file, img.alt, img.caption), ""]
+            elif not img_caption and img.alt and _norm(candidate) == _norm(img.alt):
+                img_caption = candidate
+                del output[at : nxt + 1]
+                while at < len(output) and not output[at].strip():
+                    del output[at]
+        output[at:at] = [_format_image_annotation(file, img.alt, img_caption), ""]
         emitted_urls.add(img.url)
 
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(output)).strip() + "\n"

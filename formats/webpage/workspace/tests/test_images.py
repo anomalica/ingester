@@ -96,6 +96,36 @@ def test_plain_line_not_matching_caption_is_kept_as_prose():
     assert "This is a real paragraph, not the caption." in text
 
 
+def test_plain_caption_duplicating_alt_is_folded_into_the_annotation():
+    # Daily Mail prints the figure caption as plain prose and the img alt
+    # mirrors it. It is the source's printed caption and must fold into the
+    # annotation so the pre-digest strips it before extraction.
+    cap = (
+        "Eric Taber - a defense aerospace contractor for 13 years - "
+        "told DailyMail.com of an egg-shaped metallic UFO kept at Area 51"
+    )
+    md = f"![{cap}]({IMG})\n\n{cap}\n\nReal article prose continues here."
+    harvested = [HarvestedImage(url=IMG, alt=cap, caption=None)]
+    text, _ = render_images(md, harvested, fetch=_ok_fetch())
+    body_no_annot = re.sub(r"<!--\nimage:.*?-->", "", text, flags=re.DOTALL)
+    assert "Eric Taber - a defense" not in body_no_annot  # not loose in prose
+    assert f'  caption: "{cap}"' in text  # in the annotation
+    assert f'  alt: "{cap}"' in text  # alt preserved
+    assert "Real article prose continues here." in text
+
+
+def test_plain_line_matching_alt_still_kept_when_a_figcaption_exists():
+    # a figcaption already owns the caption; a different line that happens to
+    # match the alt is prose and stays (the alt can echo earlier wording).
+    md = f"![the alt]({IMG})\n\nthe alt\n\nReal prose after."
+    harvested = [HarvestedImage(url=IMG, alt="the alt", caption="The real caption")]
+    text, _ = render_images(md, harvested, fetch=_ok_fetch())
+    body_no_annot = re.sub(r"<!--\nimage:.*?-->", "", text, flags=re.DOTALL)
+    assert "the alt" in body_no_annot  # stays as prose
+    assert '  caption: "The real caption"' in text
+    assert "Real prose after." in text
+
+
 def test_figcaption_caption_wins_over_trailing_italic():
     md = f"![]({IMG})\n\n*loose italic that should be ignored*"
     harvested = [HarvestedImage(url=IMG, alt=None, caption="Figcaption caption")]
