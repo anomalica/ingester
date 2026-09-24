@@ -42,6 +42,13 @@ CHROME_XPATHS = [
     '//*[contains(@class, "recirc")]',
     '//*[contains(@class, "recommended-stories")]',
     "//*[@data-mrf-recirculation]",
+    # Daily Mail's article page puts these outside its articleBody, but
+    # trafilatura has read the video carousel as the article's final section
+    # and image harvesting has mistaken its navigation for lead pictures.
+    '//*[@id="most-watched-videos"]',
+    '//*[@id="mini-carousel-wrapper"]',
+    '//*[contains(@class, "desktopNavBarContainerStyle")]',
+    '//li[.//a[contains(@href, "google.com/preferences/source")]]',
 ]
 
 

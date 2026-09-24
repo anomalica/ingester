@@ -140,6 +140,33 @@ def test_acquire_rejects_pmc_pdf_interstitial(tmp_path):
     assert not list(tmp_path.glob("asset.*"))
 
 
+def test_acquire_rejects_access_denied_html_even_when_it_is_large(tmp_path):
+    denied = (
+        b"<html><title>Access Denied</title><body>"
+        b"You don't have permission to access this article. "
+        b"https://errors.edgesuite.net/18.example</body></html>"
+    ) * 20
+    with patch("acquire.FETCHERS", [("patchright", lambda url: (denied, "text/html"))]):
+        assert acquire("https://example.test/article", tmp_path) == 1
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert "access-denied" in manifest["error"]
+    assert not list(tmp_path.glob("asset.*"))
+
+
+def test_acquire_does_not_override_a_real_archive_with_live_denial(tmp_path):
+    archived = b"<html><body>Actual article about an egg-shaped UFO.</body></html>" * 40
+    denied = (
+        b"<html><title>Access Denied</title><body>You don't have permission to access "
+        b"this article. https://errors.edgesuite.net/18.example</body></html>"
+    ) * 20
+    with (
+        patch("acquire.FETCHERS", [("wayback", lambda url: (archived, "text/html"))]),
+        patch("fetch.patchright_fetch.fetch", lambda url: (denied, "text/html", {})),
+    ):
+        assert acquire("https://example.test/article", tmp_path) == 0
+    assert (tmp_path / "asset.html").read_bytes() == archived
+
+
 def test_acquire_rejects_html_for_pdf_url_without_known_markers(tmp_path):
     html = b"<html><body>Generic download error</body></html>" * 100
     with _patch_fetchers(http_result=(html, "text/html")):

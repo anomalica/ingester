@@ -134,6 +134,14 @@ def _html_rejection_reason(url: str, content: bytes, detected_type: str) -> str 
     )
     if html_type is None:
         return None
+    lower = content.lower()
+    # Akamai can return an HTTP 200 with a full browser-rendered denial page.
+    # Its length and HTML MIME type pass the ordinary acquisition checks, and
+    # trafilatura turns it into a plausible (but empty) article record.
+    if b"errors.edgesuite.net/" in lower and b"permission to access" in lower:
+        return "Akamai access-denied page"
+    if b"<title>access denied</title>" in lower and b"permission to access" in lower:
+        return "access-denied page"
     if all(marker in content for marker in _PMC_DOWNLOAD_INTERSTITIAL_MARKERS):
         return "PMC download proof-of-work interstitial"
     expected_type = detect_from_extension(urlparse(url).path)
@@ -282,14 +290,33 @@ def acquire(url: str, staging_dir: Path) -> int:
                         file=sys.stderr,
                     )
                 else:
-                    if pr_metadata and pr_metadata.get("snapshots"):
+                    live_rejection = (
+                        _html_rejection_reason(
+                            url,
+                            pr_content,
+                            detect(data=pr_content, content_type_header=pr_ctype),
+                        )
+                        if pr_content
+                        else None
+                    )
+                    if live_rejection:
+                        print(
+                            f"  live original rejected ({live_rejection}) - keeping archived copy",
+                            file=sys.stderr,
+                        )
+                    elif pr_metadata and pr_metadata.get("snapshots"):
                         snapshots_from_fetcher = pr_metadata["snapshots"]
                     # Prefer the live capture as the asset when it returned usable
                     # HTML - it carries the full page, not the archived paywalled
                     # copy. Falls back to the archived asset when the live fetch is
                     # blocked or empty.
                     pr_is_html = (pr_ctype or "").startswith("text/html")
-                    if pr_content and pr_is_html and len(pr_content) >= MIN_HTML_SIZE:
+                    if (
+                        pr_content
+                        and pr_is_html
+                        and not live_rejection
+                        and len(pr_content) >= MIN_HTML_SIZE
+                    ):
                         content = pr_content
                         detected_type = pr_ctype or detected_type
                         asset_hash = hashlib.sha256(content).hexdigest()

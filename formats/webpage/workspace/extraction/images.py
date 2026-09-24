@@ -306,10 +306,18 @@ def _anchor_text(img_tag, after: bool = False) -> str | None:
 def harvest_images(html: str) -> list[HarvestedImage]:
     """Return content-region images with their alt text and figcaptions."""
     soup = BeautifulSoup(html, "lxml")
+    # Daily Mail wraps the full story in this specific article-body container.
+    # Its page-level carousel and navigation also have large, captionless images;
+    # on this layout only the pictures inside the story are source media.
+    article_body = soup.select_one("[itemprop=articleBody]")
+    if article_body is not None and article_body.find_parent(id="js-article-text"):
+        image_nodes = article_body.find_all("img")
+    else:
+        image_nodes = soup.find_all("img")
     found: list[HarvestedImage] = []
     seen_urls: set[str] = set()
 
-    for img in soup.find_all("img"):
+    for img in image_nodes:
         url = _resolve_img_url(img)
         if not url or url in seen_urls:
             continue

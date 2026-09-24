@@ -27,6 +27,19 @@ def test_social_media_icons_filtered_from_harvest():
     assert not any("tiktok" in u for u in urls)
 
 
+def test_daily_mail_article_body_excludes_page_navigation_and_recent_news_images():
+    html = (
+        '<img src="https://example.test/2026-news.jpg" alt="Recent news">'
+        '<div id="js-article-text"><div itemprop="articleBody">'
+        "<p>The original article describes an alleged egg-shaped craft.</p>"
+        '<img src="https://example.test/2023-article.jpg" alt="Article picture">'
+        "</div></div>"
+    )
+    assert [image.url for image in harvest_images(html)] == [
+        "https://example.test/2023-article.jpg"
+    ]
+
+
 def _ok_fetch(data=b"imagebytes", content_type="image/png"):
     def fetch(url):
         return (data + url.encode(), content_type)

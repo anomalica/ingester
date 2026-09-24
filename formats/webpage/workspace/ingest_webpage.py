@@ -244,6 +244,14 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
     if article is None:
         print("No article content extracted", file=sys.stderr)
         return 1
+    if "permission to access" in article.text.casefold() and (
+        "errors.edgesuite.net" in article.text.casefold()
+        or (article.title or "").strip().casefold() == "access denied"
+    ):
+        print(
+            "Refusing access-denied page in place of article content", file=sys.stderr
+        )
+        return 1
 
     print(f"Extracted: {article.title}", file=sys.stderr)
 

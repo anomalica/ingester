@@ -54,6 +54,27 @@ def test_ingest_writes_record_to_store(mock_extract, tmp_path):
     assert md_files[0].name == f"{expected}.md"
 
 
+@patch(
+    "ingest_webpage.extract_article",
+    return_value=Article(
+        text=(
+            "You don't have permission to access this page. "
+            "https://errors.edgesuite.net/18.example"
+        ),
+        title="Access Denied",
+        authors=None,
+        date=None,
+        sitename=None,
+        description=None,
+    ),
+)
+def test_ingest_refuses_extracted_access_denied_page(mock_extract, tmp_path):
+    staging = _create_staging(tmp_path, html="<html>denial page</html>")
+    output = tmp_path / "output"
+    assert ingest_webpage.run(staging, output, force=False) == 1
+    assert not list((output / "store").glob("*.md"))
+
+
 @patch("ingest_webpage.extract_article", return_value=SAMPLE_ARTICLE)
 def test_ingest_writes_creators_not_authors(mock_extract, tmp_path):
     staging = _create_staging(tmp_path)

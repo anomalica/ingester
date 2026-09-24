@@ -107,6 +107,25 @@ def test_strip_chrome_removes_furniture_keeps_article():
     assert "newsletter-signup" not in out
 
 
+def test_daily_mail_navigation_and_video_carousel_are_not_article_text():
+    html = (
+        '<div class="desktopNavBarContainerStyle_abc">'
+        '<img src="nav.svg" alt="Drop Down Arrow Icon"></div>'
+        '<div id="mini-carousel-wrapper">Current headlines</div>'
+        '<div id="js-article-text"><ul><li>Real lead bullet</li>'
+        '<li><a href="https://google.com/preferences/source?q=dailymail.com">'
+        'Save as preferred source</a></li></ul><div itemprop="articleBody">'
+        "<p>Original reporting about an alleged object at Area 51.</p></div></div>"
+        '<div id="most-watched-videos">Videos captured years later</div>'
+    )
+    out = strip_chrome(html)
+    assert "Original reporting" in out and "Real lead bullet" in out
+    assert "Drop Down Arrow" not in out
+    assert "Current headlines" not in out
+    assert "Videos captured years later" not in out
+    assert "Save as preferred source" not in out
+
+
 def test_strip_chrome_noop_on_clean_html():
     html = "<html><body><article><p>Clean article, no furniture.</p></article></body></html>"
     assert strip_chrome(html) == html
