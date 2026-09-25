@@ -17,7 +17,7 @@ The ingester converts source material such as PDFs, audio, video, ebooks and web
 ## Providers and secrets
 
 - Provider selection is an implementation concern governed by the central model policy and the private operations billing decision. Do not encode a current provider, price or model as permanent guidance here.
-- Preserve the cost-estimate and explicit-confirmation gate on every metered path, including repair and fallback calls.
+- Ordinary requested ingestion authorises the existing metered steps built into that workflow when their aggregate incremental cost is estimated at USD 1 or less; do not add or require per-step confirmation. Preserve aggregate estimate and explicit-confirmation gates for routine runs expected to exceed USD 1 and for rebuilds, backfills, reprocessing, paid fallbacks, experiments or other metered work outside the established workflow.
 - Generate local environment files through `just env`; the Safe remains canonical. Do not commit `.env`.
 
 ## Running and verification
