@@ -753,6 +753,158 @@ def _store_prepared_source_map(
     )
 
 
+def _rebind_force_replacement(
+    output_dir: Path, frontmatter: Mapping[str, Any], intermediate: str, canonical: str
+) -> tuple[Path, str, str] | None:
+    """Resolve a --force replacement to the final Record, not its staging Asset.
+
+    write_record() retires the previous Record while the handler still names its
+    intermediate by Asset hash. Only here is the replacement's Selection-derived
+    identity known. Preserve the retired Record body and sidecars, and reject a
+    pointer that does not name this exact intermediate instead of rebinding a
+    different replacement.
+    """
+    previous = frontmatter.get("supersedes")
+    if not previous or intermediate == canonical:
+        return None
+    if not isinstance(previous, str) or re.fullmatch(r"[0-9a-f]{64}", previous) is None:
+        raise Record3Error("replacement has an invalid prior Record hash")
+    retired = output_dir / "store" / "v1" / f"{previous}.md"
+    if not retired.is_file():
+        raise Record3Error("replacement has no retired prior Record")
+    raw = retired.read_text(encoding="utf-8")
+    old = read_record(retired)
+    if old.frontmatter.get("superseded_by") != intermediate:
+        raise Record3Error("retired Record does not point to this intermediate")
+    pointer = f"superseded_by: {intermediate}\n"
+    if raw.count(pointer) != 1:
+        raise Record3Error("retired Record has no unique supersession pointer")
+    updated = raw.replace(pointer, f"superseded_by: {canonical}\n", 1)
+    updated = updated.replace(
+        f"(new content_hash {intermediate[:12]})",
+        f"(new content_hash {canonical[:12]})",
+        1,
+    )
+    return retired, raw, updated
+
+
+def replace_whole_asset_record(
+    output_dir: Path,
+    old_hash: str,
+    new_hash: str,
+    *,
+    old_file_sha256: str,
+    new_file_sha256: str,
+    reason: str,
+) -> tuple[Path, Path]:
+    """Explicitly supersede one current Record/3 after a corrected reacquisition.
+
+    A fresh local-file acquisition has a new date-based alias, so --force cannot
+    infer that it replaces an older Asset. Pin both exact Markdown inputs, check
+    their source and rights authority, preserve the old body and sidecars at
+    their original address, and repoint its human alias only after stamping the
+    reciprocal replacement lineage. This does not transfer human review to a
+    different Selection.
+    """
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", old_hash) is None
+        or re.fullmatch(r"[0-9a-f]{64}", new_hash) is None
+        or old_hash == new_hash
+        or not reason.strip()
+    ):
+        raise Record3Error(
+            "replacement requires two distinct Record hashes and a reason"
+        )
+    store = output_dir / "store"
+    old_path, new_path = (store / f"{hash_}.md" for hash_ in (old_hash, new_hash))
+    if not old_path.is_file() or not new_path.is_file():
+        raise Record3Error("both replacement Records must be live in store/")
+    old_raw, new_raw = old_path.read_bytes(), new_path.read_bytes()
+    if (
+        f"sha256:{hashlib.sha256(old_raw).hexdigest()}" != old_file_sha256
+        or f"sha256:{hashlib.sha256(new_raw).hexdigest()}" != new_file_sha256
+    ):
+        raise Record3Error("replacement Record bytes changed since preview")
+    old, new = read_record(old_path), read_record(new_path)
+    try:
+        old_structure = Record3Structure.from_frontmatter(old.frontmatter)
+        new_structure = Record3Structure.from_frontmatter(new.frontmatter)
+    except ValidationError as exc:
+        raise Record3Error("replacement requires valid Record/3 Selections") from exc
+    if (
+        old_structure.content_hash != f"sha256:{old_hash}"
+        or new_structure.content_hash != f"sha256:{new_hash}"
+        or len(old_structure.assets) != 1
+        or len(new_structure.assets) != 1
+        or old_structure.selection.root[0].selector.type != "whole"
+        or new_structure.selection.root[0].selector.type != "whole"
+        or old_structure.assets[0].asset_hash == new_structure.assets[0].asset_hash
+    ):
+        raise Record3Error("replacement must bind different whole Assets")
+    if any(
+        old.frontmatter.get(key) for key in ("superseded_by", "retired_into")
+    ) or any(
+        new.frontmatter.get(key)
+        for key in ("supersedes", "superseded_by", "retired_into")
+    ):
+        raise Record3Error("replacement Record is already linked or retired")
+
+    def source_id(frontmatter: Mapping[str, Any]) -> str | None:
+        provenance = frontmatter.get("provenance")
+        identifiers = (
+            provenance.get("identifiers") if isinstance(provenance, Mapping) else None
+        )
+        value = (
+            identifiers.get("source_id") if isinstance(identifiers, Mapping) else None
+        )
+        return value if isinstance(value, str) and value else None
+
+    if not source_id(old.frontmatter) or source_id(old.frontmatter) != source_id(
+        new.frontmatter
+    ):
+        raise Record3Error("replacement must name the same evidenced source_id")
+    if old_structure.assets[0].copyright != new_structure.assets[0].copyright:
+        raise Record3Error("replacement may not change Asset rights")
+
+    aliases = [
+        link
+        for link in (output_dir / "by-name").iterdir()
+        if link.is_symlink() and link.resolve() == old_path.resolve()
+    ]
+    if not aliases:
+        raise Record3Error("prior Record has no by-name alias to preserve")
+    old_stamp = (
+        f"superseded_by: {new_hash}\n"
+        f"superseded_reason: {json.dumps(reason, ensure_ascii=False)}\n"
+    )
+
+    def stamp(raw: bytes, expected: str, addition: str) -> str:
+        text = raw.decode("utf-8")
+        anchor = f"content_hash: sha256:{expected}\n"
+        if text.count(anchor) != 1:
+            raise Record3Error("replacement has no unique content_hash line")
+        return text.replace(anchor, anchor + addition, 1)
+
+    old_updated = stamp(old_raw, old_hash, old_stamp)
+    new_updated = stamp(new_raw, new_hash, f"supersedes: {old_hash}\n")
+    # Prepare each alias before touching the Records; an existing path is
+    # another operation's work and must never be overwritten as scratch.
+    links = []
+    for alias in aliases:
+        temporary = alias.with_name(f".{alias.name}.replacement-{new_hash[:12]}")
+        if temporary.exists() or temporary.is_symlink():
+            raise Record3Error("replacement alias scratch path is occupied")
+        links.append((alias, temporary))
+    if old_path.read_bytes() != old_raw or new_path.read_bytes() != new_raw:
+        raise Record3Error("replacement Record changed during preview")
+    _atomic_write(new_path, new_updated)
+    _atomic_write(old_path, old_updated)
+    for alias, temporary in links:
+        temporary.symlink_to(os.path.relpath(new_path, alias.parent))
+        temporary.replace(alias)
+    return old_path, new_path
+
+
 def finalise_handler_record(
     record_path: Path,
     asset_path: Path,
@@ -838,6 +990,9 @@ def finalise_handler_record(
 
     prepared = _prepare_source_map(frontmatter, document.body, required=True)
     _assert_source_map_writable(output_dir, prepared)
+    replacement = _rebind_force_replacement(
+        output_dir, frontmatter, record_path.stem, bare
+    )
     _atomic_write(target, content)
     old_stem = record_path.name.removesuffix(".md")
     new_stem = target.stem
@@ -848,6 +1003,11 @@ def finalise_handler_record(
             old_verification.replace(target.parent / f"{new_stem}.verification.json")
     _move_media(output_dir, old_stem, new_stem)
     _repoint_aliases(output_dir / "by-name", record_path, target)
+    if replacement is not None:
+        retired, previous_text, updated = replacement
+        if retired.read_text(encoding="utf-8") != previous_text:
+            raise Record3Error("retired Record changed during replacement")
+        _atomic_write(retired, updated)
     source_map_path = _store_prepared_source_map(output_dir, prepared)
     return FinalisedRecord(target, content_hash, asset_hash, source_map_path)
 

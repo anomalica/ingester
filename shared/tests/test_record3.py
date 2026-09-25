@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 import yaml
@@ -14,7 +15,9 @@ from record3 import (
     finalise_handler_record,
     migrate_legacy_record,
     read_record,
+    replace_whole_asset_record,
 )
+from record import write_record
 from verification import needs_sidecar
 
 
@@ -471,6 +474,151 @@ def test_finalise_page_mapped_record_fails_closed_without_exact_markers(tmp_path
 
     with pytest.raises(Record3Error, match="source map"):
         finalise_handler_record(record, asset, manifest, output)
+
+
+def test_force_reingest_points_retired_record_to_final_selection(tmp_path):
+    output = tmp_path / "ingests"
+    store = output / "store"
+    alias_dir = output / "by-name"
+    staging = tmp_path / "staging"
+    for directory in (store, alias_dir, staging):
+        directory.mkdir(parents=True)
+    old_asset = staging / "old.epub"
+    old_asset.write_bytes(b"first licensed EPUB export")
+    old_hash = _sha(old_asset.read_bytes())
+    old_legacy = _legacy(old_hash, source_type="ebook", pages=None).replace(
+        "file_format: html", "file_format: epub"
+    )
+    old_input = staging / "old.md"
+    old_input.write_text(old_legacy)
+    old_document = read_record(old_input)
+    old_fm, old_text = build_default_record3(
+        old_document.frontmatter, old_document.body, old_asset
+    )
+    old_identity = old_fm["content_hash"].removeprefix("sha256:")
+    old_path, alias = write_record(
+        store,
+        alias_dir,
+        old_identity,
+        old_text,
+        "2026-09-22",
+        "ebook",
+        "Fixture document",
+    )
+    (store / f"{old_identity}.review.json").write_text('{"status":"reviewed"}\n')
+
+    new_asset = staging / "new.epub"
+    new_asset.write_bytes(b"corrected export of the same licensed book")
+    new_hash = _sha(new_asset.read_bytes())
+    intermediate, replacement_alias = write_record(
+        store,
+        alias_dir,
+        new_hash.removeprefix("sha256:"),
+        _legacy(new_hash, source_type="ebook", pages=None).replace(
+            "file_format: html", "file_format: epub"
+        ),
+        "2026-09-22",
+        "ebook",
+        "Fixture document",
+        force=True,
+    )
+    assert replacement_alias == alias
+    retired = store / "v1" / f"{old_identity}.md"
+    assert read_record(retired).frontmatter["superseded_by"] == intermediate.stem
+
+    manifest = staging / "manifest.json"
+    manifest.write_text(
+        json.dumps({"asset": "new.epub", "fetched_at": "2026-09-22T09:00:00Z"})
+    )
+    result = finalise_handler_record(intermediate, new_asset, manifest, output)
+
+    assert old_path != result.record_path
+    assert read_record(retired).frontmatter["superseded_by"] == result.record_path.stem
+    assert result.record_path.stem != intermediate.stem
+    assert read_record(result.record_path).frontmatter["supersedes"] == old_identity
+    assert (
+        result.record_path.stem[:12]
+        in read_record(retired).frontmatter["superseded_reason"]
+    )
+    assert (
+        store / "v1" / f"{old_identity}.review.json"
+    ).read_text() == '{"status":"reviewed"}\n'
+    assert alias.resolve() == result.record_path
+
+
+def test_explicit_whole_asset_replacement_keeps_old_address_and_review(
+    tmp_path, monkeypatch
+):
+    output = tmp_path / "ingests"
+    store = output / "store"
+    by_name = output / "by-name"
+    for directory in (store, by_name):
+        directory.mkdir(parents=True)
+
+    records = []
+    for name, date in (("first", "2026-09-23"), ("corrected", "2026-09-24")):
+        asset = tmp_path / f"{name}.epub"
+        asset.write_bytes(f"{name} EPUB bytes".encode())
+        fm = read_record(
+            _write_ebook_intermediate(tmp_path / f"{name}.md", asset)
+        ).frontmatter
+        frontmatter, text = build_default_record3(fm, "The same book text.\n", asset)
+        record, alias = write_record(
+            store,
+            by_name,
+            frontmatter["content_hash"].removeprefix("sha256:"),
+            text,
+            date,
+            "ebook",
+            "Fixture document",
+        )
+        records.append((record, alias))
+    (old_record, old_alias), (new_record, new_alias) = records
+    old_review = old_record.with_suffix(".review.json")
+    old_review.write_text('{"reviewed_body_sha256":"old"}\n')
+    previous_body = read_record(old_record).body
+    reason = "Same licensed Kindle edition, corrected renderer export"
+    monkeypatch.chdir(tmp_path)
+    relative_output = Path("ingests")
+
+    with pytest.raises(Record3Error, match="changed since preview"):
+        replace_whole_asset_record(
+            relative_output,
+            old_record.stem,
+            new_record.stem,
+            old_file_sha256="sha256:" + "0" * 64,
+            new_file_sha256=_sha(new_record.read_bytes()),
+            reason=reason,
+        )
+    assert old_alias.resolve() == old_record
+    assert read_record(old_record).frontmatter.get("superseded_by") is None
+
+    replace_whole_asset_record(
+        relative_output,
+        old_record.stem,
+        new_record.stem,
+        old_file_sha256=_sha(old_record.read_bytes()),
+        new_file_sha256=_sha(new_record.read_bytes()),
+        reason=reason,
+    )
+
+    assert old_record.is_file()
+    assert read_record(old_record).body == previous_body
+    assert read_record(old_record).frontmatter["superseded_by"] == new_record.stem
+    assert read_record(old_record).frontmatter["superseded_reason"] == reason
+    assert read_record(new_record).frontmatter["supersedes"] == old_record.stem
+    assert old_review.read_text() == '{"reviewed_body_sha256":"old"}\n'
+    assert old_alias.resolve() == new_record
+    assert new_alias.resolve() == new_record
+
+
+def _write_ebook_intermediate(path, asset):
+    path.write_text(
+        _legacy(_sha(asset.read_bytes()), source_type="ebook", pages=None).replace(
+            "file_format: html", "file_format: epub"
+        )
+    )
+    return path
 
 
 def test_finalise_refreshes_web_snapshot_descriptors_from_new_exact_bytes(tmp_path):
