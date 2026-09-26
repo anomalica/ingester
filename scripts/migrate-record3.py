@@ -2,9 +2,9 @@
 """CAS-bound legacy Record migration from held archive bytes.
 
 The migration is prepared and committed in a detached temporary worktree, then
-the caller's branch is advanced with ``git update-ref <new> <expected>``.  The
-live ingests worktree must be clean, so updating it after the atomic ref change
-cannot discard operator work.
+the caller's branch is advanced with ``git update-ref <new> <expected>``. The
+paths changed by the migration must be clean. Unrelated in-progress review
+edits remain untouched when the atomic ref change is materialised.
 """
 
 from __future__ import annotations
@@ -47,8 +47,6 @@ def migrate(
 ) -> str:
     ingests_dir = ingests_dir.resolve()
     records_dir = records_dir.resolve()
-    if _git(ingests_dir, "status", "--porcelain", "--untracked-files=all"):
-        raise MigrationCommandError("ingests worktree must be completely clean")
     common_dir = Path(_git(ingests_dir, "rev-parse", "--git-common-dir"))
     if not common_dir.is_absolute():
         common_dir = (ingests_dir / common_dir).resolve()
@@ -59,10 +57,6 @@ def migrate(
         fcntl.flock(lock, fcntl.LOCK_EX)
         if _git(ingests_dir, "rev-parse", "HEAD") != expected_head:
             raise MigrationCommandError("ingests HEAD changed from expected_head")
-        if _git(ingests_dir, "status", "--porcelain", "--untracked-files=all"):
-            raise MigrationCommandError(
-                "ingests worktree changed while taking the lock"
-            )
 
         temporary_root = Path(tempfile.mkdtemp(prefix="anomalica-record3-"))
         worktree = temporary_root / "ingests"
@@ -106,10 +100,43 @@ def migrate(
                 f"migrate: upgrade legacy record to record/3 ({short})",
             )
             commit = _git(worktree, "rev-parse", "HEAD")
+            changed = [
+                name
+                for name in _git(
+                    worktree,
+                    "diff",
+                    "--no-renames",
+                    "--name-only",
+                    "-z",
+                    expected_head,
+                    commit,
+                ).split("\0")
+                if name
+            ]
+            if not changed or _git(
+                ingests_dir,
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--",
+                *changed,
+            ):
+                raise MigrationCommandError(
+                    "migration targets have uncommitted or untracked changes"
+                )
             _git(ingests_dir, "update-ref", branch, commit, expected_head)
-            # The worktree was proven clean under the same lock. Align it with
-            # the atomically advanced branch; no unrelated path can be lost.
-            _git(ingests_dir, "reset", "--hard", commit)
+            # Only the proven-clean paths are materialised. A repository-wide
+            # reset would erase unrelated review edits in this shared worktree.
+            _git(
+                ingests_dir,
+                "restore",
+                "--source",
+                commit,
+                "--staged",
+                "--worktree",
+                "--",
+                *changed,
+            )
             return commit
         finally:
             try:

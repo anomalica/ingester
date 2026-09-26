@@ -96,3 +96,45 @@ def test_command_rejects_stale_head_without_writing(tmp_path):
     assert _git(ingests, "rev-parse", "HEAD") == before
     assert (ingests / f"store/{old_hash}.md").is_file()
     assert not (ingests / "store/_record_identity_map.yaml").exists()
+
+
+def test_migration_preserves_unrelated_staged_and_unstaged_review_edits(tmp_path):
+    ingests, records, old_hash, expected_head = _repository(tmp_path)
+    other = ingests / "store" / "unrelated.review.json"
+    other.write_text('{"reviewed":false}\n')
+    _git(ingests, "add", str(other.relative_to(ingests)))
+    _git(
+        ingests,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "review fixture",
+    )
+    expected_head = _git(ingests, "rev-parse", "HEAD")
+    other.write_text('{"reviewed":true}\n')
+    staged = ingests / "store" / "staged.review.json"
+    staged.write_text('{"staged":true}\n')
+    _git(ingests, "add", str(staged.relative_to(ingests)))
+
+    COMMAND.migrate(ingests, records, f"store/{old_hash}.md", expected_head)
+
+    assert other.read_text() == '{"reviewed":true}\n'
+    assert staged.read_text() == '{"staged":true}\n'
+    assert (
+        _git(ingests, "diff", "--cached", "--name-only") == "store/staged.review.json"
+    )
+
+
+def test_migration_refuses_a_dirty_target_without_touching_it(tmp_path):
+    ingests, records, old_hash, expected_head = _repository(tmp_path)
+    target = ingests / "store" / f"{old_hash}.md"
+    target.write_text(target.read_text().replace("Legacy fixture", "Edited title"))
+
+    with pytest.raises(COMMAND.MigrationCommandError, match="targets have uncommitted"):
+        COMMAND.migrate(ingests, records, f"store/{old_hash}.md", expected_head)
+
+    assert "Edited title" in target.read_text()
+    assert _git(ingests, "rev-parse", "HEAD") == expected_head
