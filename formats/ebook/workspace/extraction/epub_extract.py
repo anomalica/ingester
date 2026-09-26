@@ -889,6 +889,123 @@ def _expand_image_tokens(md: str, images: list[ExtractedImage]) -> str:
     return IMG_TOKEN_RE.sub(replace, md)
 
 
+_KINDLE_POSITION_PREFIX_RE = re.compile(
+    r"^\{\{_kindle_position[ \t]*:[ \t]*\d+[ \t]*\}\}"
+)
+_KINDLE_POSITION_LINE_RE = re.compile(
+    r"^\{\{_kindle_position[ \t]*:[ \t]*\d+[ \t]*\}\}$"
+)
+_CHAPTER_BOUNDARY_MARKER_RE = re.compile(
+    r"^<!-- printed_page(?:_sequence)?: [0-9A-Za-z]+ -->$"
+)
+
+
+def _plain_styled_line(line: str) -> str:
+    """Remove only whole-line Markdown styling emitted for a source heading."""
+    text = line.strip()
+    text = re.sub(r"^#{1,6}[ \t]+", "", text)
+    for marker in ("***", "___", "**", "__", "*", "_"):
+        if (
+            text.startswith(marker)
+            and text.endswith(marker)
+            and len(text) > 2 * len(marker)
+        ):
+            text = text[len(marker) : -len(marker)].strip()
+            break
+    return text
+
+
+def _redundant_designation_markers(chapter: Chapter) -> list[str] | None:
+    """Return independent boundary markers when this section is only `CHAPTER N`.
+
+    The deliberately narrow check is what makes split-spine coalescing safe. The
+    section must contain one explicitly labelled chapter designation and nothing
+    else except EPUB page-boundary markers and a Kindle position attached to the
+    designation paragraph. Page markers remain meaningful at the chapter boundary
+    and are retained. The paragraph position is discarded with its redundant
+    paragraph; moving it onto the following title would give that title two source
+    positions, one of them false.
+    """
+    if chapter.number is None or chapter.title is not None:
+        return None
+
+    markers: list[str] = []
+    content_lines: list[str] = []
+    for line in chapter.markdown.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _CHAPTER_BOUNDARY_MARKER_RE.fullmatch(stripped):
+            markers.append(stripped)
+        elif _KINDLE_POSITION_LINE_RE.fullmatch(stripped):
+            continue
+        else:
+            content_lines.append(stripped)
+    if len(content_lines) != 1:
+        return None
+
+    designation = _KINDLE_POSITION_PREFIX_RE.sub("", content_lines[0], count=1)
+    designation = _plain_styled_line(designation)
+    match = _CHAPTER_PREFIX_RE.fullmatch(designation)
+    if match is None or match.group(2).strip():
+        return None
+    number = _enum_to_int(match.group(1))
+    if number is None or str(number) != chapter.number:
+        return None
+    return markers
+
+
+def _opens_with_title(chapter: Chapter) -> bool:
+    """Whether a title-only section repeats its TOC title as its opening prose."""
+    if chapter.number is not None or not chapter.title:
+        return False
+    for line in chapter.markdown.splitlines():
+        text = line.strip()
+        if not text or _CHAPTER_BOUNDARY_MARKER_RE.fullmatch(text):
+            continue
+        if _KINDLE_POSITION_LINE_RE.fullmatch(text):
+            continue
+        text = _KINDLE_POSITION_PREFIX_RE.sub("", text, count=1)
+        return _plain_styled_line(text) == chapter.title
+    return False
+
+
+def _coalesce_split_chapters(chapters: list[Chapter]) -> list[Chapter]:
+    """Join a strict complementary pair split across adjacent spine documents.
+
+    Some EPUBs put `CHAPTER 1` in one document and its title plus prose in the
+    next. They are one logical chapter only when the first document is entirely
+    redundant designation prose and the immediately adjacent, unnumbered document
+    opens with the title that its TOC entry supplies.
+    """
+    coalesced: list[Chapter] = []
+    index = 0
+    while index < len(chapters):
+        number_section = chapters[index]
+        title_section = chapters[index + 1] if index + 1 < len(chapters) else None
+        retained_markers = _redundant_designation_markers(number_section)
+        if (
+            title_section is not None
+            and title_section.index == number_section.index + 1
+            and retained_markers is not None
+            and _opens_with_title(title_section)
+        ):
+            markdown_parts = [*retained_markers, title_section.markdown]
+            coalesced.append(
+                Chapter(
+                    index=number_section.index,
+                    title=title_section.title,
+                    markdown="\n\n".join(part for part in markdown_parts if part),
+                    number=number_section.number,
+                )
+            )
+            index += 2
+            continue
+        coalesced.append(number_section)
+        index += 1
+    return coalesced
+
+
 def _spine_documents(book: epub.EpubBook) -> Iterable[epub.EpubItem]:
     seen: set[str] = set()
     for spine_id, _linear in book.spine:
@@ -978,6 +1095,7 @@ def extract(epub_path: str) -> ExtractedBook:
         for chapter, filename in zip(chapters, chapter_files)
         if filename not in resolver.note_documents or not resolver.spent(filename)
     ]
+    chapters = _coalesce_split_chapters(chapters)
     _disambiguate_page_sequences(chapters)
 
     return ExtractedBook(

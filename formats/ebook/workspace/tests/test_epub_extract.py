@@ -14,6 +14,7 @@ from extraction.epub_extract import (
     _collect_footnotes,
     _collect_kindle_positions,
     _collect_pagebreaks,
+    _coalesce_split_chapters,
     _disambiguate_page_sequences,
     _enum_to_int,
     _expand_footnote_tokens,
@@ -396,6 +397,123 @@ def test_extract_book_title_survives_the_chapter_loop(tmp_path):
     assert "<!-- printed_page: 7 -->" in numbered[0].markdown
     assert "{{_kindle_position: 2147}}Body one." in numbered[0].markdown
     assert "element_id" not in numbered[0].markdown
+
+
+def _split_spine_chapter_epub(path: str) -> str:
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_title("Split chapter")
+    number = epub.EpubHtml(title="CHAPTER 1", file_name="number.xhtml")
+    number.content = (
+        '<html><body><p data-kindle-position="14776">'
+        "<strong>CHAPTER 1</strong></p></body></html>"
+    )
+    title = epub.EpubHtml(
+        title="An Introduction to the Study of Reincarnation",
+        file_name="title.xhtml",
+    )
+    title.content = (
+        '<html><body><p data-kindle-position="14785"><strong>'
+        "An Introduction to the Study of Reincarnation</strong></p>"
+        '<p data-kindle-position="14830">Chapter prose.</p></body></html>'
+    )
+    for item in (number, title):
+        book.add_item(item)
+    book.toc = (number, title)
+    book.spine = [number, title]
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    epub.write_epub(path, book)
+    return path
+
+
+def test_extract_coalesces_complementary_chapter_metadata_across_spine(tmp_path):
+    from extraction.epub_extract import extract
+    from ingest_ebook import _render_body
+
+    book = extract(_split_spine_chapter_epub(str(tmp_path / "split.epub")))
+
+    assert len(book.chapters) == 1
+    chapter = book.chapters[0]
+    assert chapter.index == 1
+    assert chapter.number == "1"
+    assert chapter.title == "An Introduction to the Study of Reincarnation"
+    assert "CHAPTER 1" not in chapter.markdown
+    assert "{{_kindle_position: 14776}}" not in chapter.markdown
+    assert (
+        "{{_kindle_position: 14785}}\n**An Introduction to the Study of Reincarnation**"
+    ) in chapter.markdown
+    assert "{{_kindle_position: 14830}}Chapter prose." in chapter.markdown
+
+    rendered = _render_body(book)
+    assert rendered.count("<!-- chapter: 1 -->") == 1
+    assert (
+        rendered.count(
+            '<!-- chapter_title: "An Introduction to the Study of Reincarnation" -->'
+        )
+        == 1
+    )
+    assert "<!-- chapter: 1 -->\n<!-- chapter_title:" in rendered
+
+
+def test_split_chapter_keeps_independent_page_marker():
+    chapters = [
+        Chapter(
+            index=4,
+            title=None,
+            markdown=(
+                "<!-- printed_page: 9 -->\n\n{{_kindle_position: 14776}}**CHAPTER 1**"
+            ),
+            number="1",
+        ),
+        Chapter(
+            index=5,
+            title="An Introduction",
+            markdown="{{_kindle_position: 14785}}**An Introduction**\n\nText.",
+        ),
+    ]
+
+    result = _coalesce_split_chapters(chapters)
+
+    assert len(result) == 1
+    assert result[0].markdown.startswith("<!-- printed_page: 9 -->")
+    assert "{{_kindle_position: 14776}}" not in result[0].markdown
+    assert "{{_kindle_position: 14785}}**An Introduction**" in result[0].markdown
+
+
+def test_split_chapter_does_not_drop_non_designation_content():
+    chapters = [
+        Chapter(
+            index=1,
+            title=None,
+            markdown="**CHAPTER 1**\n\nPublisher's note.",
+            number="1",
+        ),
+        Chapter(
+            index=2,
+            title="An Introduction",
+            markdown="**An Introduction**\n\nText.",
+        ),
+    ]
+
+    result = _coalesce_split_chapters(chapters)
+
+    assert result == chapters
+    assert "Publisher's note." in result[0].markdown
+
+
+def test_split_chapter_requires_consecutive_spine_documents():
+    chapters = [
+        Chapter(index=1, title=None, markdown="**CHAPTER 1**", number="1"),
+        Chapter(
+            index=3,
+            title="An Introduction",
+            markdown="**An Introduction**\n\nText.",
+        ),
+    ]
+
+    assert _coalesce_split_chapters(chapters) == chapters
 
 
 # --- drop-cap rejoin -----------------------------------------------------------
