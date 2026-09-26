@@ -45,6 +45,7 @@ DOCUMENT_TYPES: tuple[str, ...] = (
     "slide",
     # spoken / broadcast
     "interview",
+    "hearing",
     "documentary",
     "podcast",
     "lecture",
@@ -59,6 +60,7 @@ DOCUMENT_TYPES: tuple[str, ...] = (
 # None (absent), never a neutral guess.
 _AV_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("interview", re.compile(r"DEBRIEFED|Interviewed by", re.I)),
+    ("hearing", re.compile(r"\bhearing\s+(?:on|regarding|into)\b", re.I)),
     ("documentary", re.compile(r"Full Documentary|\(Documentary", re.I)),
     ("podcast", re.compile(r"Podcast|\bEp\.?\s*\d+", re.I)),
     ("broadcast", re.compile(r"press conference", re.I)),

@@ -20,6 +20,12 @@ def test_av_titles_that_state_their_form():
         classify_av("LIVE: James Fox UFO press conference on Varginha") == "broadcast"
     )
     assert classify_av("Unedited Navy Gimbal footage.mp4") == "footage"
+    assert (
+        classify_av(
+            "House holds hearing on UFO transparency and whistleblower protection | full video"
+        )
+        == "hearing"
+    )
 
 
 def test_av_no_stated_form_is_absent():
@@ -28,6 +34,7 @@ def test_av_no_stated_form_is_absent():
     assert classify_av("NASA-UAP-D013, Mercury Atlas 7, May 24, 1962") is None
     assert classify_av("Unedited Navy Gimbal video.mp4") is None
     assert classify_av("A collection of footages") is None
+    assert classify_av("Hearing from witnesses about UAP") is None
     assert classify_av("") is None
 
 
@@ -96,6 +103,7 @@ def test_every_derivable_value_is_in_the_closed_set():
         "Bigelow Podcast Ep. 2",
         "press conference",
         "Archive footage",
+        "Hearing on UAP disclosures",
         "Incident Report",
         "Statement to Congress",
         "Debrief Form",
