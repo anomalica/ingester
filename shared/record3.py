@@ -226,20 +226,23 @@ def _acquisition(
 ) -> dict[str, Any]:
     manifest = manifest or {}
     acquired_value = frontmatter.get("date_accessed") or manifest.get("fetched_at")
-    try:
-        acquired_at = (
-            acquired_value
-            if isinstance(acquired_value, datetime)
-            else datetime.fromisoformat(str(acquired_value).replace("Z", "+00:00"))
-        )
-    except (TypeError, ValueError) as exc:
-        raise Record3Error(
-            "Asset acquisition requires an offset-bearing RFC 3339 acquired_at"
-        ) from exc
-    if acquired_at.tzinfo is None or acquired_at.utcoffset() is None:
-        raise Record3Error("Asset acquisition requires acquired_at metadata")
-    canonical_acquired_at = acquired_at.isoformat().replace("+00:00", "Z")
-    acquisition: dict[str, Any] = {"acquired_at": canonical_acquired_at}
+    acquisition: dict[str, Any] = {}
+    if acquired_value is not None:
+        try:
+            acquired_at = (
+                acquired_value
+                if isinstance(acquired_value, datetime)
+                else datetime.fromisoformat(str(acquired_value).replace("Z", "+00:00"))
+            )
+        except (TypeError, ValueError) as exc:
+            raise Record3Error(
+                "Asset acquisition requires an offset-bearing RFC 3339 acquired_at"
+            ) from exc
+        if acquired_at.tzinfo is None or acquired_at.utcoffset() is None:
+            raise Record3Error(
+                "Asset acquisition requires an offset-bearing acquired_at"
+            )
+        acquisition["acquired_at"] = acquired_at.isoformat().replace("+00:00", "Z")
 
     fetched_url = (
         frontmatter.get("fetched_url")

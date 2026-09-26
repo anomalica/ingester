@@ -283,7 +283,6 @@ def test_whole_image_gets_one_server_derived_page_and_v9_source_map(tmp_path):
 @pytest.mark.parametrize(
     ("remove", "message"),
     [
-        ("date_accessed", "acquisition requires"),
         ("copyright", "copyright authority"),
     ],
 )

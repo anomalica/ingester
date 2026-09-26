@@ -298,8 +298,10 @@ def validate(
             if not isinstance(asset, dict):
                 continue
             acquisition = asset.get("acquisition")
-            if isinstance(acquisition, dict) and not valid_offset(
-                acquisition.get("acquired_at")
+            if (
+                isinstance(acquisition, dict)
+                and "acquired_at" in acquisition
+                and not valid_offset(acquisition["acquired_at"])
             ):
                 result.errors.append(
                     f"Invalid assets[{index}].acquisition.acquired_at: expected an "
