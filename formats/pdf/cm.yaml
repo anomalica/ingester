@@ -8,7 +8,7 @@ runtime:
     - ~/.local/bin/claude:/usr/local/bin/claude:ro
     - ~/.claude:~/.claude
     - ../../staging:/mnt/staging:ro
-    - ../../../records:/mnt/records:ro
+    - ../../../../records:/mnt/records:ro
     - ../../../ingests:/mnt/ingests:ro
     - ../../.ai/pdf:/mnt/benchmark:rw
     - ../../../anomalica-common/src:/opt/anomalica-common:ro
