@@ -36,6 +36,7 @@ DOCUMENT_TYPES: tuple[str, ...] = (
     "book",
     "paper",
     "report",
+    "notes",
     "article",
     "letter",
     "email",
