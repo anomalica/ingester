@@ -623,6 +623,11 @@ else
 	if [[ "$ARCHIVE_RESULT" == "created" ]]; then
 		echo "Source archived: ${TARGET}" >&2
 	fi
+	if [[ "$HANDLER" == "audio" ]]; then
+		PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+			python3 "${SCRIPT_DIR}/shared/waveform_sidecars.py" \
+			--write --audio "$TARGET" --hash "$ASSET_HASH" --records "$RECORDS_DIR"
+	fi
 fi
 
 # Resolve the handler's exact intermediate output. The record/3 finaliser below
@@ -726,6 +731,14 @@ if [[ -n "$QUALITY_TARGETS" ]]; then
 			;;
 		esac
 	done <<<"$QUALITY_TARGETS"
+fi
+
+if [[ "$HANDLER" == "audio" ]]; then
+	if ! PYTHONPATH="${SCRIPT_DIR}/../anomalica-common/src:${PYTHONPATH:-}" \
+		python3 "${SCRIPT_DIR}/shared/publish_waveform_sidecars.py" \
+		--record "${RUN_OUTPUT}/${RECORD_PATH}" --write; then
+		echo "  WARNING: waveform not backed up - run shared/publish_waveform_sidecars.py --write" >&2
+	fi
 fi
 
 # Build one patch containing only this run's repository outputs. Intent-to-add
