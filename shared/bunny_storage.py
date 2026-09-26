@@ -89,13 +89,24 @@ def _put(zone: str, key: str, pw: str, data: bytes, ext: str) -> int:
 def _stamp(md: Path, zone: str, key: str) -> None:
     """Write a `storage:` block onto the record (idempotent, hashless field)."""
     text = md.read_text(errors="replace")
+    zone_class = "open" if zone == OPEN_ZONE else "gated"
+    existing = re.search(r"^storage:\n(?:[ \t]+.*\n?)*", _fm(text), re.M)
+    if (
+        existing
+        and re.search(
+            rf"^  zone_class: {re.escape(zone_class)}$", existing.group(), re.M
+        )
+        and re.search(rf"^  key: {re.escape(key)}$", existing.group(), re.M)
+        and re.search(r"^  pushed_at: .+$", existing.group(), re.M)
+    ):
+        return
     m = re.match(r"^(---\n)(.*?)(\n---\n)", text, re.S)
     if not m:
         return
     fmv = m.group(2)
     block = (
         "storage:\n"
-        f"  zone_class: {'open' if zone == OPEN_ZONE else 'gated'}\n"
+        f"  zone_class: {zone_class}\n"
         f"  key: {key}\n"
         f"  pushed_at: {datetime.now(timezone.utc).isoformat()}"
     )

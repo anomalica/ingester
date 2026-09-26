@@ -1,6 +1,23 @@
 import bunny_storage
 
 
+def test_stamp_preserves_existing_push_time(tmp_path):
+    record = tmp_path / "record.md"
+    original = """---
+storage:
+  zone_class: gated
+  key: sources/book.epub
+  pushed_at: 2026-09-25T09:49:52+00:00
+---
+body
+"""
+    record.write_text(original)
+
+    bunny_storage._stamp(record, "anomalica-gated", "sources/book.epub")
+
+    assert record.read_text() == original
+
+
 def test_push_record_publishes_every_composite_asset_independently(
     tmp_path, monkeypatch
 ):
