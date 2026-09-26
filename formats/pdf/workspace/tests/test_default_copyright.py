@@ -54,7 +54,7 @@ def test_local_file_stays_conservative():
     from shared.copyright import MISSING_PROVENANCE_DETAIL
 
     block = default_copyright(
-        {"source": "/home/mark/some.pdf", "fetch_method": "local"}
+        {"source": "/home/reviewer/some.pdf", "fetch_method": "local"}
     )
     assert block["status"] == "restricted"
     assert block["detail"] == MISSING_PROVENANCE_DETAIL

@@ -22,7 +22,7 @@ runtime:
     # Persistent HuggingFace model cache so Whisper/pyannote/wav2vec2 weights
     # download once and are reused across runs (the container is --rm). Without
     # this, every ingestion re-downloads ~2.5GB of models.
-    - /home/mark/.cache/anomalica-ingester-hf:/mnt/hfcache:rw
+    - ~/.cache/anomalica-ingester-hf:/mnt/hfcache:rw
 stages:
   base:
     from: python:3.12-slim

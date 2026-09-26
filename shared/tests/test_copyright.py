@@ -42,7 +42,7 @@ def test_other_public_urls_are_publicly_accessible():
 def test_no_url_yields_no_judgement():
     """A local file of unknown provenance implies nothing; the caller applies its own
     conservative default rather than this module inventing one."""
-    assert default_status({"source": "/home/mark/some.pdf"}) is None
+    assert default_status({"source": "/home/reviewer/some.pdf"}) is None
     assert default_status({}) is None
 
 

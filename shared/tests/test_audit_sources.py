@@ -1,6 +1,13 @@
 import yaml
+from pathlib import Path
 
-from audit_sources import archived_assets, archived_storage_key
+from audit_sources import RECORDS, STORE, archived_assets, archived_storage_key
+
+
+def test_archive_audit_defaults_follow_the_product_checkout():
+    product = Path(__file__).resolve().parents[3]
+    assert STORE == product / "ingests" / "store"
+    assert RECORDS == product.parent / "records"
 
 
 def test_record3_archive_audit_includes_derivative_snapshot_assets():

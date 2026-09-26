@@ -10,7 +10,7 @@ The ingester converts source material such as PDFs, audio, video, ebooks and web
 - `acquire/` fetches and caches source material and writes a staging manifest.
 - `formats/` contains the format-specific ingestion paths.
 - `shared/` contains common record, hashing and validation utilities.
-- Output records go to the sibling `../ingests/` repository. Original source files go to `/home/mark/repos/anomalica/records/`.
+- Output records go to the sibling `../ingests/` repository. Original source files go to `../../records/` relative to this repository.
 - Each source produces one record. Do not create separate audio and video records for the same source merely because both tracks exist.
 - Preserve content addressing, source and snapshot hashes, verification sidecars and copyright metadata. Check downstream consumers before changing them.
 

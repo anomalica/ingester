@@ -31,16 +31,13 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2] / "anomalica"
-if not (ROOT / "ingests").exists():  # fallback: sibling layout
-    ROOT = Path("/home/mark/repos/anomalica")
+ROOT = Path(__file__).resolve().parents[2]  # product directory
 STORE = ROOT / "ingests" / "store"
-RECORDS = ROOT / "records"
+RECORDS = ROOT.parent / "records"
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parents[2] / "anomalica-common" / "src")
 )
-sys.path.insert(0, "/home/mark/repos/anomalica/product/anomalica-common/src")
 from anomalica_common.publishing import zone_for  # noqa: E402
 
 MEDIA_EXT = (".opus", ".ogg", ".mp3", ".m4a", ".webm", ".mp4")
