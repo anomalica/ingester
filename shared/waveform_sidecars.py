@@ -12,6 +12,7 @@ import base64
 import json
 import mmap
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +47,11 @@ def bindings(
         if "legacy-identities" in record.relative_to(store).parts:
             continue
         fm = _fm(record.read_text(errors="replace"))
+        # Historical replacements retain their envelope and may document a
+        # genuinely lost original. Audit waveform coverage over live Records;
+        # do not count a retired missing Asset as a broken current waveform.
+        if re.search(r"^superseded_by:\s*\S+", fm, re.MULTILINE):
+            continue
         for hash_, ext, _, source_type in archived_assets(fm):
             if source_type not in {"audio", "video"} or not hash_:
                 continue

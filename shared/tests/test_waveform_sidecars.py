@@ -28,6 +28,9 @@ def test_backfill_uses_asset_hash_and_walks_legacy_records(tmp_path):
         f"assets:\n  - asset_hash: sha256:{asset_hash}\n    archived_ext: opus\n"
         "    source_type: video\n---\n"
     )
+    (store / "v1" / "retired.md").write_text(
+        f"---\nschema: anomalica/record/2\nsource_type: video\ncontent_hash: sha256:{'d' * 64}\nsuperseded_by: {'e' * 64}\n---\n"
+    )
     result = bindings(store, archive)
     assert set(result) == {legacy_hash, asset_hash}
     assert result[legacy_hash][0] == archive / f"{legacy_hash}.ogg"
