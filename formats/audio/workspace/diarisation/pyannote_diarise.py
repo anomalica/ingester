@@ -3,11 +3,50 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 from models import SpeakerSegment
 
 DIARISATION_MODEL = "pyannote/speaker-diarization-community-1"
+
+
+def _load_audio(audio_path: Path):
+    """Decode MP4/AAC with ffmpeg before passing a waveform to pyannote.
+
+    torchaudio's soundfile backend cannot open MP4, even when its AAC track is
+    valid. The archived input remains the original video; this WAV is temporary.
+    """
+    import torchaudio
+
+    if audio_path.suffix.lower() not in {".mp4", ".m4v", ".mov", ".m4a"}:
+        return torchaudio.load(str(audio_path))
+    with tempfile.TemporaryDirectory(prefix="diarise-audio-") as directory:
+        wav = Path(directory) / "audio.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(audio_path),
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(wav),
+            ],
+            check=True,
+        )
+        return torchaudio.load(str(wav))
 
 
 def _serialise_result(result) -> tuple[list[SpeakerSegment], dict]:
@@ -85,9 +124,7 @@ def diarise(audio_path: Path) -> tuple[list[SpeakerSegment], dict]:
     pipeline = Pipeline.from_pretrained(DIARISATION_MODEL, token=hf_token)
     pipeline.to(torch.device(device))
 
-    import torchaudio
-
-    waveform, sample_rate = torchaudio.load(str(audio_path))
+    waveform, sample_rate = _load_audio(audio_path)
     audio_input = {"waveform": waveform, "sample_rate": sample_rate}
     result = pipeline(audio_input)
 
