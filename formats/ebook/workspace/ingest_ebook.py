@@ -24,7 +24,12 @@ from refresh import refresh_record
 from validator import validate
 from verification import build_sidecar, needs_sidecar, write_sidecar
 
-from extraction.epub_extract import ExtractedBook, extract
+from extraction.epub_extract import (
+    EpubExtractionError,
+    ExtractedBook,
+    _yaml_quote,
+    extract,
+)
 
 _OVERRIDES_PATH = Path(__file__).resolve().parent / "metadata_overrides.yaml"
 
@@ -90,13 +95,12 @@ def _build_frontmatter(
     source_hash: str | None,
     media_summary: dict | None,
 ) -> str:
-    escaped_title = book.title.replace('"', '\\"')
     # A book is presumptively copyrighted; a reviewer can widen it in the workbench.
     copyright_status = "licensed"
     lines = [
         "---",
         "schema: anomalica/record/1",
-        f'title: "{escaped_title}"',
+        f"title: {_yaml_quote(book.title)}",
         "source_type: ebook",
         "file_format: epub",
     ]
@@ -106,8 +110,7 @@ def _build_frontmatter(
     # what it holds, so `book` would be an assumption, not a derivation. A reviewer
     # sets it in the workbench.
     if book.publisher:
-        escaped_pub = book.publisher.replace('"', '\\"')
-        lines.append(f'publisher: "{escaped_pub}"')
+        lines.append(f"publisher: {_yaml_quote(book.publisher)}")
     if source_url:
         lines.append(f"source_url: {source_url}")
     if book.identifier:
@@ -115,14 +118,13 @@ def _build_frontmatter(
     if book.authors:
         lines.append("creators:")
         for author in book.authors:
-            lines.append(f"  - {author}")
+            lines.append(f"  - {_yaml_quote(author)}")
     if book.description:
         desc = book.description
         if copyright_status in _GATED_BLURB_STATUSES:
             desc = _gated_blurb(desc)
         if desc:
-            escaped_desc = desc.replace('"', '\\"')
-            lines.append(f'description: "{escaped_desc}"')
+            lines.append(f"description: {_yaml_quote(desc)}")
     lines.append(f"content_hash: {content_hash_label(hex_hash)}")
     if source_hash:
         lines.append(f"source_hash: {content_hash_label(source_hash)}")
@@ -157,8 +159,7 @@ def _render_body(book: ExtractedBook) -> str:
         if chapter.number:
             annotation.append(f"<!-- chapter: {chapter.number} -->")
         if chapter.title:
-            escaped = chapter.title.replace('"', '\\"')
-            annotation.append(f'<!-- chapter_title: "{escaped}" -->')
+            annotation.append(f"<!-- chapter_title: {_yaml_quote(chapter.title)} -->")
         if annotation:
             parts.append("\n".join(annotation))
         parts.append(chapter.markdown)
@@ -188,7 +189,11 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Error: asset not found: {asset_path}", file=sys.stderr)
         return 1
 
-    book = extract(str(asset_path))
+    try:
+        book = extract(str(asset_path))
+    except EpubExtractionError as exc:
+        print(f"EPUB extraction failed: {exc}", file=sys.stderr)
+        return 1
     if not book.chapters:
         print("No chapters extracted", file=sys.stderr)
         return 1
@@ -199,7 +204,7 @@ def run(staging_dir: Path, output_dir: Path, force: bool) -> int:
         print(f"Metadata override applied: {', '.join(changed)}", file=sys.stderr)
 
     print(
-        f"Extracted: {book.title} ({len(book.chapters)} chapters, {len(book.images)} images)",
+        f"Extracted: {book.title} ({len(book.chapters)} sections, {len(book.images)} unique images)",
         file=sys.stderr,
     )
 

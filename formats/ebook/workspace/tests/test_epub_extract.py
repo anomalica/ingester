@@ -1,6 +1,7 @@
 """Tests for EPUB pagebreak -> printed_page marker extraction."""
 
 from bs4 import BeautifulSoup
+import pytest
 
 from extraction.epub_extract import (
     Chapter,
@@ -81,36 +82,37 @@ def test_pagebreak_label_roman_from_id():
     )
 
 
-def test_collect_pagebreaks_inserts_token_and_removes_span():
+def test_collect_pagebreaks_inserts_opaque_token_and_keeps_target_id():
     body = BeautifulSoup(
-        '<body><p>Before<span epub:type="pagebreak" title="308"/>After</p></body>',
+        '<body><p>Before<span epub:type="pagebreak" id="page308" title="308"/>After</p></body>',
         "lxml-xml",
     ).find("body")
-    _collect_pagebreaks(body)
-    assert f"{PAGE_TOKEN_PREFIX}308{PAGE_TOKEN_SUFFIX}" in body.get_text()
-    assert not any(_is_pagebreak(t) for t in body.find_all(True))
+    assert _collect_pagebreaks(body) == ["308"]
+    assert body.get_text() == f"Before{PAGE_TOKEN_PREFIX}0{PAGE_TOKEN_SUFFIX}After"
+    assert body.find(id="page308") is not None
 
 
 def test_collect_pagebreaks_drops_unlabelled():
     body = BeautifulSoup(
         '<body><p>X<span epub:type="pagebreak"/>Y</p></body>', "lxml-xml"
     ).find("body")
-    _collect_pagebreaks(body)
+    with pytest.warns(UserWarning, match="Unlabelled"):
+        assert _collect_pagebreaks(body) == []
     assert PAGE_TOKEN_PREFIX not in body.get_text()
 
 
 def test_expand_page_tokens_arabic():
-    md = f"Before\n\n{PAGE_TOKEN_PREFIX}308{PAGE_TOKEN_SUFFIX}\n\nAfter"
-    assert "<!-- printed_page: 308 -->" in _expand_page_tokens(md)
+    md = f"Before\n\n{PAGE_TOKEN_PREFIX}0{PAGE_TOKEN_SUFFIX}\n\nAfter"
+    assert "<!-- printed_page: 308 -->" in _expand_page_tokens(md, ["308"])
 
 
 def test_expand_page_tokens_roman_and_index_labels():
     assert (
-        _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}viii{PAGE_TOKEN_SUFFIX}")
+        _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}0{PAGE_TOKEN_SUFFIX}", ["viii"])
         == "<!-- printed_page: viii -->"
     )
     assert (
-        _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}I15{PAGE_TOKEN_SUFFIX}")
+        _expand_page_tokens(f"{PAGE_TOKEN_PREFIX}0{PAGE_TOKEN_SUFFIX}", ["I15"])
         == "<!-- printed_page: I15 -->"
     )
 
@@ -227,11 +229,11 @@ def test_parse_designation_arabic():
     assert _parse_designation("1. The Secrecy") == ("1", "The Secrecy", False)
 
 
-def test_parse_designation_roman_part():
+def test_parse_designation_ambiguous_roman_title_is_not_assumed_to_be_a_part():
     assert _parse_designation("II. Finding Our Liberty") == (
         None,
-        "Finding Our Liberty",
-        True,
+        "II. Finding Our Liberty",
+        False,
     )
 
 

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import posixpath
 import re
+import warnings
+from copy import copy
 from dataclasses import dataclass, field
 from typing import Iterable
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import ebooklib
-from bs4 import BeautifulSoup
+import yaml
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 from ebooklib import epub
 from markdownify import markdownify
 
@@ -21,7 +25,7 @@ from text_repair import rejoin_dropcaps  # re-exported for callers/tests
 # preserves these markers verbatim.
 IMG_TOKEN_PREFIX = "ANOMALICAIMG"
 IMG_TOKEN_SUFFIX = "IMGEND"
-IMG_TOKEN_RE = re.compile(rf"{IMG_TOKEN_PREFIX}([0-9a-f]{{12}}){IMG_TOKEN_SUFFIX}")
+IMG_TOKEN_RE = re.compile(rf"{IMG_TOKEN_PREFIX}(\d+){IMG_TOKEN_SUFFIX}")
 
 REDACTION_TOKEN_PREFIX = "ANOMALICAREDACTED"
 REDACTION_TOKEN_SUFFIX = "REDEND"
@@ -29,15 +33,13 @@ REDACTION_TOKEN_RE = re.compile(
     rf"{REDACTION_TOKEN_PREFIX}(\d+){REDACTION_TOKEN_SUFFIX}"
 )
 
-# Print-edition page markers from EPUB3 pagebreaks. The page label (title
-# attribute) is alphanumeric in practice - Arabic digits or roman numerals for
-# front matter - so it survives markdownify verbatim between the token affixes.
+# Tokens contain an index, never source text: labels may contain punctuation,
+# Unicode, YAML syntax or even our token delimiters.
 PAGE_TOKEN_PREFIX = "ANOMALICAPAGE"
 PAGE_TOKEN_SUFFIX = "PGEND"
-PAGE_TOKEN_RE = re.compile(rf"{PAGE_TOKEN_PREFIX}([0-9A-Za-z]+){PAGE_TOKEN_SUFFIX}")
-PRINTED_PAGE_RE = re.compile(r"<!-- printed_page: ([0-9A-Za-z]+) -->")
-# A page label worth emitting: Arabic digits or a roman numeral (front matter).
-PAGE_LABEL_RE = re.compile(r"^[0-9A-Za-z]+$")
+PAGE_TOKEN_RE = re.compile(rf"{PAGE_TOKEN_PREFIX}(\d+){PAGE_TOKEN_SUFFIX}")
+_PAGE_SCALAR = r'(?:"(?:\\.|[^"\\])*"|[^\n<>]+?)'
+PRINTED_PAGE_RE = re.compile(rf"<!-- printed_page: ({_PAGE_SCALAR}) -->")
 
 # Anomalica Prometheus EPUBs carry Kindle renderer locations as data attributes
 # on paragraphs. As with images and pagebreaks, use an alphanumeric token to
@@ -73,7 +75,29 @@ class ExtractedImage:
     ext: str
     media_type: str
     bytes: bytes
+
+
+@dataclass
+class ImageOccurrence:
+    image: ExtractedImage
     alt: str | None = None
+    caption: str | None = None
+
+
+class EpubExtractionError(ValueError):
+    """The source cannot be represented without silently losing evidence."""
+
+
+class EpubExtractionWarning(UserWarning):
+    """Source evidence is retained, but a semantic association is unresolved."""
+
+
+@dataclass(frozen=True)
+class NavigationEntry:
+    path: str
+    fragment: str
+    title: str
+    logical: bool
 
 
 @dataclass
@@ -305,8 +329,8 @@ def _parse_designation(text: str | None) -> tuple[str | None, str | None, bool]:
     number is the chapter number as a decimal string, whatever notation the
     source used ('Chapter One' and 'Chapter I' and '1.' all give '1'), or None.
     title is the text with the designation removed. is_part marks a part divider
-    ('Part One', 'II. Finding Our Liberty'), which carries a title but never a
-    chapter number.
+    ('Part One'), which carries a title but never a chapter number. An ambiguous
+    Roman-numbered title ('II. Finding Our Liberty') stays verbatim.
     """
     t = (text or "").strip()
     if not t:
@@ -322,8 +346,9 @@ def _parse_designation(text: str | None) -> tuple[str | None, str | None, bool]:
         return m.group(1), m.group(2).strip(), False
     m = _ROMAN_TITLE_RE.match(t)
     if m:
-        # Uppercase Roman + '. ' is the part-divider convention in these books.
-        return None, m.group(2).strip(), True
+        # This can number a chapter, a part or a subsection. Without an explicit
+        # designation, keep the title verbatim instead of inventing a part.
+        return None, t, False
     m = _BARE_DESIGNATION_RE.match(t)
     if m and (n := _enum_to_int(m.group(1))) is not None and n <= _MAX_BARE_CHAPTER:
         return str(n), None, False
@@ -337,11 +362,17 @@ def _is_pure_designation(text: str) -> bool:
     return number is not None and title is None and not is_part
 
 
+def _heading_text(tag: Tag) -> str:
+    # Do not insert spaces between inline nodes: a page point or styled drop-cap
+    # can sit inside a word. Only source whitespace is collapsed for metadata.
+    return re.sub(r"\s+", " ", PAGE_TOKEN_RE.sub("", tag.get_text())).strip()
+
+
 def _analyse_body(body) -> tuple[str | None, str | None, object | None]:
     """The chapter's title, its number, and the node to strip from the body.
 
-    Finds the title heading (the first heading that is not itself just a number)
-    and the chapter number, which may sit in that heading ('Chapter One: ...'),
+    Finds the opening title heading and the chapter number, which may sit in
+    that heading ('Chapter One: ...'),
     in a bare block right above it ('1' or 'ONE' styled as its own line), or be
     the heading itself when the chapter has no title of its own. The number's
     node is returned so the caller can drop it - otherwise it survives markdownify
@@ -350,33 +381,43 @@ def _analyse_body(body) -> tuple[str | None, str | None, object | None]:
     blocks = [
         (tag, text)
         for tag in body.find_all(_HEADINGS + ("p",))
-        if (text := tag.get_text(" ", strip=True))
+        if (text := _heading_text(tag))
     ]
     headings = [
         (i, tag, text) for i, (tag, text) in enumerate(blocks) if tag.name in _HEADINGS
     ]
     if not headings:
         return None, None, None
+    # A later subheading does not name prose preceding it. Explicit chapter
+    # headings later in a document are separate DOM sections, not this opening.
+    if any(
+        not _is_pure_designation(text) and not _parse_designation(text)[2]
+        for _, text in blocks[: headings[0][0]]
+    ):
+        return None, None, None
 
-    # The title heading is the first heading that is neither a bare number nor a
-    # part word; that heading may still carry its own number ('Chapter One: X').
-    title_entry = next(
-        (
-            (i, tag, text)
-            for i, tag, text in headings
-            if not _is_pure_designation(text) and not _parse_designation(text)[2]
-        ),
-        None,
-    )
+    idx, first_tag, text = headings[0]
+    first_number, _, first_part = _parse_designation(text)
+    if _is_pure_designation(text) or first_part:
+        following = blocks[idx + 1] if idx + 1 < len(blocks) else None
+        if (
+            following is not None
+            and following[0].name in _HEADINGS
+            and not _is_pure_designation(following[1])
+            and not _parse_designation(following[1])[2]
+        ):
+            next_number, next_title, _ = _parse_designation(following[1])
+            return (
+                next_title or following[1],
+                (None if first_part else first_number or next_number),
+                (first_tag if first_number else None),
+            )
+        return (
+            (text if first_part else None),
+            first_number,
+            (first_tag if first_number else None),
+        )
 
-    if title_entry is None:
-        # Every heading is a bare number (e.g. 'ONE'..'SIX') - the number is the
-        # chapter's identity and it has no separate title.
-        i, tag, text = headings[0]
-        number = _parse_designation(text)[0]
-        return None, number, (tag if number else None)
-
-    idx, _tag, text = title_entry
     number, title, _ = _parse_designation(text)
     title = title or text
 
@@ -390,31 +431,93 @@ def _analyse_body(body) -> tuple[str | None, str | None, object | None]:
     return title, number, strip_node
 
 
-def _toc_titles(book: epub.EpubBook) -> dict[str, str]:
-    """Map each document's filename to its title from the epub's navigation
-    (toc.ncx / nav). The TOC is the authoritative source of chapter titles and
-    carries the printed chapter number ('1. Shattered World'); many epubs style
-    titles as `<p class="chaptername">` that the in-body h1-h3 scan cannot see."""
-    titles: dict[str, str] = {}
+def _target(base_file: str, href: str) -> tuple[str, str]:
+    parsed = urlsplit(href)
+    if parsed.scheme or parsed.netloc:
+        raise EpubExtractionError(f"External EPUB resource in {base_file}: {href!r}")
+    path = (
+        posixpath.normpath(
+            posixpath.join(posixpath.dirname(base_file), unquote(parsed.path))
+        )
+        if parsed.path
+        else base_file
+    )
+    return path, unquote(parsed.fragment)
 
-    def key(href: str) -> str:
-        return posixpath.basename(unquote(href).split("#", 1)[0])
 
-    def walk(entries) -> None:
+def _toc_entries(book: epub.EpubBook) -> list[NavigationEntry]:
+    """Keep package paths, fragment targets and chapter/part ancestry.
+
+    Nested subsection links remain ordinary headings. A root entry, a child of a
+    part, or an explicitly named Chapter is a logical boundary; TOC depth alone
+    is not a chapter number. ebooklib has already resolved TOC package paths.
+    """
+    result: list[NavigationEntry] = []
+
+    def walk(entries, depth=0, parent_part=False, in_chapter=False) -> None:
         for entry in entries:
             node, children = entry if isinstance(entry, (tuple, list)) else (entry, ())
             href = getattr(node, "href", None)
-            title = getattr(node, "title", None)
-            if href and title and title.strip():
-                titles.setdefault(key(href), title.strip())
+            title = (getattr(node, "title", None) or "").strip()
+            number, _, is_part = _parse_designation(title)
+            explicit = bool(_CHAPTER_PREFIX_RE.match(title) and number)
+            logical = (
+                depth == 0
+                or parent_part
+                or explicit
+                or (bool(number) and not in_chapter)
+            )
+            if href and title:
+                path, fragment = _target("", href)
+                result.append(NavigationEntry(path, fragment, title, logical))
             if children:
-                walk(children)
+                walk(
+                    children,
+                    depth + 1,
+                    is_part,
+                    not is_part and (in_chapter or (logical and bool(href))),
+                )
 
-    try:
-        walk(book.toc)
-    except Exception:
-        pass
-    return titles
+    walk(book.toc)
+    return result
+
+
+def _page_list_targets(book: epub.EpubBook) -> dict[tuple[str, str], str]:
+    """EPUB 3 page-list and EPUB 2 NCX pageTarget labels at exact DOM targets."""
+    targets: dict[tuple[str, str], str] = {}
+
+    def add(base_file, href, label):
+        if not href or not label:
+            return
+        key = _target(base_file, href)
+        if key in targets and targets[key] != label:
+            raise EpubExtractionError(
+                f"Conflicting page-list labels for {key}: {targets[key]!r}, {label!r}"
+            )
+        targets[key] = label
+
+    for item in book.get_items():
+        if "nav" in getattr(item, "properties", ()) or isinstance(item, epub.EpubNav):
+            soup = BeautifulSoup(item.get_content(), "lxml-xml")
+            for nav in soup.find_all("nav"):
+                if _attr_contains(nav, "type", "page-list") or _attr_contains(
+                    nav, "role", "doc-pagelist"
+                ):
+                    for link in nav.find_all("a", href=True):
+                        add(
+                            item.file_name, link["href"], link.get_text(" ", strip=True)
+                        )
+        elif item.media_type == "application/x-dtbncx+xml":
+            soup = BeautifulSoup(item.get_content(), "lxml-xml")
+            for page in soup.find_all("pageTarget"):
+                content, label = page.find("content"), page.find("navLabel")
+                if content is not None and label is not None:
+                    add(
+                        item.file_name,
+                        content.get("src"),
+                        label.get_text(" ", strip=True),
+                    )
+    return targets
 
 
 def _strip_navigation(soup: BeautifulSoup) -> None:
@@ -449,11 +552,11 @@ FN_TOKEN_RE = re.compile(rf"{FN_TOKEN_PREFIX}(\d+){FN_TOKEN_SUFFIX}")
 
 def _attr_contains(tag, local_name: str, needle: str) -> bool:
     """True if any of the tag's attributes whose local name is `local_name`
-    (ignoring namespace) contains `needle` - handles `epub:type` however
+    (ignoring namespace) contains the whitespace-delimited token `needle` - handles `epub:type` however
     BeautifulSoup exposes it."""
     for key, value in tag.attrs.items():
         local = key.rsplit(":", 1)[-1].rsplit("}", 1)[-1]
-        if local == local_name and needle in str(value):
+        if local == local_name and needle in str(value).split():
             return True
     return False
 
@@ -462,11 +565,15 @@ def _is_noteref(a) -> bool:
     """A note reference: the little superscript that points at a footnote or
     endnote. Recognised by `epub:type="noteref"`, `role="doc-noteref"`, or the
     common plain form of a linked superscript pointing at an in-book anchor."""
-    if _attr_contains(a, "type", "noteref") or _attr_contains(a, "role", "noteref"):
+    if _attr_contains(a, "role", "doc-backlink") or _attr_contains(
+        a, "type", "backlink"
+    ):
+        return False
+    if _attr_contains(a, "type", "noteref") or _attr_contains(a, "role", "doc-noteref"):
         return True
     href = (a.get("href") or "").strip()
     if "#" in href and not href.startswith(("http://", "https://", "mailto:")):
-        return a.find("sup") is not None
+        return a.find("sup") is not None or a.find_parent("sup") is not None
     return False
 
 
@@ -476,20 +583,25 @@ def _note_content(element) -> str:
     XML declaration is prepended to the fragment."""
     frag = BeautifulSoup(str(element), "html.parser")
     for a in frag.find_all("a"):
-        # An internal anchor in a note is its return arrow - remove it and its
-        # text; an external link is a citation - keep it.
-        if not (a.get("href") or "").startswith(("http://", "https://", "mailto:")):
+        # Only an evidenced backlink is disposable. Ordinary internal citations
+        # retain their words, exactly like internal links in the main text.
+        if (
+            _attr_contains(a, "role", "doc-backlink")
+            or _attr_contains(a, "type", "backlink")
+            or a.get_text(strip=True) in {"↩", "↵", "↑", "↥", "↩︎", "↩️"}
+        ):
             a.decompose()
+    _strip_internal_anchors(frag)
     text = markdownify(str(frag), heading_style="ATX")
     text = re.sub(r"\s+", " ", text).strip()
-    # Drop a markdown list bullet markdownify added, then the note's own leading
-    # marker ('1', '1.', or an id-derived 'fn1').
-    return re.sub(r"^(?:[-*]\s+)?(?:fn\s*)?\d+[.\s]*", "", text).strip()
-
-
-# A notes document is spent - safe to drop - when this share of its anchored
-# entries were pulled into citing chapters.
-_NOTES_SPENT_SHARE = 0.8
+    text = re.sub(r"^[-*]\s+", "", text)
+    # Never strip an arbitrary leading year/quantity as if it were a note number.
+    marker = re.fullmatch(
+        r"(?:n|fn|note|footnote|endnote)[_-]?(\d+)", element.get("id", ""), re.I
+    )
+    if marker:
+        text = re.sub(rf"^(?:fn\s*)?{marker[1]}(?:[.)](?:\s+|$)|\s+)", "", text)
+    return text.strip()
 
 
 class _FootnoteResolver:
@@ -502,14 +614,101 @@ class _FootnoteResolver:
     documents are recorded so the caller can drop them - their content has been
     pulled into the per-chapter definitions and would otherwise appear twice."""
 
-    def __init__(self, book: epub.EpubBook) -> None:
+    def __init__(self, book: epub.EpubBook, page_targets=()) -> None:
         self.book = book
         self.counter = 0
         self.note_documents: set[str] = set()
-        # Per notes document, the anchors whose definitions were pulled into a
-        # citing chapter - what decides whether the document is spent.
         self.pulled: dict[str, set[str]] = {}
         self._soups: dict[str, BeautifulSoup | None] = {}
+        self._contents: dict[tuple[str, str], str] = {}
+        self._page_targets = set(page_targets)
+        self._spine_files = {item.file_name for item in _spine_documents(book)}
+        # Plan before rendering anything: a notes document may precede its
+        # references in the spine. Only transferred definitions may be removed.
+        for item in _spine_documents(book):
+            soup = self._soup(item.file_name)
+            if soup is None:
+                continue
+            if self._is_notes_document(soup):
+                self.note_documents.add(item.file_name)
+            for a in (soup.find("body") or soup).find_all("a"):
+                if (
+                    _is_noteref(a)
+                    and a.get("href")
+                    and not a.find_parent(["nav", "script", "style"])
+                ):
+                    self._prepare(item.file_name, a["href"])
+
+    @staticmethod
+    def _is_notes_document(soup) -> bool:
+        heading = soup.find(_HEADINGS)
+        return bool(
+            heading
+            and heading.get_text(" ", strip=True).casefold()
+            in {"notes", "endnotes", "footnotes"}
+        ) or any(
+            _attr_contains(tag, "type", kind)
+            for tag in soup.find_all(["body", "section"])
+            for kind in ("endnotes", "footnotes")
+        )
+
+    def _prepare(self, base_file: str, href: str) -> tuple[str, str]:
+        target = _target(base_file, href)
+        if target in self._contents:
+            return target
+        filename, fragment = target
+        soup = self._soup(filename)
+        element = soup.find(id=fragment) if soup is not None and fragment else None
+        content = ""
+        if element is not None:
+            # Rich notes and source coordinates stay at their source positions.
+            # Flattening them to a one-line footnote would lose images, structure
+            # or print-page authority. The reference still gets a durable marker.
+            nodes = [element, *element.find_all(True)]
+            rich = any(
+                tag.name
+                in (
+                    *_HEADINGS,
+                    "img",
+                    "svg",
+                    "image",
+                    "object",
+                    "embed",
+                    "canvas",
+                    "table",
+                    "pre",
+                )
+                or _is_pagebreak(tag)
+                or tag.has_attr("data-kindle-position")
+                or (filename, tag.get("id")) in self._page_targets
+                or (tag.name == "a" and _is_noteref(tag))
+                for tag in nodes
+            )
+            if not rich:
+                content = _note_content(element)
+            elif filename not in self._spine_files:
+                raise EpubExtractionError(
+                    f"Rich note outside the readable spine cannot be placed losslessly: {filename}#{fragment}"
+                )
+            else:
+                warnings.warn(
+                    f"Rich note kept in its source section: {filename}#{fragment}",
+                    EpubExtractionWarning,
+                )
+            note_semantics = self._is_notes_document(soup) or any(
+                _attr_contains(element, "type", kind)
+                or _attr_contains(element, "role", f"doc-{kind}")
+                for kind in ("footnote", "endnote")
+            )
+            if content and note_semantics:
+                self.pulled.setdefault(filename, set()).add(fragment)
+        else:
+            warnings.warn(
+                f"Unresolved note reference in {base_file}: {href!r}",
+                EpubExtractionWarning,
+            )
+        self._contents[target] = content
+        return target
 
     def _soup(self, filename: str) -> BeautifulSoup | None:
         if filename not in self._soups:
@@ -525,51 +724,50 @@ class _FootnoteResolver:
         found - the marker is still emitted rather than left as a bare digit."""
         self.counter += 1
         label = str(self.counter)
-        target, _, fragment = href.partition("#")
-        if not fragment:
-            return label, ""
-        target_file = _resolve_href(base_file, target) if target else base_file
-        soup = self._soup(target_file)
-        content = ""
-        if soup is not None and (element := soup.find(id=fragment)) is not None:
-            content = _note_content(element)
-        if posixpath.basename(target_file) != posixpath.basename(base_file):
-            name = posixpath.basename(target_file)
-            self.note_documents.add(name)
-            if content:
-                self.pulled.setdefault(name, set()).add(fragment)
-        return label, content
+        target = self._prepare(base_file, href)
+        return label, self._contents[target]
 
-    def spent(self, filename: str) -> bool:
-        """True when the notes document's definitions have (nearly) all been
-        pulled into the chapters that cite them, so keeping the document would
-        only repeat them. A book whose references are plain superscripts, with
-        only a few linked, still needs its notes section - dropping it on the
-        strength of those few lost 170 endnotes from one book."""
-        pulled = self.pulled.get(filename, set())
-        if not pulled:
-            return False  # nothing was taken from it, so nothing would repeat
-        soup = self._soup_by_name(filename)
-        if soup is None:
-            return False  # a document that cannot be read is never dropped
-        anchors = {
-            el.get("id")
-            for el in soup.find_all(id=True)
-            if el.get_text(" ", strip=True)
-        }
-        if not anchors:
+    def prune(self, body, filename: str) -> bool:
+        """Remove transferred definitions, never a percentage of a document.
+
+        Return true only for a spent notes document containing its generic Notes
+        title and empty wrappers. Residual headings, introductions, notes, media
+        and page markers all keep the document alive.
+        """
+        removed = False
+        for fragment in self.pulled.get(filename, ()):
+            element = body.find(id=fragment)
+            if element is not None:
+                element.decompose()
+                removed = True
+        if (
+            not removed
+            or filename not in self.note_documents
+            or (filename, "") in self._page_targets
+        ):
             return False
-        return len(anchors & pulled) >= _NOTES_SPENT_SHARE * len(anchors)
-
-    def _soup_by_name(self, filename: str) -> BeautifulSoup | None:
-        """The document whose file name (any directory prefix aside) is
-        `filename` - note_documents holds bare names, while items in the
-        package can sit under a prefix such as Text/."""
-        for item in self.book.get_items():
-            name = getattr(item, "file_name", "") or ""
-            if posixpath.basename(name) == filename:
-                return self._soup(name)
-        return None
+        heading = body.find(_HEADINGS)
+        disposable_heading = (
+            heading
+            if heading
+            and heading.get_text(" ", strip=True).casefold()
+            in {"notes", "endnotes", "footnotes"}
+            else None
+        )
+        return not any(
+            str(text).strip()
+            and (
+                disposable_heading is None
+                or text.find_parent(_HEADINGS) is not disposable_heading
+            )
+            for text in body.find_all(string=True)
+        ) and not any(
+            tag.name in {"img", "svg", "image", "hr"}
+            or _is_pagebreak(tag)
+            or (filename, tag.get("id")) in self._page_targets
+            or tag.has_attr("data-kindle-position")
+            for tag in body.find_all(True)
+        )
 
 
 def _collect_footnotes(
@@ -597,9 +795,7 @@ def _expand_footnote_tokens(md: str) -> str:
 
 
 def _resolve_href(base_file: str, src: str) -> str:
-    src = unquote(src.split("#", 1)[0].split("?", 1)[0])
-    base_dir = posixpath.dirname(base_file)
-    return posixpath.normpath(posixpath.join(base_dir, src)) if base_dir else src
+    return _target(base_file, src)[0]
 
 
 def _ext_for(media_type: str, src: str) -> str:
@@ -611,49 +807,147 @@ def _ext_for(media_type: str, src: str) -> str:
 
 def _collect_images(
     body, chapter_file: str, book: epub.EpubBook, images: list[ExtractedImage]
-) -> None:
-    """Replace each <img> in the chapter body with a token, recording the image bytes.
+) -> list[ImageOccurrence]:
+    """Deduplicate bytes, not occurrences or their source-supplied metadata.
 
-    Tokens take the form __ANOMALICA_IMG_{12hex}__ and are expanded to image
-    annotations after markdownify runs (markdownify mangles HTML comments
-    inside the body, so we round-trip through a plain text token).
+    Unresolved media fails extraction before the caller writes any record. A
+    missing picture is not an empty picture, and alt text is not its replacement.
     """
     by_hash = {img.hash: img for img in images}
-    for img_tag in body.find_all("img"):
-        src = img_tag.get("src")
+    occurrences: list[ImageOccurrence] = []
+    unsupported = body.find(["object", "embed", "canvas"])
+    if unsupported is not None:
+        raise EpubExtractionError(
+            f"Unsupported embedded {unsupported.name} in {chapter_file}; source retained in EPUB"
+        )
+    candidates = list(body.find_all(["img", "svg"]))
+    figure_counts: dict[int, int] = {}
+    for candidate in candidates:
+        figure = candidate.find_parent("figure")
+        if figure is not None:
+            figure_counts[id(figure)] = figure_counts.get(id(figure), 0) + 1
+    for container in candidates:
+        img_tag = container
+        if container.name == "svg":
+            # A simple SVG image wrapper references original image bytes. A
+            # composed vector drawing cannot be replaced by one of its members.
+            members = container.find_all("image")
+            if len(members) != 1 or any(
+                tag.name not in {"image", "title", "desc"}
+                for tag in container.find_all(True)
+            ):
+                raise EpubExtractionError(
+                    f"Unsupported inline SVG drawing in {chapter_file}; source retained in EPUB"
+                )
+            img_tag = members[0]
+        src = (
+            img_tag.get("src")
+            if img_tag.name == "img"
+            else (img_tag.get("href") or img_tag.get("xlink:href"))
+        )
         if not src:
-            img_tag.decompose()
-            continue
+            raise EpubExtractionError(
+                f"Image without a resource reference in {chapter_file}: {str(container)!r}"
+            )
         try:
             href = _resolve_href(chapter_file, src)
             item = book.get_item_with_href(href)
             if item is None:
-                img_tag.decompose()
-                continue
+                raise EpubExtractionError(
+                    f"Unresolved image in {chapter_file}: {src!r} (package path {href!r})"
+                )
             img_bytes = item.get_content()
+            if not img_bytes:
+                raise EpubExtractionError(
+                    f"Empty image resource in {chapter_file}: {src!r}"
+                )
             img_hash = hashlib.sha256(img_bytes).hexdigest()[:12]
             alt = (img_tag.get("alt") or "").strip() or None
-
+            if container.name == "svg" and not alt:
+                # SVG accessibility text is source metadata, not a generated
+                # description or a printed caption.
+                alt = (
+                    img_tag.get("aria-label") or container.get("aria-label") or ""
+                ).strip() or None
+                if not alt:
+                    alt = (
+                        "\n".join(
+                            _caption_text(tag)
+                            for tag in container.find_all(["title", "desc"])
+                        ).strip()
+                        or None
+                    )
             existing = by_hash.get(img_hash)
             if existing is None:
                 ext = _ext_for(item.media_type, src)
-                new_img = ExtractedImage(
+                existing = ExtractedImage(
                     hash=img_hash,
                     ext=ext,
                     media_type=item.media_type,
                     bytes=img_bytes,
-                    alt=alt,
                 )
-                images.append(new_img)
-                by_hash[img_hash] = new_img
-            elif existing.alt is None and alt:
-                existing.alt = alt
+                images.append(existing)
+                by_hash[img_hash] = existing
+            elif existing.bytes != img_bytes:
+                raise EpubExtractionError(
+                    f"Image hash-prefix collision in {chapter_file}: {src!r}"
+                )
+        except EpubExtractionError:
+            raise
+        except Exception as exc:
+            raise EpubExtractionError(
+                f"Cannot read image in {chapter_file}: {src!r}: {exc}"
+            ) from exc
 
-            img_tag.replace_with(
-                f"\n\n{IMG_TOKEN_PREFIX}{img_hash}{IMG_TOKEN_SUFFIX}\n\n"
-            )
-        except Exception:
-            img_tag.decompose()
+        caption_text = None
+        figure = container.find_parent("figure")
+        if figure is not None:
+            captions = [
+                tag
+                for tag in figure.find_all("figcaption")
+                if tag.find_parent("figure") is figure
+            ]
+            if len(captions) == 1:
+                caption = captions[0]
+                # Coordinates/references embedded in a caption cannot be moved
+                # into a scalar without moving their source point. Keep this
+                # ambiguous/rich caption as prose, with an explicit diagnostic.
+                movable = not (
+                    PAGE_TOKEN_RE.search(caption.get_text())
+                    or FN_TOKEN_RE.search(caption.get_text())
+                ) and not any(
+                    tag.has_attr("data-kindle-position")
+                    or (tag.name == "a" and _is_noteref(tag))
+                    or tag.name in {"img", "svg", "table"}
+                    for tag in [caption, *caption.find_all(True)]
+                )
+                if figure_counts[id(figure)] == 1 and movable:
+                    caption_text = _caption_text(caption) or None
+                    caption.decompose()
+                else:
+                    warnings.warn(
+                        f"Caption kept as prose in {chapter_file}: figure has multiple images or a caption with source coordinates/references",
+                        EpubExtractionWarning,
+                    )
+        index = len(occurrences)
+        occurrences.append(ImageOccurrence(existing, alt, caption_text))
+        container.replace_with(f"\n\n{IMG_TOKEN_PREFIX}{index}{IMG_TOKEN_SUFFIX}\n\n")
+    return occurrences
+
+
+def _caption_text(caption: Tag) -> str:
+    """Visible caption text, preserving inline adjacency and explicit line breaks."""
+
+    def walk(node):
+        if isinstance(node, NavigableString):
+            return re.sub(r"\s+", " ", str(node))
+        if node.name == "br":
+            return "\n"
+        text = "".join(walk(child) for child in node.children)
+        return f"\n{text}\n" if node.name in {"p", "div", "li"} else text
+
+    text = walk(caption)
+    return "\n".join(line.strip() for line in text.splitlines()).strip()
 
 
 def _replace_redactions_in_soup(body) -> None:
@@ -692,45 +986,90 @@ def _is_pagebreak(tag) -> bool:
     """True for an EPUB3 pagebreak marker - `epub:type="pagebreak"` or
     `role="doc-pagebreak"` - however BeautifulSoup exposes the (possibly
     namespaced) attribute name."""
-    for key, value in tag.attrs.items():
-        local = key.rsplit(":", 1)[-1].rsplit("}", 1)[-1]
-        text = str(value)
-        if local == "type" and "pagebreak" in text:
-            return True
-        if local == "role" and "doc-pagebreak" in text:
-            return True
-    return False
+    return _attr_contains(tag, "type", "pagebreak") or _attr_contains(
+        tag, "role", "doc-pagebreak"
+    )
 
 
 def _pagebreak_label(tag) -> str | None:
-    """The print-edition page label for a pagebreak - its `title` (e.g.
-    title="308"), else a number in its id (id="page_308"), else its text."""
-    title = (tag.get("title") or "").strip()
-    if title:
-        return title
-    tag_id = (tag.get("id") or "").strip()
-    match = re.search(r"([0-9]+|[ivxlcdmIVXLCDM]+)$", tag_id)
-    if match:
-        return match.group(1)
+    """An explicit label, or a narrowly evidenced page-number ID convention."""
+    for attr in ("title", "aria-label"):
+        label = tag.get(attr) or ""
+        if label.strip():
+            return label
     text = tag.get_text(strip=True)
-    return text or None
+    if text:
+        return text
+    tag_id = (tag.get("id") or "").strip()
+    match = re.fullmatch(r"(?:page|pg|p)[_-]?([0-9]+|[ivxlcdm]+)", tag_id, re.I)
+    if match and (match[1].isdigit() or _roman_to_int(match[1]) is not None):
+        return match.group(1)
+    return None
 
 
-def _collect_pagebreaks(body) -> None:
-    """Replace each EPUB pagebreak element with a page token carrying its
-    print-edition label, so the marker survives markdownify (which mangles HTML
-    comments) and expands to `<!-- printed_page: N -->` afterward. Pagebreaks
-    with no usable alphanumeric label are dropped."""
-    for tag in body.find_all(_is_pagebreak):
-        label = _pagebreak_label(tag)
-        if label and PAGE_LABEL_RE.match(label):
-            tag.replace_with(f"\n\n{PAGE_TOKEN_PREFIX}{label}{PAGE_TOKEN_SUFFIX}\n\n")
+def _collect_pagebreaks(body, targets: dict[str, str] | None = None) -> list[str]:
+    """Collect point markers before links/headings are stripped, adding no spaces.
+
+    A page-list may point at a whole paragraph/section rather than an empty marker.
+    Keep that content and put the coordinate at the target's start. Marker tags
+    keep their IDs until logical chapter boundaries have also been resolved.
+    """
+    targets = dict(targets or {})
+    labels: list[str] = []
+    for tag in [body, *body.find_all(True)]:
+        fragment = "" if tag is body and "" in targets else tag.get("id")
+        listed = targets.pop(fragment, None)
+        semantic = _is_pagebreak(tag)
+        if not semantic and listed is None:
+            continue
+        explicit = _pagebreak_label(tag) if semantic else None
+        # A page list can supply the label when the marker has only an opaque ID.
+        if listed is not None and explicit is not None and listed != explicit:
+            raise EpubExtractionError(
+                f"Page-list/marker label conflict at {fragment!r}: {listed!r}, {explicit!r}"
+            )
+        label = listed if listed is not None else explicit
+        if label is None:
+            warnings.warn(
+                f"Unlabelled EPUB pagebreak at {fragment!r}; no page number inferred",
+                EpubExtractionWarning,
+            )
+            continue
+        token = f"{PAGE_TOKEN_PREFIX}{len(labels)}{PAGE_TOKEN_SUFFIX}"
+        labels.append(label)
+        # Only the displayed label of a dedicated pagebreak is replaced. A listed
+        # paragraph/heading, or a marker containing other prose, is never emptied.
+        if semantic and (
+            not tag.get_text(strip=True) or tag.get_text(strip=True) == label.strip()
+        ):
+            tag.clear()
+        if tag.name in {"img", "image", "br", "hr", "input", "source"}:
+            # Void elements have no rendered text children. Preserve the marker
+            # immediately before them instead of losing it in HTML serialisation.
+            tag.insert_before(token)
         else:
-            tag.decompose()
+            tag.insert(0, token)
+    if targets:
+        raise EpubExtractionError(
+            f"Missing EPUB page-list targets: {sorted(targets)!r}"
+        )
+    return labels
 
 
-def _expand_page_tokens(md: str) -> str:
-    return PAGE_TOKEN_RE.sub(lambda m: f"<!-- printed_page: {m.group(1)} -->", md)
+def _page_scalar(label: str) -> str:
+    # Preserve established simple labels, but quote anything whose YAML type or
+    # lexical value would change (015, true, null, punctuation, Unicode, etc.).
+    if re.fullmatch(r"[0-9A-Za-z]+", label):
+        parsed = yaml.safe_load(label)
+        if type(parsed) in (str, int) and str(parsed) == label:
+            return label
+    return _yaml_quote(label)
+
+
+def _expand_page_tokens(md: str, labels: list[str]) -> str:
+    return PAGE_TOKEN_RE.sub(
+        lambda m: f"<!-- printed_page: {_page_scalar(labels[int(m[1])])} -->", md
+    )
 
 
 def _collect_kindle_positions(body) -> list[str]:
@@ -769,8 +1108,8 @@ def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
 
         def replace(match: re.Match) -> str:
             nonlocal current
-            label = match.group(1)
-            number = int(label) if label.isdigit() else None
+            label = str(yaml.safe_load(match.group(1)))
+            number = int(label) if re.fullmatch(r"[0-9]+", label) else None
             marker = match.group(0)
 
             if number is not None:
@@ -784,7 +1123,7 @@ def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
                 )
                 if continuation is not None:
                     current = continuation
-                    marker = f"<!-- printed_page_sequence: {current + 1} -->\n{marker}"
+                    marker = f"<!-- printed_page_sequence: {current + 1} -->{marker}"
                 else:
                     last = sequences[current]["last"]
                     collision = any(label in state["seen"] for state in sequences)
@@ -792,7 +1131,7 @@ def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
                         sequences.append({"seen": set(), "last": None})
                         current = len(sequences) - 1
                         marker = (
-                            f"<!-- printed_page_sequence: {current + 1} -->\n{marker}"
+                            f"<!-- printed_page_sequence: {current + 1} -->{marker}"
                         )
                 sequences[current]["last"] = number
 
@@ -805,7 +1144,8 @@ def _disambiguate_page_sequences(chapters: list[Chapter]) -> None:
 # A pagebreak at the very start of a heading (the common per-chapter case)
 # markdownifies inline: `## <!-- printed_page: 13 --> Chapter 2`.
 _HEADING_PAGE_RE = re.compile(
-    r"^(#{1,6})[ \t]+((?:<!-- printed_page: \S+ -->[ \t]*)+)(.*)$", re.MULTILINE
+    rf"^(#{{1,6}})[ \t]+((?:<!-- printed_page: {_PAGE_SCALAR} -->[ \t]*)+)(.*)$",
+    re.MULTILINE,
 )
 
 
@@ -815,7 +1155,7 @@ def _hoist_heading_page_markers(md: str) -> str:
     `## Chapter 2`). A heading that was only a pagebreak yields just the marker."""
 
     def repl(match: re.Match) -> str:
-        markers = re.findall(r"<!-- printed_page: \S+ -->", match.group(2))
+        markers = [m.group(0) for m in PRINTED_PAGE_RE.finditer(match.group(2))]
         title = match.group(3).strip()
         if title:
             markers.append(f"{match.group(1)} {title}")
@@ -834,27 +1174,45 @@ def _xhtml_to_markdown(
     soup = BeautifulSoup(xhtml, "lxml-xml")
     _strip_navigation(soup)
     body = soup.find("body") or soup
+    labels = _collect_pagebreaks(body)
+    return _body_to_markdown(body, chapter_file, book, images, resolver, labels)
+
+
+def _body_to_markdown(
+    body, chapter_file, book, images, resolver, labels, *, strip_number=True
+):
     title, number, number_tag = _analyse_body(body)
-    if number_tag is not None:
-        # Chapter-number headings are omitted from prose, but publishers often
-        # put the chapter's print-page anchor inside that heading. Keep those
-        # anchors at the same position before removing the redundant number.
-        for pagebreak in list(number_tag.find_all(_is_pagebreak)):
-            number_tag.insert_before(pagebreak.extract())
-        number_tag.decompose()
+    if number_tag is not None and strip_number:
+        # Keep a designation-only section until split-spine reconciliation. A
+        # heading-only document is just as meaningful as a paragraph-only one.
+        plain = PAGE_TOKEN_RE.sub("", body.get_text(" ", strip=True)).strip()
+        designation = PAGE_TOKEN_RE.sub(
+            "", number_tag.get_text(" ", strip=True)
+        ).strip()
+        if plain != designation or body.find(["img", "svg", "image"]):
+            for marker in PAGE_TOKEN_RE.finditer(number_tag.get_text()):
+                number_tag.insert_before(marker.group(0))
+            number_tag.decompose()
     footnotes = _collect_footnotes(body, chapter_file, resolver)
     _strip_internal_anchors(body)
-    _collect_images(body, chapter_file, book, images)
-    _collect_pagebreaks(body)
+    occurrences = _collect_images(body, chapter_file, book, images)
     kindle_positions = _collect_kindle_positions(body)
     _replace_redactions_in_soup(body)
+    # Whitespace has the same text meaning when emphasised. markdownify drops
+    # whitespace-only emphasis, which otherwise joins "so<em> </em>quiet".
+    # Work inside-out so nested formatting cannot hide the separator again.
+    for formatting in reversed(body.find_all(["em", "strong", "i", "b"])):
+        if formatting.get_text() and not formatting.get_text().strip():
+            if formatting.find(True) is None:
+                formatting.unwrap()
     md = markdownify(str(body), heading_style="ATX", strip=["script", "style"])
     md = rejoin_dropcaps(md)
     md = _expand_redaction_tokens(md)
-    md = _expand_page_tokens(md)
+    md = _expand_page_tokens(md, labels)
     md = _expand_footnote_tokens(md)
     md = _expand_kindle_tokens(md, kindle_positions)
     md = _hoist_heading_page_markers(md)
+    md = _expand_image_tokens(md, occurrences)
     md = "\n".join(line.rstrip() for line in md.splitlines())
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
@@ -865,28 +1223,33 @@ def _xhtml_to_markdown(
 
 
 def _yaml_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    # JSON string syntax is valid YAML. Escape HTML delimiters as well so source
+    # text containing '-->' cannot terminate the enclosing annotation.
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("<", r"\u003c")
+        .replace(">", r"\u003e")
+        .replace("\u0085", r"\u0085")
+        .replace("\u2028", r"\u2028")
+        .replace("\u2029", r"\u2029")
+    )
 
 
-def _format_image_annotation(img: ExtractedImage) -> str:
+def _format_image_annotation(occurrence: ImageOccurrence) -> str:
+    img = occurrence.image
     lines = ["<!--", "image:", f"  file: {img.hash}.{img.ext}"]
-    if img.alt:
-        lines.append(f"  alt: {_yaml_quote(img.alt)}")
+    if occurrence.alt:
+        lines.append(f"  alt: {_yaml_quote(occurrence.alt)}")
+    if occurrence.caption:
+        lines.append(f"  caption: {_yaml_quote(occurrence.caption)}")
     lines.append("-->")
     return "\n".join(lines)
 
 
-def _expand_image_tokens(md: str, images: list[ExtractedImage]) -> str:
-    by_hash = {img.hash: img for img in images}
-
-    def replace(match: re.Match) -> str:
-        img = by_hash.get(match.group(1))
-        if img is None:
-            return ""
-        return _format_image_annotation(img)
-
-    return IMG_TOKEN_RE.sub(replace, md)
+def _expand_image_tokens(md: str, occurrences: list[ImageOccurrence]) -> str:
+    return IMG_TOKEN_RE.sub(
+        lambda m: _format_image_annotation(occurrences[int(m[1])]), md
+    )
 
 
 _KINDLE_POSITION_PREFIX_RE = re.compile(
@@ -896,8 +1259,9 @@ _KINDLE_POSITION_LINE_RE = re.compile(
     r"^\{\{_kindle_position[ \t]*:[ \t]*\d+[ \t]*\}\}$"
 )
 _CHAPTER_BOUNDARY_MARKER_RE = re.compile(
-    r"^<!-- printed_page(?:_sequence)?: [0-9A-Za-z]+ -->$"
+    rf"^(?:<!-- printed_page(?:_sequence)?: {_PAGE_SCALAR} -->)+$"
 )
+_PAGE_POINT_RE = re.compile(rf"<!-- printed_page(?:_sequence)?: {_PAGE_SCALAR} -->")
 
 
 def _plain_styled_line(line: str) -> str:
@@ -935,12 +1299,11 @@ def _redundant_designation_markers(chapter: Chapter) -> list[str] | None:
         stripped = line.strip()
         if not stripped:
             continue
-        if _CHAPTER_BOUNDARY_MARKER_RE.fullmatch(stripped):
-            markers.append(stripped)
-        elif _KINDLE_POSITION_LINE_RE.fullmatch(stripped):
-            continue
-        else:
-            content_lines.append(stripped)
+        markers.extend(match.group(0) for match in _PAGE_POINT_RE.finditer(stripped))
+        stripped = _PAGE_POINT_RE.sub("", stripped)
+        stripped = _KINDLE_POSITION_PREFIX_RE.sub("", stripped)
+        if stripped.strip():
+            content_lines.append(stripped.strip())
     if len(content_lines) != 1:
         return None
 
@@ -965,6 +1328,7 @@ def _opens_with_title(chapter: Chapter) -> bool:
             continue
         if _KINDLE_POSITION_LINE_RE.fullmatch(text):
             continue
+        text = _PAGE_POINT_RE.sub("", text)
         text = _KINDLE_POSITION_PREFIX_RE.sub("", text, count=1)
         return _plain_styled_line(text) == chapter.title
     return False
@@ -1003,7 +1367,268 @@ def _coalesce_split_chapters(chapters: list[Chapter]) -> list[Chapter]:
             continue
         coalesced.append(number_section)
         index += 1
-    return coalesced
+    # An empty TOC anchor immediately followed by its own Chapter N heading is
+    # one boundary. Do not emit a second chapter merely because both supply it.
+    result: list[Chapter] = []
+    for chapter in coalesced:
+        previous = result[-1] if result else None
+        same_identity = previous is not None and (
+            (
+                previous.title
+                and previous.title == chapter.title
+                and (
+                    not previous.number
+                    or not chapter.number
+                    or previous.number == chapter.number
+                )
+            )
+            or (
+                previous.number
+                and previous.number == chapter.number
+                and (not previous.title or not chapter.title)
+            )
+        )
+        if (
+            same_identity
+            and chapter.index == previous.index + 1
+            and all(
+                not line.strip() or _CHAPTER_BOUNDARY_MARKER_RE.fullmatch(line.strip())
+                for line in previous.markdown.splitlines()
+            )
+        ):
+            result[-1] = Chapter(
+                chapter.index,
+                previous.title or chapter.title,
+                "\n\n".join(
+                    part for part in (previous.markdown, chapter.markdown) if part
+                ),
+                previous.number or chapter.number,
+            )
+        else:
+            result.append(chapter)
+    return result
+
+
+def _structural_kind(tag: Tag) -> str | None:
+    for kind in ("chapter", "part"):
+        if _attr_contains(tag, "type", kind) or _attr_contains(
+            tag, "role", f"doc-{kind}"
+        ):
+            return kind
+    return None
+
+
+def _boundary_start(node: Tag, body: Tag) -> Tag:
+    """Use one DOM boundary for wrappers beginning at the same source point.
+
+    A TOC often names a span inside the opening paragraph. Splitting before that
+    span would leave an empty paragraph in the previous section and duplicate its
+    source position on the cloned wrapper. Move only across comments/whitespace,
+    never across source text, another element or a page token.
+    """
+    while node is not body and isinstance(node.parent, Tag):
+        if any(
+            not isinstance(sibling, Comment)
+            and (isinstance(sibling, Tag) or str(sibling).strip())
+            for sibling in node.previous_siblings
+        ):
+            break
+        node = node.parent
+    return node
+
+
+def _opening_text(node: Tag) -> str:
+    """The first visible text block at a boundary, without consulting later prose."""
+    if node.name in {"img", "svg", "object", "embed", "canvas", "script", "style"}:
+        return ""
+    if node.name in (*_HEADINGS, "p", "li"):
+        return _heading_text(node)
+    for child in node.children:
+        if isinstance(child, Comment):
+            continue
+        text = (
+            _opening_text(child)
+            if isinstance(child, Tag)
+            else PAGE_TOKEN_RE.sub("", str(child)).strip()
+        )
+        if text:
+            return text
+    return ""
+
+
+def _navigation_boundary(node: Tag, aliases: list[NavigationEntry]) -> NavigationEntry:
+    """Resolve labels sharing a source point, not an alleged TOC integrity error.
+
+    Prefer a unique match to the printed opening label/designation. If navigation
+    names disagree and the source cannot choose between them, leave the TOC title
+    empty and let ordinary source-heading interpretation supply any metadata. All
+    aliases remain in the immutable EPUB; they are not extra chapters or new fields.
+    """
+    first = aliases[0]
+    if len({entry.title for entry in aliases}) == 1:
+        return first
+
+    def normalise(text):
+        return re.sub(r"\s+", " ", text).strip().casefold()
+
+    opening = _opening_text(node)
+    source_number, source_title, source_part = _parse_designation(opening)
+
+    def score(entry):
+        if opening and entry.title == opening:
+            return 4
+        if opening and normalise(entry.title) == normalise(opening):
+            return 3
+        number, title, part = _parse_designation(entry.title)
+        if part or source_part:
+            return 0
+        titles_match = bool(
+            title and source_title and normalise(title) == normalise(source_title)
+        )
+        if (
+            number
+            and number == source_number
+            and (titles_match or not title or not source_title)
+        ):
+            return 2
+        return 1 if titles_match and (not number or not source_number) else 0
+
+    best_score = max(map(score, aliases))
+    best = [entry for entry in aliases if score(entry) == best_score]
+    signatures = {
+        (number, normalise(title or ""), part)
+        for number, title, part in (_parse_designation(entry.title) for entry in best)
+    }
+    selected = best[0] if best_score and len(signatures) == 1 else None
+    decision = (
+        f"using source-matched label {selected.title!r}"
+        if selected
+        else "using source headings only"
+    )
+    warnings.warn(
+        f"EPUB TOC aliases at {first.path}#{first.fragment}: {decision}; "
+        f"navigation labels retained in EPUB: {[entry.title for entry in aliases]!r}",
+        EpubExtractionWarning,
+    )
+    return selected or NavigationEntry(first.path, first.fragment, "", True)
+
+
+def _logical_sections(
+    body: Tag, filename: str, entries: list[NavigationEntry], *, notes=False
+):
+    """Split at evidenced logical DOM targets, preserving every intervening node.
+
+    Package paths never collapse to basenames. A fragment starts at that actual
+    element, not at the beginning of its containing spine file. Ancestor wrappers
+    are cloned across boundaries so headings, lists and inline styles survive.
+    """
+    boundaries: dict[int, NavigationEntry] = {}
+    targets: dict[int, tuple[Tag, list[NavigationEntry]]] = {}
+    document_entries = [entry for entry in entries if entry.path == filename]
+    for entry in document_entries:
+        node = (
+            body
+            if not entry.fragment or body.get("id") == entry.fragment
+            else body.find(id=entry.fragment)
+        )
+        if node is None:
+            if entry.logical:
+                raise EpubExtractionError(
+                    f"Missing EPUB TOC target: {filename}#{entry.fragment}"
+                )
+            continue
+        if entry.logical or _structural_kind(node):
+            node = _boundary_start(node, body)
+            targets.setdefault(id(node), (node, []))[1].append(entry)
+
+    for node_id, (node, aliases) in targets.items():
+        boundaries[node_id] = _navigation_boundary(node, aliases)
+
+    if not notes:
+        for node in body.find_all(True):
+            kind = _structural_kind(node)
+            text = _heading_text(node) if node.name in _HEADINGS else ""
+            explicit = node.name in _HEADINGS and bool(
+                _CHAPTER_PREFIX_RE.match(text) and _parse_designation(text)[0]
+            )
+            if not kind and not explicit:
+                continue
+            if id(node) in boundaries:
+                continue
+            # A chapter section and its opening Chapter N heading are one
+            # boundary. A later explicit Chapter N heading can begin another.
+            duplicate = False
+            for ancestor in node.parents:
+                existing = boundaries.get(id(ancestor))
+                if existing is not None:
+                    if (
+                        not _parse_designation(existing.title)[2]
+                        and _boundary_start(node, body) is ancestor
+                    ):
+                        duplicate = True
+                    break
+            if duplicate:
+                continue
+            if kind:
+                heading = node.find(_HEADINGS)
+                title = _heading_text(heading) if heading else ""
+            else:
+                title = text
+            boundaries[id(node)] = NavigationEntry(
+                filename, node.get("id", ""), title, True
+            )
+
+    # (entry, body, allow opening-heading metadata). A known subsection must not
+    # become a new top-level section merely because it occupies its own file.
+    sections = []
+    ancestors: list[Tag] = []
+    parents: list[Tag] = []
+    fragment_soup = None
+
+    def shallow(node):
+        return fragment_soup.new_tag(
+            node.name,
+            namespace=node.namespace,
+            nsprefix=node.prefix,
+            attrs=dict(node.attrs),
+        )
+
+    def start(entry):
+        nonlocal fragment_soup, parents
+        fragment_soup = BeautifulSoup("<body/>", "lxml-xml")
+        root = fragment_soup.body
+        sections.append((entry, root, not document_entries or entry is not None))
+        parents = [root]
+        for ancestor in ancestors:
+            clone = shallow(ancestor)
+            # A true mid-paragraph boundary clones formatting, not the source
+            # paragraph's start point. That coordinate was already emitted in
+            # the preceding fragment. Leading targets are normalised above.
+            clone.attrs.pop("data-kindle-position", None)
+            clone.attrs.pop("id", None)
+            parents[-1].append(clone)
+            parents.append(clone)
+
+    def visit(node):
+        if not isinstance(node, Tag):
+            parents[-1].append(copy(node))
+            return
+        entry = boundaries.get(id(node))
+        if entry is not None:
+            start(entry)
+        clone = shallow(node)
+        parents[-1].append(clone)
+        parents.append(clone)
+        ancestors.append(node)
+        for child in node.children:
+            visit(child)
+        ancestors.pop()
+        parents.pop()
+
+    start(boundaries.get(id(body)))
+    for child in body.children:
+        visit(child)
+    return sections
 
 
 def _spine_documents(book: epub.EpubBook) -> Iterable[epub.EpubItem]:
@@ -1048,54 +1673,92 @@ def extract(epub_path: str) -> ExtractedBook:
     description = _strip_html(_meta_first(book, "DC", "description"))
     identifier = _pick_identifier(book.get_metadata("DC", "identifier"))
 
-    toc = _toc_titles(book)
-    resolver = _FootnoteResolver(book)
+    toc = _toc_entries(book)
+    pages = _page_list_targets(book)
+    resolver = _FootnoteResolver(book, pages)
     images: list[ExtractedImage] = []
     chapters: list[Chapter] = []
-    chapter_files: list[str] = []
     max_number = 0
-    for index, item in enumerate(_spine_documents(book), start=1):
-        body_title, body_number, markdown = _xhtml_to_markdown(
-            item.get_content(), item.file_name, book, images, resolver
-        )
-        markdown = _expand_image_tokens(markdown, images)
-        if not markdown:
+    index = 0
+    remaining_page_files = {path for path, _ in pages}
+    for item in _spine_documents(book):
+        index += 1
+        soup = BeautifulSoup(item.get_content(), "lxml-xml")
+        _strip_navigation(soup)
+        body = soup.find("body") or soup
+        if resolver.prune(body, item.file_name):
             continue
-        toc_title = toc.get(posixpath.basename(item.file_name))
-        # The TOC is authoritative: when it names a section, its number (or lack
-        # of one) is trusted, so a back-matter section it titles "Notes" is not
-        # given a chapter number just because the body groups notes by chapter.
-        # The body number is used only where the TOC has no entry at all, as with
-        # a book whose chapters are bare 'ONE'..'SIX' the TOC never lists.
-        if toc_title:
-            toc_number, toc_clean, is_part = _parse_designation(toc_title)
-            number = None if is_part else toc_number
-            section_title = toc_clean or body_title
-        else:
-            # A section the TOC does not list takes its number from the body, but
-            # only if it continues the chapter sequence upward. That keeps a book
-            # whose chapters are bare 'ONE'..'SIX' while rejecting back-matter
-            # (endnotes grouped "5. Cognitive Ease") that reuses chapter numbers.
-            number = (
-                body_number if body_number and int(body_number) > max_number else None
-            )
-            section_title = body_title
-        if number:
-            max_number = max(max_number, int(number))
-        chapters.append(
-            Chapter(index=index, title=section_title, markdown=markdown, number=number)
+        page_labels = _collect_pagebreaks(
+            body,
+            {
+                fragment: label
+                for (path, fragment), label in pages.items()
+                if path == item.file_name
+            },
         )
-        chapter_files.append(posixpath.basename(item.file_name))
+        remaining_page_files.discard(item.file_name)
+        sections = _logical_sections(
+            body, item.file_name, toc, notes=item.file_name in resolver.note_documents
+        )
+        for section_index, (entry, section, allow_body_metadata) in enumerate(sections):
+            if section_index:
+                index += 1
+            body_title, body_number, _ = _analyse_body(section)
+            if entry is not None and entry.title:
+                toc_number, toc_clean, is_part = _parse_designation(entry.title)
+                number = toc_number
+                section_title = toc_clean or (entry.title if is_part else body_title)
+                # An unnumbered TOC title is not evidence that its own printed
+                # chapter heading lacks a number. Require agreement on title,
+                # rather than borrowing a later endnote/subsection number.
+                if (
+                    not number
+                    and not is_part
+                    and body_number
+                    and body_title == toc_clean
+                ):
+                    number = body_number
+            elif entry is not None:
+                # Conflicting navigation aliases cannot overrule an actual
+                # printed heading, including chapter numbering that restarts.
+                number, section_title = body_number, body_title
+            elif allow_body_metadata:
+                number = (
+                    body_number
+                    if body_number and int(body_number) > max_number
+                    else None
+                )
+                section_title = body_title
+            else:
+                number, section_title = None, None
+            _, _, markdown = _body_to_markdown(
+                section,
+                item.file_name,
+                book,
+                images,
+                resolver,
+                page_labels,
+                strip_number=bool(number and number == body_number),
+            )
+            if not markdown and not (number or section_title):
+                continue
+            if number:
+                max_number = max(max_number, int(number))
+            chapters.append(
+                Chapter(
+                    index=index, title=section_title, markdown=markdown, number=number
+                )
+            )
 
-    # Drop a dedicated notes document once its definitions have been pulled into
-    # the chapters that cite them, so the raw section does not repeat them. One
-    # that is mostly unreferenced stays: its notes exist nowhere else.
-    chapters = [
-        chapter
-        for chapter, filename in zip(chapters, chapter_files)
-        if filename not in resolver.note_documents or not resolver.spent(filename)
-    ]
+    if remaining_page_files:
+        raise EpubExtractionError(
+            f"Page-list targets outside the readable spine: {sorted(remaining_page_files)!r}"
+        )
     chapters = _coalesce_split_chapters(chapters)
+    for chapter in chapters:
+        markers = _redundant_designation_markers(chapter)
+        if markers is not None:
+            chapter.markdown = "\n".join(markers)
     _disambiguate_page_sequences(chapters)
 
     return ExtractedBook(

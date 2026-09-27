@@ -53,7 +53,9 @@ CURRENT_VERSIONS: dict[str, int] = {
     # heading, and identify distinct sequences when page labels repeat.
     # v7: write Kindle source positions as hidden inline point markers and omit
     # renderer element ids, which remain available in the archived EPUB.
-    "ebook": 7,
+    # v8: occurrence-specific captions/alt text, lossless notes, exact page-list
+    # coordinates and fragment-aware chapter boundaries; unresolved media fails.
+    "ebook": 8,
     # v2: a transcription segment is split where its own words change speaker,
     # so an interjection is no longer attributed to whoever was talking around
     # it (misattributed words 4.75% -> 3.88% over three reviewed interviews).

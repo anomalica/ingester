@@ -10,7 +10,7 @@ ingester/
     pdf/              - PDF extraction (born-digital and scanned)
     audio/            - audio/video transcription and speaker diarisation
     webpage/          - web page content extraction
-    ebook/            - ebook text extraction (planned)
+    ebook/            - deterministic EPUB text, structure and media extraction
   shared/             - utilities shared across format handlers
   staging/            - transient staging directories (gitignored)
   (records land in the sibling ../ingests/ repo, not here)
@@ -33,6 +33,9 @@ ingester/
 ```
 
 The `ingest` script acquires the source, detects its type, and routes to the appropriate format handler. Output lands in the sibling `ingests/` repo: record files in `ingests/store/` are named by canonical Selection identity, with human-readable symlinks in `ingests/by-name/`. Exact acquired bytes are archived as Assets in `../../records/`, named by Asset hash.
+
+For EPUB fidelity rules, limitations and isolated offline verification, see
+[EPUB extraction](docs/epub-extraction.md).
 
 ### Legacy envelope migration
 
